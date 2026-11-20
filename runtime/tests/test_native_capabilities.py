@@ -70,10 +70,14 @@ def test_rollback_retains_previous_and_does_not_allow_path_escape(tmp_path):
         store.package_path('../escape', '1')
 
 
-def test_real_sdk_build_and_compiler_failure_preserve_working_version(tmp_path):
+def test_real_sdk_build_and_compiler_failure_preserve_working_version(tmp_path, monkeypatch):
     dotnet = discover_dotnet(Path(__file__).resolve())
     if not dotnet:
         pytest.skip('Local .NET SDK unavailable')
+    parent_sdk = tmp_path / 'parent-sdk'
+    parent_sdk.mkdir()
+    monkeypatch.setenv('MSBuildSDKsPath', str(parent_sdk))
+    monkeypatch.setenv('MSBuildExtensionsPath', str(parent_sdk))
     reference = next((Path(dotnet).parent / 'packs/Microsoft.NETCore.App.Ref').glob('6.*/ref/net6.0/System.Text.Json.dll'))
     store = NativeCapabilityStore(tmp_path, dotnet=dotnet)
     spec = {'id': 'test.capability', 'version': '1', 'kind': 'query', 'entryType': 'Adapter',

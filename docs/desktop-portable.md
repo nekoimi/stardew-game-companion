@@ -28,7 +28,11 @@
 
 单人游戏连接桌面后，伙伴模式或已托管的自玩模式可在游戏窗口失焦时继续推进。这个处理只用于本次运行，暂停工作可用桌面按钮，玩家也可用游戏原生暂停。
 
+## 构建与测试
+
 构建需要 .NET 10 SDK、能编译现有 Mod 的本机游戏/SMAPI 引用和 uv。先用 `dotnet publish src/StardewAI.Companion.Desktop -c Release -o artifacts/desktop/win-x64` 生成桌面，再用 `tools/build-release.py` 的 `--desktop-source` 和 `--mod-source` 指向桌面发布目录与配套 Mod 输出。
+
+原生扩展编译使用本地 .NET 6 SDK，子进程独立解析编译工具链。复测时把 `STAR_DOTNET_PATH` 指向该 SDK 的 `dotnet.exe`，把 `STARDEW_GAME_PATH` 指向游戏目录，再用常用 SDK 执行 `dotnet test src/StardewAI.Companion.Mod.Tests`。已验证外层 .NET 8 测试能通过独立 .NET 6 生成扩展 DLL。
 
 模型适配器在 `provider_registry.py` 注册，绿色包从注册表生成桌面配置清单。适配器处理客户端、回合和用量回执，游戏运行时负责存档、任务和控制权；`desktop_api.py` 负责本地 HTTP，`desktop_runtime.py` 承接桌面指令。
 

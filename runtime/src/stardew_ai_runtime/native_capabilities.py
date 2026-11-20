@@ -207,7 +207,13 @@ class NativeCapabilityStore:
             project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net6.0</TargetFramework><AssemblyName>adapter</AssemblyName><EnableDefaultCompileItems>false</EnableDefaultCompileItems><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><RestoreIgnoreFailedSources>true</RestoreIgnoreFailedSources></PropertyGroup><ItemGroup><Compile Include="Adapter.cs"/>' + refs + '</ItemGroup></Project>'
             (attempt / "Adapter.csproj").write_text(project, encoding="utf-8")
             (attempt / "NuGet.Config").write_text('<configuration><packageSources><clear/></packageSources></configuration>', encoding="utf-8")
-            env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1", DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1", MSBUILDDISABLENODEREUSE="1")
+            # Visual Studio and dotnet test can export paths to their own SDK.
+            # Let the selected dotnet host and global.json resolve this build together.
+            sdk_overrides = {"MSBUILDSDKSPATH", "MSBUILDEXTENSIONSPATH", "MSBUILD_EXE_PATH", "DOTNET_HOST_PATH"}
+            env = {key: value for key, value in os.environ.items()
+                   if key.upper() not in sdk_overrides and not key.upper().startswith("DOTNET_MSBUILD_SDK_RESOLVER_")}
+            env.update(DOTNET_MULTILEVEL_LOOKUP="0", DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1",
+                       DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1", MSBUILDDISABLENODEREUSE="1")
             process = await asyncio.create_subprocess_exec(self.dotnet, "build", "Adapter.csproj", "--configuration", "Release", "--output", "out", "--nologo", "-nodeReuse:false", "-p:ImportDirectoryBuildProps=false", "-p:ImportDirectoryBuildTargets=false", "-p:UseSharedCompilation=false", cwd=attempt, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             output, _ = await process.communicate()
             diagnostics = output.decode("utf-8", errors="replace")
