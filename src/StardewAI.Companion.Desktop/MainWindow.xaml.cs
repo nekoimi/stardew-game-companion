@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace StardewAI.Companion.Desktop;
@@ -17,6 +18,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<TimelineEntry> _entries = new();
     private readonly HashSet<string> _seenResults = new(StringComparer.Ordinal);
     private readonly string _root = AppContext.BaseDirectory;
+    private readonly Queue<string> _pendingLogs = new();
+    private readonly DispatcherTimer _logTimer;
     private DesktopSession? _session;
     private string? _gameSessionId;
     private string? _lastGameSessionId;
@@ -33,6 +36,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _logTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
+        _logTimer.Tick += (_, _) => FlushLogs();
+        _logTimer.Start();
         Timeline.ItemsSource = _entries;
         InitializeSaveViews();
         DesktopSettings settings = new();
@@ -297,11 +303,14 @@ public partial class MainWindow : Window
         ConnectionText.Text = _playerMode ? "游戏已连接 · AI 自己玩" : "游戏已连接 · 伙伴模式";
         var action = Text(payload, "activity");
         var progress = Text(payload, "progress");
+        var clockPauseOwner = Text(payload, "clockPauseOwner");
         ActivityText.Text = _recoveryPending ? "已重连。请先核对旧动作，工作保持暂停。"
             : _paused ? "已暂停"
             : _playerMode && _owner != "agent" ? "玩家控制中。点击「交给 AI」开始托管。"
             : _interrupting ? "正在确认旧动作终态"
             : Text(payload, "activeCommandId").Length > 0 ? $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}"
+            : clockPauseOwner == "program-protection" ? "保护暂停 · 游戏时钟已暂停"
+            : clockPauseOwner == "model-thinking" ? "伴侣正在规划或回复 · 游戏时钟已暂停"
             : Flag(payload, "thinking") ? "伴侣正在规划或回复"
             : action is "" or "idle" ? "等待指令" : StatusLabel(action);
         if (_lastGameSessionId is not null && _lastGameSessionId != _gameSessionId)
@@ -426,12 +435,36 @@ public partial class MainWindow : Window
         TimelineScroll.ScrollToBottom();
     }
 
-    private void Log(string line) => Dispatcher.BeginInvoke(() =>
+    private void Log(string line)
     {
+        lock (_pendingLogs)
+        {
+            _pendingLogs.Enqueue(line);
+            if (_pendingLogs.Count > 256) _pendingLogs.Dequeue();
+        }
+    }
+
+    private void FlushLogs()
+    {
+        string[] lines;
+        lock (_pendingLogs)
+        {
+            if (_pendingLogs.Count == 0) return;
+            lines = _pendingLogs.ToArray();
+            _pendingLogs.Clear();
+        }
+        var batch = string.Join(Environment.NewLine, lines) + Environment.NewLine;
+        if (batch.Length > 20_000) batch = batch[^20_000..];
         if (Diagnostics.Text.Length > 50_000) Diagnostics.Text = Diagnostics.Text[^30_000..];
-        Diagnostics.AppendText(line + Environment.NewLine);
-        Diagnostics.ScrollToEnd();
-    });
+        Diagnostics.AppendText(batch);
+        if (Diagnostics.IsVisible) Diagnostics.ScrollToEnd();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _logTimer.Stop();
+        base.OnClosed(e);
+    }
 
     private static string Text(JsonElement data, string key) =>
         data.ValueKind == JsonValueKind.Object && data.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String

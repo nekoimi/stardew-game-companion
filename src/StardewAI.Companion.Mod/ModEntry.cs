@@ -700,12 +700,29 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
+        if (!_desktopMode || !Context.IsWorldReady)
+        {
+            _desktopPreviousTick = 0;
+            UpdateGame(e);
+            return;
+        }
+
+        BeginDesktopTick();
+        try { UpdateGame(e); }
+        finally { EndDesktopTick(); }
+    }
+
+    private void UpdateGame(UpdateTickedEventArgs e)
+    {
         while (_mainThreadActions.TryDequeue(out var action)) action();
+        MeasureDesktopPhase("callbacks");
         if (!_desktopMode) ShowPendingUpdate();
         _thinking?.Tick();
         TickUnattendedPassoutGuard();
-        if (PlayerModeEnabled && e.IsMultipleOf(30) && _coordinator != null && _transportServer != null) { _ = _transportServer.SendSnapshotAsync(_coordinator.CaptureCurrentSnapshot(_observer!.WorldRevision),_observer.WorldRevision); }
-        if (_desktopMode && e.IsMultipleOf(30)) PublishDesktopControlState();
+        if (!_desktopMode && PlayerModeEnabled && e.IsMultipleOf(30) && _coordinator != null && _transportServer != null)
+            _ = _transportServer.SendSnapshotAsync(_coordinator.CaptureCurrentSnapshot(_observer!.WorldRevision), _observer.WorldRevision);
+        if (_desktopMode && e.IsMultipleOf(30)) PublishDesktopControlState(e.IsMultipleOf(120));
+        MeasureDesktopPhase("snapshot");
         if (PlayerModeEnabled && _actor != null) _knowledge?.NoteLocationVisited(_actor.LocationName);
         if (_decisionEdits.Count > 0 && DateTime.UtcNow - _decisionEditSentAt > TimeSpan.FromSeconds(30))
         {
@@ -742,7 +759,9 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             return;
 
         // 1. Process transport messages (cancellation, pause, disconnect) FIRST
+        MeasureDesktopPhase("before-transport");
         _transportServer?.Update();
+        MeasureDesktopPhase("transport");
         if (PlayerModeEnabled) {
             if (_coordinator?.ActiveMachine?.IsExecuting == true) {
                 _thinking?.SuspendForAction();
@@ -768,7 +787,9 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
         // 2. Only advance game action if not cancelled or paused
         if (_coordinator != null) _coordinator.Rest.Paused = _chatUiState.ShouldPauseNative || (_desktopMode && (_desktopPaused || _desktopInterrupting));
+        MeasureDesktopPhase("before-native-action");
         _coordinator?.Update(Game1.currentGameTime, e.Ticks);
+        MeasureDesktopPhase("native-action");
         if (_coordinator != null && _lastRestState != _coordinator.Rest.State)
         {
             _lastRestState = _coordinator.Rest.State;

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using StardewAI.Companion.Mod.Domain;
@@ -17,6 +18,16 @@ public sealed partial class ModEntry
     private string? _desktopInterruptedCommandId;
     private long _desktopSnapshotGeneration;
     private long _desktopHandledDisconnectRevision;
+    private GameLocation? _desktopSnapshotLocation;
+    private StardewValley.Menus.IClickableMenu? _desktopSnapshotMenu;
+    private long _desktopPreviousTick;
+    private long _desktopTickStarted;
+    private long _desktopPhaseStarted;
+    private long _desktopSlowestPhaseTicks;
+    private long _desktopLastSlowTickLog;
+    private double _desktopTickIntervalMs;
+    private double _desktopPreviousModMs;
+    private string _desktopSlowestPhase = "";
 
     private bool DesktopActionsAllowed => !_desktopMode || (!_desktopPaused && !_desktopInterrupting
         && _desktopHandledDisconnectRevision == _transportServer?.DesktopDisconnectRevision);
@@ -45,6 +56,8 @@ public sealed partial class ModEntry
         _desktopPaused = _desktopInterrupting = _desktopRecoveryPending = false;
         _desktopInterruptedCommandId = null;
         _desktopSnapshotGeneration = -1;
+        _desktopSnapshotLocation = null;
+        _desktopSnapshotMenu = null;
         _desktopHandledDisconnectRevision = 0;
         server.DesktopClientEnabled = true;
         server.OnDesktopControl += payload =>
@@ -74,16 +87,20 @@ public sealed partial class ModEntry
         };
     }
 
-    private void PublishDesktopControlState()
+    private void PublishDesktopControlState(bool periodicPlayerSnapshot)
     {
         if (_transportServer is not { IsChatConnected: true } server || _coordinator is not { } coordinator) return;
         long generation = server.ChatGeneration;
         if (_desktopHandledDisconnectRevision != server.DesktopDisconnectRevision) return;
-        if (_desktopSnapshotGeneration != generation && _observer is not null)
+        bool newConnection = _desktopSnapshotGeneration != generation;
+        if (_observer is not null && (newConnection || PlayerModeEnabled && (periodicPlayerSnapshot
+            || !ReferenceEquals(_desktopSnapshotLocation, Game1.currentLocation)
+            || !ReferenceEquals(_desktopSnapshotMenu, Game1.activeClickableMenu))))
         {
             _desktopSnapshotGeneration = generation;
-            if (!PlayerModeEnabled)
-                _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
+            _desktopSnapshotLocation = Game1.currentLocation;
+            _desktopSnapshotMenu = Game1.activeClickableMenu;
+            _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
         }
         _ = server.SendDesktopStateAsync("desktop.control.result", new JsonObject
         {
@@ -94,10 +111,47 @@ public sealed partial class ModEntry
             ["activeCommandId"] = server.ActiveCommandId,
             ["activity"] = coordinator.GetActivityStatus(),
             ["progress"] = coordinator.GetActivityLabel(),
+            ["clockPauseOwner"] = coordinator.ClockPauseOwnerProvider?.Invoke(),
             ["inboxRevision"] = _lifeMenuUiState.ConversationRevision,
             ["unreadMessages"] = CountUnreadDesktopMessages()
         }, generation);
     }
+
+    private void BeginDesktopTick()
+    {
+        long now = Stopwatch.GetTimestamp();
+        _desktopTickIntervalMs = _desktopPreviousTick == 0 ? 0 : TickMilliseconds(now - _desktopPreviousTick);
+        _desktopPreviousTick = _desktopTickStarted = _desktopPhaseStarted = now;
+        _desktopSlowestPhaseTicks = 0;
+    }
+
+    private void MeasureDesktopPhase(string phase)
+    {
+        if (_desktopTickStarted == 0) return;
+        long now = Stopwatch.GetTimestamp();
+        long elapsed = now - _desktopPhaseStarted;
+        _desktopPhaseStarted = now;
+        if (elapsed <= _desktopSlowestPhaseTicks) return;
+        _desktopSlowestPhase = phase;
+        _desktopSlowestPhaseTicks = elapsed;
+    }
+
+    private void EndDesktopTick()
+    {
+        MeasureDesktopPhase("after-native-action");
+        long now = Stopwatch.GetTimestamp();
+        double modMs = TickMilliseconds(now - _desktopTickStarted);
+        _desktopTickStarted = 0;
+        double previousModMs = _desktopPreviousModMs;
+        _desktopPreviousModMs = modMs;
+        if ((modMs < 20 && _desktopTickIntervalMs < 50) || TickMilliseconds(now - _desktopLastSlowTickLog) < 5000) return;
+        _desktopLastSlowTickLog = now;
+        Monitor.Log($"[游戏帧耗时] 更新间隔 {_desktopTickIntervalMs:F1} ms，伙伴处理 {previousModMs:F1} → {modMs:F1} ms，"
+            + $"当前帧最慢阶段 {_desktopSlowestPhase} {TickMilliseconds(_desktopSlowestPhaseTicks):F1} ms，"
+            + $"活动 {_coordinator?.GetActivityStatus() ?? "idle"}，时钟 {_coordinator?.ClockPauseOwnerProvider?.Invoke() ?? "running"}。", LogLevel.Warn);
+    }
+
+    private static double TickMilliseconds(long ticks) => ticks * (1000.0 / Stopwatch.Frequency);
 
     private static bool IsDesktopMessage(CompanionConversationEntry entry) => entry.Id.StartsWith("care:", StringComparison.Ordinal);
 
@@ -225,6 +279,7 @@ public sealed partial class ModEntry
             ["activeCommandId"] = server.ActiveCommandId,
             ["activity"] = coordinator.GetActivityStatus(),
             ["progress"] = coordinator.GetActivityLabel(),
+            ["clockPauseOwner"] = coordinator.ClockPauseOwnerProvider?.Invoke(),
             ["inboxRevision"] = _lifeMenuUiState.ConversationRevision,
             ["unreadMessages"] = CountUnreadDesktopMessages(),
             ["interruptedCommandId"] = _desktopInterruptedCommandId,

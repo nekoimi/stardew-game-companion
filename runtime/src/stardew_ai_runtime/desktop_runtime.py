@@ -196,6 +196,7 @@ class DesktopBridge(ChatBridge):
             "activity": self.native_state.get("activity", actor.get("activity")),
             "activeCommandId": self.native_state.get("activeCommandId", actor.get("activeCommandId")),
             "progress": self.native_state.get("progress"),
+            "clockPauseOwner": self.native_state.get("clockPauseOwner"),
             "inboxRevision": self.native_state.get("inboxRevision"),
             "unreadMessages": self.native_state.get("unreadMessages", 0),
             "work": {key: work.get(key) for key in (
