@@ -49,9 +49,14 @@ def _stage_sessions(source: Path, stage: Path) -> int:
     source_config = {key.casefold(): value for key, value in _read_object(_local(source, "config.json")).items()}
     if str(source_config.get("connectionsource", "builtin")).casefold() == "external":
         raise ValueError("当前桌面版无法接续外部伙伴会话，可明确选择仅导入数据。")
-    configured = _read_object(_local(source, "config/chat-backend.json")).get("backend")
-    source_is_desktop = (source.parent.parent / "星露谷游戏伴侣.exe").is_file()
-    if configured and configured != "pi" and not source_is_desktop:
+    desktop = source.parent.parent
+    source_is_desktop = (desktop / "星露谷游戏伴侣.exe").is_file()
+    if source_is_desktop:
+        settings = _read_object(_local(desktop, "data/desktop-settings.json"))
+        configured = settings.get("Backend", "pi")
+    else:
+        configured = _read_object(_local(source, "config/chat-backend.json")).get("backend")
+    if configured and configured != "pi":
         raise ValueError("原安装使用其他模型后端，可明确选择仅导入数据。")
 
     bindings = _read_object(_local(source, "chat_sessions.json"))

@@ -69,15 +69,8 @@ class AcpClient:
         self.prompting = False
         self.reply = ""
         self.permission_required = False
-        executable = McodeBackend(Path(binding["cwd"]), command=binding.get("command", "mcode"))._executable()
-        prefix = [executable]
-        if Path(executable).suffix.lower() in {".cmd", ".ps1"}:
-            import shutil
-            entry = Path(executable).parent / "node_modules/@minimax-ai/code/cli.js"
-            node = shutil.which("node")
-            if not node or not entry.is_file():
-                raise AcpError("MiniMax Code 的 Node.js 启动入口不可用。")
-            prefix = [node, str(entry)]
+        backend = McodeBackend(Path(binding["cwd"]), command=binding.get("command", "mcode"))
+        prefix = backend._launch_args(backend._executable(), cancel_hook=False)
         env = dict(os.environ)
         # Preserve a non-default original memory/account environment explicitly.
         if binding.get("dataDir"):
@@ -526,6 +519,7 @@ def main(argv=None):
                         help="Confirm the original client will stay idle while the game adapter runs this session")
     parser.add_argument("--disconnect", action="store_true")
     parser.add_argument("--list", action="store_true", help="List existing conversations in the original workspace; no model call")
+    parser.add_argument("--desktop-json", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.disconnect:
         binding = read_binding(args.run_dir)
@@ -579,8 +573,11 @@ def main(argv=None):
             client.close()
         if server and not ready:
             server.server_close()
-    print(f"已验证原会话 {args.session}（{args.name}），原工作目录：{binding['cwd']}。")
-    print("适配器正在等待游戏消息。请在游戏中选择“连接已有 AI 伙伴”；原窗口保持闲置，Ctrl+C断开。", flush=True)
+    if args.desktop_json:
+        print(json.dumps({"bindingId": binding["bindingId"]}), flush=True)
+    else:
+        print(f"已验证原会话 {args.session}（{args.name}），原工作目录：{binding['cwd']}。")
+        print("适配器正在等待游戏消息。请在游戏中选择“连接已有 AI 伙伴”；原窗口保持闲置，Ctrl+C断开。", flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:

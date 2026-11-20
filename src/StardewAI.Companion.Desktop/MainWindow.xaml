@@ -26,6 +26,7 @@
             <StackPanel>
                 <TextBlock Text="星露谷游戏伴侣" FontSize="29" FontWeight="SemiBold" />
                 <TextBlock x:Name="ConnectionText" Text="等待启动游戏" Foreground="#537261" Margin="0,4,0,0" />
+                <TextBlock x:Name="PartnerStatus" Foreground="#537261" Margin="0,3,0,0" Visibility="Collapsed" />
             </StackPanel>
             <Button x:Name="LaunchHeader" Content="启动游戏" Click="LaunchClicked"
                     HorizontalAlignment="Right" VerticalAlignment="Center" Background="#336450" Foreground="White"
@@ -187,27 +188,76 @@
                                 <ComboBoxItem Content="伙伴模式" Tag="companion" />
                                 <ComboBoxItem Content="AI 自己玩（单人）" Tag="player" />
                             </ComboBox>
-                            <TextBlock Text="Pi 模型" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <TextBox x:Name="Model" AutomationProperties.Name="Pi 模型" />
-                            <TextBlock Text="留空使用 Pi 当前配置的模型。" Foreground="#537261" Margin="0,3,0,15" />
-                            <TextBlock Text="Pi 客户端路径" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <DockPanel>
-                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowsePi" Margin="8,0,0,0" />
-                                <TextBox x:Name="PiPath" AutomationProperties.Name="Pi 客户端路径" />
-                            </DockPanel>
-                            <TextBlock Text="留空自动检测。请先完成 Pi 登录。" Foreground="#537261" Margin="0,3,0,16" />
+                            <TextBlock Text="伙伴来源" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <ComboBox x:Name="PartnerSource" SelectedValuePath="Tag" SelectionChanged="PartnerSourceSelected"
+                                      AutomationProperties.Name="伙伴来源" Margin="0,0,0,13">
+                                <ComboBoxItem Content="启动本机模型客户端" Tag="builtin" />
+                                <ComboBoxItem Content="接续原 MiniMax Code 会话" Tag="external" />
+                            </ComboBox>
+                            <StackPanel x:Name="BuiltinFields">
+                                <TextBlock Text="模型客户端" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <ComboBox x:Name="BackendPicker" SelectedValuePath="Tag" SelectionChanged="BackendSelected"
+                                          AutomationProperties.Name="模型客户端" Margin="0,0,0,13">
+                                    <ComboBoxItem Content="Pi" Tag="pi" />
+                                    <ComboBoxItem Content="DeepSeek (dsh)" Tag="dsh" />
+                                    <ComboBoxItem Content="Codex" Tag="codex" />
+                                    <ComboBoxItem Content="MiniMax Code" Tag="mcode" />
+                                </ComboBox>
+                                <TextBlock Text="模型" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <TextBox x:Name="Model" AutomationProperties.Name="模型" />
+                                <TextBlock x:Name="ModelHint" Foreground="#537261" Margin="0,3,0,13" TextWrapping="Wrap" />
+                                <TextBlock Text="客户端路径" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseClient" Margin="8,0,0,0" />
+                                    <TextBox x:Name="ClientPath" AutomationProperties.Name="客户端路径" />
+                                </DockPanel>
+                                <TextBlock Text="留空自动检测。请先在原客户端登录。" Foreground="#537261" Margin="0,3,0,12" />
+                            </StackPanel>
                             <Button Content="保存启动设置" Click="SaveClicked" HorizontalAlignment="Left" />
                             <Separator Margin="0,13" />
                             <TextBlock Text="旧安装数据" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
                             <TextBlock x:Name="ImportFeedback" Text="退出游戏后，可从原伙伴 Mod 目录导入数据。" TextWrapping="Wrap" Margin="0,0,0,8" />
-                            <CheckBox x:Name="ImportDataOnly" Content="仅导入数据，下次使用本机 Pi 会话" Margin="0,0,0,8" />
+                            <CheckBox x:Name="ImportDataOnly" Content="仅导入数据，沿用此包的伙伴接入设置" Margin="0,0,0,8" />
                             <Button x:Name="ImportButton" Content="从原安装导入…" Click="ImportClicked" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <StackPanel x:Name="OriginalFields" Visibility="Collapsed">
+                            <Separator Margin="0,13" />
+                            <TextBlock Text="原 MiniMax Code 会话" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
+                            <TextBlock x:Name="OriginalFeedback" Text="启动游戏后，可在这里列出并接续原会话。" TextWrapping="Wrap" Margin="0,0,0,9" />
+                            <TextBlock Text="原工作目录" Margin="0,0,0,4" />
+                            <DockPanel Margin="0,0,0,9">
+                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalWorkspace" Margin="8,0,0,0" />
+                                <TextBox x:Name="OriginalWorkspace" AutomationProperties.Name="原工作目录" TextChanged="OriginalLocationChanged" />
+                            </DockPanel>
+                            <TextBlock Text="原数据目录（使用默认目录可留空）" Margin="0,0,0,4" />
+                            <DockPanel Margin="0,0,0,9">
+                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalData" Margin="8,0,0,0" />
+                                <TextBox x:Name="OriginalData" AutomationProperties.Name="原数据目录" TextChanged="OriginalLocationChanged" />
+                            </DockPanel>
+                            <TextBlock Text="MiniMax Code 客户端路径（可留空）" Margin="0,0,0,4" />
+                            <DockPanel Margin="0,0,0,9">
+                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalClient" Margin="8,0,0,0" />
+                                <TextBox x:Name="OriginalClient" AutomationProperties.Name="MiniMax Code 客户端路径" TextChanged="OriginalLocationChanged" />
+                            </DockPanel>
+                            <Button x:Name="ListSessionsButton" Content="列出原会话" Click="ListOriginalSessions" HorizontalAlignment="Left" />
+                            <ListBox x:Name="OriginalSessions" DisplayMemberPath="Label" AutomationProperties.Name="原会话"
+                                     SelectionChanged="OriginalSelectionChanged" Margin="0,6,0,9" MinHeight="32" MaxHeight="144" />
+                            <TextBlock Text="游戏显示名（可留空）" Margin="0,0,0,4" />
+                            <TextBox x:Name="OriginalName" AutomationProperties.Name="原伙伴显示名" MaxLength="80" Margin="0,0,0,9" />
+                            <CheckBox x:Name="OriginalIdle" Content="连接期间保持原聊天窗口闲置" Margin="0,0,0,9"
+                                      Checked="OriginalSelectionChanged" Unchecked="OriginalSelectionChanged" />
+                            <WrapPanel>
+                                <Button x:Name="AttachPartner" Content="接续所选会话" Click="AttachOriginalPartner" />
+                                <Button x:Name="DisconnectPartner" Content="断开桌面连接" Click="DisconnectOriginalPartner" />
+                                <Button x:Name="SavePartnerLocation" Content="保存原会话目录" Click="SaveOriginalLocation" />
+                            </WrapPanel>
                         </StackPanel>
                         <Separator Margin="0,13" />
                         <TextBlock Text="当前存档的伙伴设置" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
                         <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
                         <Button x:Name="ReadProfileButton" Content="重新读取伙伴设置" HorizontalAlignment="Left" Click="ReadProfileClicked" />
                         <StackPanel x:Name="ProfileFields" Margin="0,8,0,0">
+                            <StackPanel x:Name="CompanionIdentityFields">
                             <UniformGrid Columns="2">
                                 <StackPanel Margin="0,0,12,10">
                                     <TextBlock Text="伙伴名字" Margin="0,0,0,4" />
@@ -245,6 +295,7 @@
                                 </StackPanel>
                             </UniformGrid>
                             <Button x:Name="SaveProfileButton" Content="保存伙伴设置" HorizontalAlignment="Left" Click="SaveProfileClicked" />
+                            </StackPanel>
                             <Separator Margin="0,12" />
                             <CheckBox x:Name="Initiative" Content="空闲时主动帮忙" Margin="0,0,0,8" />
                             <TextBlock Text="主动帮忙时的偏好" Margin="0,0,0,4" />

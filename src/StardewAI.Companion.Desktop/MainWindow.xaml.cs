@@ -47,14 +47,15 @@ public partial class MainWindow : Window
             Log($"读取桌面设置失败：{ex.Message}");
         }
         Mode.SelectedIndex = settings.ActorMode == "player" ? 1 : 0;
-        Model.Text = settings.Model;
-        PiPath.Text = settings.PiPath;
+        InitializePartnerSettings(settings);
         if (string.IsNullOrWhiteSpace(GameFolder.Text)) Pages.SelectedItem = SettingsPage;
         RefreshControls();
     }
 
     private DesktopSettings Settings() => new(GameFolder.Text.Trim(), Mode.SelectedIndex == 1 ? "player" : "companion",
-        Model.Text.Trim(), PiPath.Text.Trim());
+        Backend: _backend, ConnectionSource: SelectedSource, Clients: ReadClientPreferences(),
+        OriginalWorkspace: OriginalWorkspace.Text.Trim(), OriginalDataDirectory: OriginalData.Text.Trim(),
+        OriginalClient: OriginalClient.Text.Trim(), OriginalName: OriginalName.Text.Trim());
 
     private async void LaunchClicked(object sender, RoutedEventArgs e)
     {
@@ -68,9 +69,11 @@ public partial class MainWindow : Window
         }
         var session = new DesktopSession(_root, Log);
         _session = session;
+        _activeSource = settings.ConnectionSource;
+        _partnerReady = false;
         session.EventReceived += message => Dispatcher.BeginInvoke(() => { if (_session == session) ApplyEvent(message); });
         session.GameExited += () => Dispatcher.BeginInvoke(() => _ = EndSessionAsync(session, "游戏已退出，可以再次启动。"));
-        Pages.SelectedItem = CommandPage;
+        Pages.SelectedItem = _activeSource == "external" ? SettingsPage : CommandPage;
         ConnectionText.Text = "正在检查运行组件";
         ActivityText.Text = "正在启动伴侣和游戏。";
         RefreshControls();
@@ -104,6 +107,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { Log($"停止伴侣服务失败：{ex.Message}"); }
         if (_session != session) return;
         _session = null;
+        ResetPartnerConnection();
         ConnectionText.Text = "等待启动游戏";
         ActivityText.Text = message;
         RefreshControls();
@@ -114,12 +118,6 @@ public partial class MainWindow : Window
         var picker = new OpenFolderDialog { Title = "选择星露谷物语游戏目录" };
         if (Directory.Exists(GameFolder.Text)) picker.InitialDirectory = GameFolder.Text;
         if (picker.ShowDialog(this) == true) GameFolder.Text = picker.FolderName;
-    }
-
-    private void BrowsePi(object sender, RoutedEventArgs e)
-    {
-        var picker = new OpenFileDialog { Title = "选择 Pi 客户端", Filter = "Pi 客户端 (*.cmd;*.exe)|*.cmd;*.exe" };
-        if (picker.ShowDialog(this) == true) PiPath.Text = picker.FileName;
     }
 
     private void SaveClicked(object sender, RoutedEventArgs e)
@@ -216,6 +214,7 @@ public partial class MainWindow : Window
 
     private void ApplyStatus(JsonElement payload)
     {
+        ApplyPartnerStatus(payload);
         var previous = _gameSessionId;
         _gameSessionId = Flag(payload, "ready") ? Text(payload, "gameSessionId") : null;
         if (previous != _gameSessionId)
@@ -337,15 +336,17 @@ public partial class MainWindow : Window
         LaunchHeader.IsEnabled = _session is null && !_closing && !_importing;
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
         RefreshImportControls();
-        SendButton.IsEnabled = Input.IsEnabled = connected;
-        InterruptButton.IsEnabled = connected && !_paused && !_interrupting && (!_playerMode || _owner == "agent");
+        SendButton.IsEnabled = Input.IsEnabled = connected && _partnerReady;
+        DecisionPanel.IsEnabled = SendButton.IsEnabled;
+        InterruptButton.IsEnabled = SendButton.IsEnabled && !_paused && !_interrupting && (!_playerMode || _owner == "agent");
         PauseButton.IsEnabled = connected && !_paused && !_interrupting;
         ResumeButton.IsEnabled = connected && (_paused || _interrupting);
         CancelButton.IsEnabled = connected;
         AuthorityButton.Visibility = _playerMode ? Visibility.Visible : Visibility.Collapsed;
-        AuthorityButton.IsEnabled = connected && (_owner == "agent" || !_interrupting);
+        AuthorityButton.IsEnabled = connected && (_owner == "agent" || (_partnerReady && !_interrupting));
         AuthorityButton.Content = _owner == "agent" ? "玩家接管（F9）" : "交给 AI";
         RefreshSaveViewControls();
+        RefreshPartnerControls();
     }
 
     private void AddEntry(string label, string text)

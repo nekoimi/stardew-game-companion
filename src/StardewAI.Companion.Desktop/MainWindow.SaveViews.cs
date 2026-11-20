@@ -51,6 +51,7 @@ public partial class MainWindow
         HistoryOlderButton.IsEnabled = HistoryRefreshButton.IsEnabled && _historyBefore.HasValue;
         ReadProfileButton.IsEnabled = connected && !_savingPreferences;
         ProfileFields.IsEnabled = ReadProfileButton.IsEnabled && _profileRevision.HasValue;
+        CompanionIdentityFields.Visibility = _activeSource == "external" ? Visibility.Collapsed : Visibility.Visible;
         RefreshMemoryControls(connected);
     }
 
@@ -206,7 +207,8 @@ public partial class MainWindow
     private async void ReadProfileClicked(object sender, RoutedEventArgs e) => await ReadPreferencesAsync();
 
     private Task ReadPreferencesAsync() => UpdatePreferencesAsync("/v1/profile", game => new { gameSessionId = game },
-        result => { ApplyProfile(result); ApplyInitiative(result); }, "已读取当前存档的伙伴设置。");
+        result => { ApplyProfile(result); ApplyInitiative(result); }, _activeSource == "external"
+            ? "原伙伴的人格由原客户端管理。" : "已读取当前存档的伙伴设置。");
 
     private async void SaveProfileClicked(object sender, RoutedEventArgs e)
     {

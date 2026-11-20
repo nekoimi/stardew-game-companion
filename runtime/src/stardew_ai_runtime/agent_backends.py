@@ -599,13 +599,26 @@ class DshBackend:
         if Path(executable).suffix.lower() in {".cmd", ".ps1"}:
             # npm shims are not native executables. Use their declared JS entry,
             # never pass prompt text or credentials through a command shell.
-            package = Path(executable).parent / "node_modules" / "@deepseek-ai" / "dsh"
+            shim = Path(executable)
+            package = shim.parent / "node_modules" / "@deepseek-ai" / "dsh"
+            if not (package / "package.json").is_file() and tuple(part.casefold() for part in shim.parts[-5:]) == (
+                    "resources", "runtime", "cli", "bin", "dsh.cmd"):
+                host = shim.parents[4] / "DeepSeek Harness.exe"
+                archive = shim.parents[3] / "app.asar"
+                if host.is_file() and archive.is_file():
+                    entry = archive / "dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"
+                    return [str(host), "--expose-internals", str(entry)]
             manifest = json.loads((package / "package.json").read_text(encoding="utf-8"))
-            node = shutil.which("node")
+            sibling = shim.parent / "node.exe"
+            node = str(sibling) if sibling.is_file() else shutil.which("node")
             if not node:
                 raise FileNotFoundError("dsh npm installation requires Node.js")
             return [node, str(package / manifest["bin"]["dsh"])]
         return [executable]
+
+    @staticmethod
+    def _launch_env(command: list[str], environment: dict[str, str]) -> dict[str, str]:
+        return {**environment, "ELECTRON_RUN_AS_NODE": "1"} if "--expose-internals" in command else environment
 
     def close(self) -> None:
         proc, self._process = self._process, None
@@ -702,9 +715,10 @@ class DshBackend:
         # Each process owns its diagnostics. A late daemon reader only updates
         # its captured state, even if this backend has already restarted.
         diagnostic_state = self._diagnostic_state = {"code": "DSH_RUNTIME_FAILED"}
+        command = self._command()
         self._process = subprocess.Popen(
-            [*self._command(), "--profile", "sdk-minimal", "--patch", str(patch)],
-            cwd=str(self.run_dir), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            [*command, "--profile", "sdk-minimal", "--patch", str(patch)],
+            cwd=str(self.run_dir), env=self._launch_env(command, env), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -997,8 +1011,7 @@ class McodeBackend:
         temp.replace(path)
         return workspace
 
-    def _command(self, executable: str, workspace: Path, session_id: str | None) -> list[str]:
-        prefix = [executable]
+    def _launch_args(self, executable: str, *, cancel_hook: bool = True) -> list[str]:
         if Path(executable).suffix.lower() in {".cmd", ".ps1"}:
             import shutil
             # npm shims invoke cmd.exe; run their JS entry directly so neither
@@ -1008,8 +1021,12 @@ class McodeBackend:
             node = str(sibling) if sibling.is_file() else shutil.which("node")
             if not node or not entry.is_file():
                 raise FileNotFoundError("Repair the MiniMax Code npm installation and Node.js")
-            prefix = [node, "--import", Path(__file__).with_name("mcode_cancel.mjs").resolve().as_uri(), str(entry)]
-        cmd = [*prefix, "exec", "--cwd", str(workspace),
+            hook = ["--import", Path(__file__).with_name("mcode_cancel.mjs").resolve().as_uri()] if cancel_hook else []
+            return [node, *hook, str(entry)]
+        return [executable]
+
+    def _command(self, executable: str, workspace: Path, session_id: str | None) -> list[str]:
+        cmd = [*self._launch_args(executable), "exec", "--cwd", str(workspace),
                "--output-format", "stream-json", "--permission", "full",
                "--input", "-"]
         if self.model:

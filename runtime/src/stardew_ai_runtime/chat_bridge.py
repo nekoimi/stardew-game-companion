@@ -1112,6 +1112,8 @@ class ChatBridge:
         kimi_cmd: str | None = None,
         mcode_cmd: str | None = None,
         pi_cmd: str | None = None,
+        codex_cmd: str | None = None,
+        dsh_cmd: str | None = None,
         internal_plan_client: Any | None = None,
         enable_plan_worker: bool = True,
     ):
@@ -1134,6 +1136,8 @@ class ChatBridge:
         self.kimi_cmd = kimi_cmd or "kimi.exe"
         self.mcode_cmd = mcode_cmd or "mcode"
         self.pi_cmd = pi_cmd or "pi"
+        self.codex_cmd = codex_cmd or "codex.exe"
+        self.dsh_cmd = dsh_cmd or "dsh"
         # Game-only Kimi agent profile (new sessions only; resumed sessions keep theirs).
         self.agent = configured.get("agent")
         configured_agent_file = configured.get("agentFile")
@@ -1260,21 +1264,23 @@ class ChatBridge:
         return bool(binding and binding.get("enabled", True)
                     and getattr(self, "_external_status", None) == "connected")
 
-    async def _send_connection_state(self, ws, *, request_id=None, error=None):
+    def _connection_projection(self) -> dict[str, Any]:
         from .external_connection import read_binding
         source = getattr(self, "connection_source", "builtin")
         binding = read_binding(self.run_dir) if source == "external" else None
-        status = ("error" if error else "connected" if source == "builtin" else
-                  getattr(self, "_external_status", "waiting"))
-        payload = {"source": source, "status": status,
+        status = "connected" if source == "builtin" else getattr(self, "_external_status", "waiting")
+        return {"source": source, "status": status,
             "clientName": binding.get("clientName") if binding else self.backend_name if source == "builtin" else None,
             "conversationName": binding.get("conversationName") if binding else None,
             "interactionMode": "automatic" if source == "builtin" or binding else "waiting",
             "exclusiveClientRequired": source == "external"}
+
+    async def _send_connection_state(self, ws, *, request_id=None, error=None):
+        payload = self._connection_projection()
         if request_id:
             payload["requestId"] = request_id
         if error:
-            payload["error"] = error
+            payload.update(status="error", error=error)
         if payload == getattr(self, "_connection_state_sent", None):
             return
         envelope = Envelope("0.1", "connection.state", "msg-" + uuid.uuid4().hex,
@@ -1362,13 +1368,14 @@ class ChatBridge:
                 if self.run_dir is None:
                     raise ValueError("dsh backend requires a game run directory")
                 self._backend = DshBackend(self.run_dir, model=self.model or "deepseek-flash", effort=self.effort,
+                    command=self.dsh_cmd,
                     progress=getattr(self, "_backend_progress_callback", None))
             elif self.backend_name == "codex":
                 if self.run_dir is None:
                     raise ValueError("Codex backend requires a game run directory")
                 self._backend = CodexBackend(
                     run_dir=self.run_dir, model=self.model or "",
-                    effort=self.effort,
+                    effort=self.effort, command=self.codex_cmd,
                     http_provider=os.environ.get("STARDEW_CODEX_HTTP_PROVIDER") or load_chat_backend_config().get("httpProvider") or None,
                     progress=getattr(self, "_backend_progress_callback", None),
                 )

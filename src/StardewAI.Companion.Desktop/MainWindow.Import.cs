@@ -30,7 +30,7 @@ public partial class MainWindow
             var nested = DesktopSession.ModDirectory(source);
             if (File.Exists(Path.Combine(nested, "manifest.json"))) source = nested;
             string message = dataOnly
-                ? "复制旧安装中的工作、历史和伙伴记忆？后续使用这个绿色包的 Pi 会话。"
+                ? "复制旧安装中的工作、历史和伙伴记忆？后续使用这个绿色包已选择的伙伴来源。"
                 : "复制旧安装中的工作、历史、伙伴记忆和已有 Pi 会话？导入会保留原安装。";
             if (MessageBox.Show(this, message, "导入旧安装数据", MessageBoxButton.YesNo,
                     MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
@@ -42,7 +42,9 @@ public partial class MainWindow
         try
         {
             var result = await DesktopSession.ImportAsync(_root, source, dataOnly);
-            ImportFeedback.Text = $"已导入 {Number(result, "dataFiles")} 份数据，接续 {Number(result, "sessions")} 个 Pi 会话。启动游戏后进入对应存档。";
+            int sessions = Number(result, "sessions") ?? 0;
+            ImportFeedback.Text = $"已导入 {Number(result, "dataFiles")} 份数据，复制 {sessions} 个 Pi 会话。"
+                + (sessions > 0 ? "选择本机 Pi 并进入对应存档可接续原会话。" : "启动游戏后进入对应存档。");
         }
         catch (Exception ex) { ImportFeedback.Text = ex.Message; }
         finally

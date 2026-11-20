@@ -12,7 +12,10 @@ using Microsoft.Win32;
 
 namespace StardewAI.Companion.Desktop;
 
-internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "companion", string Model = "", string PiPath = "");
+internal sealed record ClientPreferences(string Model = "", string Path = "");
+internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "companion", string Model = "", string PiPath = "",
+    string Backend = "pi", string ConnectionSource = "builtin", Dictionary<string, ClientPreferences>? Clients = null,
+    string OriginalWorkspace = "", string OriginalDataDirectory = "", string OriginalClient = "", string OriginalName = "");
 
 internal sealed class DesktopSession
 {
@@ -55,7 +58,7 @@ internal sealed class DesktopSession
         var config = File.Exists(configPath) ? JsonNode.Parse(File.ReadAllText(configPath))?.AsObject() : new JsonObject();
         if (config is null) throw new InvalidDataException("伙伴设置文件无效。");
         config["Mode"] = settings.ActorMode;
-        config["ConnectionSource"] = "builtin";
+        config["ConnectionSource"] = settings.ConnectionSource;
         config["ConnectionSourceChosen"] = true;
         WriteJson(configPath, config);
         WriteJson(SettingsFile, settings);
@@ -67,13 +70,14 @@ internal sealed class DesktopSession
             RedirectStandardOutput = true, RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
         };
+        var client = settings.Clients?.GetValueOrDefault(settings.Backend) ?? new(settings.Model, settings.PiPath);
         foreach (string argument in new[] { "-B", "-m", "stardew_ai_runtime.desktop_service", "--run-dir", _mod,
             "--owner-pid", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--model", settings.Model, "--pi-cmd", settings.PiPath })
+            "--backend", settings.Backend, "--model", client.Model, "--client", client.Path })
             runtimeStart.ArgumentList.Add(argument);
         runtimeStart.Environment["STARDEW_DESKTOP_TOKEN"] = credential;
         runtimeStart.Environment["STARDEW_BRIDGE_STOP_FILE"] = _stopFile;
-        runtimeStart.Environment["STARDEW_CONNECTION_SOURCE"] = "builtin";
+        runtimeStart.Environment["STARDEW_CONNECTION_SOURCE"] = settings.ConnectionSource;
         runtimeStart.Environment["PYTHONUTF8"] = "1";
         // The desktop starts a portable runtime next to its own Mod.
         runtimeStart.Environment.Remove("STARDEW_CHAT_BACKEND_CONFIG");
@@ -134,11 +138,11 @@ internal sealed class DesktopSession
         _game.BeginErrorReadLine();
     }
 
-    public async Task<JsonElement> PostAsync(string route, object body)
+    public async Task<JsonElement> PostAsync(string route, object body, int timeoutSeconds = 25)
     {
         var client = _client ?? throw new InvalidOperationException("伴侣服务尚未启动。");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(25));
+        timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         using var response = await client.PostAsJsonAsync(route, body, timeout.Token);
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: timeout.Token);
         if (response.IsSuccessStatusCode) return payload;

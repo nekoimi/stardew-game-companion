@@ -3,7 +3,9 @@ import json
 
 import httpx
 
-from stardew_ai_runtime.desktop_service import DesktopBridge, DesktopError, create_app
+from stardew_ai_runtime.agent_backends import CodexBackend, DshBackend, McodeBackend
+from stardew_ai_runtime.desktop_service import DesktopBridge, DesktopError, check_client, create_app
+from stardew_ai_runtime.external_connection import write_binding
 
 
 class DesktopHarness(DesktopBridge):
@@ -240,3 +242,91 @@ def test_desktop_memory_edits_share_revision_and_stay_in_the_loaded_save(tmp_pat
 
     asyncio.run(verify())
     assert bridge._memory_store.list("OtherFarm")["entries"][0]["text"] == "保留原来的约定"
+
+
+def test_desktop_waits_for_external_partner_without_losing_native_controls(tmp_path, monkeypatch):
+    monkeypatch.setenv("STARDEW_CONNECTION_SOURCE", "external")
+    bridge = DesktopHarness(tmp_path)
+    bridge._sessions["pi:Farm_1"] = "builtin"
+
+    async def verify():
+        transport = httpx.ASGITransport(app=create_app(bridge, "token"))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1",
+                                     headers={"Authorization": "Bearer token"}) as client:
+            status = (await client.get("/v1/status")).json()
+            assert status["ready"] and not status["connection"]["ready"]
+            game = {"gameSessionId": "session-a"}
+            assert (await client.post("/v1/commands", json={**game, "requestId": "old", "text": "收菜"})).status_code == 409
+            assert (await client.post("/v1/control", json={**game, "action": "handoff"})).status_code == 409
+            assert (await client.post("/v1/control", json={**game, "action": "takeover"})).status_code == 200
+            assert (await client.post("/v1/memory", json=game)).status_code == 200
+            assert (await client.post("/v1/profile", json={**game, "expectedRevision": 0,
+                                     "patch": {"personality": "calm"}})).status_code == 409
+            await asyncio.gather(*bridge.turns)
+
+    asyncio.run(verify())
+    assert bridge.calls == [("takeover", {})] and not bridge.requests
+    assert bridge._backend is None and bridge.get_conversation_id("Farm_1") is None
+
+
+def test_desktop_requires_explicit_original_session_and_idle_confirmation(tmp_path, monkeypatch):
+    monkeypatch.setenv("STARDEW_CONNECTION_SOURCE", "external")
+    bridge = DesktopHarness(tmp_path)
+    write_binding(tmp_path, {"adapter": "mcode-acp", "providerSessionId": "original", "cwd": str(tmp_path),
+                             "originalClientIdleAcknowledged": True, "enabled": False})
+    calls = []
+
+    async def launch(**kwargs):
+        calls.append(kwargs)
+        return {"attached": True}
+
+    bridge.partner.launch = launch
+    executable = tmp_path / "mcode.cmd"
+    executable.touch()
+
+    async def verify():
+        transport = httpx.ASGITransport(app=create_app(bridge, "token"))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1",
+                                     headers={"Authorization": "Bearer token"}) as client:
+            request = {"action": "attach", "cwd": str(tmp_path), "client": str(executable), "sessionId": "original"}
+            assert (await client.post("/v1/partner", json=request)).status_code == 409
+            request["originalClientIdle"] = True
+            assert (await client.post("/v1/partner", json={**request, "sessionId": "different"})).status_code == 409
+            assert (await client.post("/v1/partner", json=request)).status_code == 200
+
+    asyncio.run(verify())
+    assert [call["session"] for call in calls] == ["original"]
+
+
+def test_backend_selection_keeps_provider_specific_session_and_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("STARDEW_CONNECTION_SOURCE", "builtin")
+    codex = DesktopBridge(tmp_path, "", "selected-codex.exe", backend="codex")
+    codex.record_conversation_id("farm", "codex-original")
+    dsh = DesktopBridge(tmp_path, "", "selected-dsh.cmd", backend="dsh")
+    dsh.record_conversation_id("farm", "dsh-original")
+    mcode = DesktopBridge(tmp_path, "", "selected-mcode.cmd", backend="mcode")
+
+    assert isinstance(codex._get_backend(), CodexBackend) and codex._get_backend().command == "selected-codex.exe"
+    assert isinstance(dsh._get_backend(), DshBackend) and dsh._get_backend().model == "deepseek-flash"
+    assert dsh._get_backend().command == "selected-dsh.cmd"
+    assert isinstance(mcode._get_backend(), McodeBackend) and mcode._get_backend().command == "selected-mcode.cmd"
+    assert mcode.get_conversation_id("farm") is None
+    assert dsh.get_conversation_id("farm") == "dsh-original"
+    assert codex.get_conversation_id("farm") == "codex-original"
+
+
+def test_dsh_desktop_installation_is_version_checked_without_cmd_shell(tmp_path, monkeypatch):
+    base = tmp_path / "DeepSeek Harness"
+    shim = base / "resources/runtime/cli/bin/dsh.cmd"
+    shim.parent.mkdir(parents=True)
+    shim.touch()
+    host = base / "DeepSeek Harness.exe"
+    host.touch()
+    (base / "resources/app.asar").touch()
+    calls = []
+    monkeypatch.setattr("stardew_ai_runtime.desktop_service.subprocess.run", lambda command, **kw: calls.append((command, kw)))
+
+    assert check_client(tmp_path, "dsh", str(shim)) == str(shim)
+    command, options = calls[0]
+    assert command[0] == str(host) and command[-1] == "--version"
+    assert options["env"]["ELECTRON_RUN_AS_NODE"] == "1" and not options.get("shell")
