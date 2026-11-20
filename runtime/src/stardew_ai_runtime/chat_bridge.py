@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from stardew_ai_runtime.agent_instructions import instructions_revision, load_instruction_bundle
-from stardew_ai_runtime.agy_process import run_agy_process
+from stardew_ai_runtime.agy_process import run_agy_process, terminate_agy_process
 from stardew_ai_runtime.autonomy import AutonomyController
 from stardew_ai_runtime.chat_backend_config import load_chat_backend_config, project_root
 from stardew_ai_runtime.codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
@@ -66,7 +66,6 @@ from stardew_ai_runtime.job_feedback import (
 from stardew_ai_runtime.kimi_wire_usage import read_usage_since, wire_offset
 from stardew_ai_runtime.life_chat import LifeChatService
 from stardew_ai_runtime.owner_process import OwnerProcessGuard
-from stardew_ai_runtime.provider_registry import EXTERNAL_PROVIDER, PROVIDERS, ProviderOptions, cancel_provider
 from stardew_ai_runtime.plan_executor import (
     DispatchDeferred,
     PlanExecutor,
@@ -85,6 +84,12 @@ from stardew_ai_runtime.protocol import (
     LifeProfileSetPayload,
     MilestoneNode,
     ProtocolError,
+)
+from stardew_ai_runtime.provider_registry import (
+    EXTERNAL_PROVIDER,
+    PROVIDERS,
+    ProviderOptions,
+    cancel_provider,
 )
 from stardew_ai_runtime.scheduler import (
     DiscoveryError,
@@ -1756,12 +1761,21 @@ class ChatBridge:
             proc = self._active_task.process
             if proc and proc.poll() is None:
                 try:
-                    cancel_provider(self._backend, proc)
+                    self._cancel_provider_process(proc)
                     logger.info("Cancelled %s game turn (owned process pid=%s)", self.backend_name, getattr(proc, "pid", None))
                 except Exception as ex:
                     logger.debug("Error killing process: %s", ex)
             if self._active_task.async_task and not self._active_task.async_task.done():
                 self._active_task.async_task.cancel()
+
+    def _cancel_provider_process(self, proc: Any) -> None:
+        """Stop an owned provider process using its provider-specific tree policy."""
+        if self.backend_name == "agy":
+            # Keep the module-level seam so integrations can replace the tree
+            # terminator without changing provider registry state.
+            terminate_agy_process(proc)
+            return
+        cancel_provider(self._backend, proc)
 
     def _preempt_autonomy_for_player(self, request_id: str) -> bool:
         """Invalidate an autonomous generation before accepting player work."""
@@ -3624,7 +3638,7 @@ class ChatBridge:
         proc = active_task.process
         if proc is not None and proc.poll() is None:
             try:
-                cancel_provider(self._backend, proc)
+                self._cancel_provider_process(proc)
             except Exception:
                 logger.warning("Could not stop interrupted provider", exc_info=True)
         while True:
@@ -4920,7 +4934,8 @@ class ChatBridge:
                 tokens_used=display_usage.get("total_tokens") if display_usage else None,
                 prompt_tokens=display_usage.get("input_tokens") if display_usage else None,
                 output_tokens=display_usage.get("output_tokens") if display_usage else None,
-                cached_tokens=usage_delta["cache_read_tokens"] if usage_delta else None,
+                cached_tokens=(usage_delta.get("cache_read_tokens", usage_delta.get("cache_read_input_tokens"))
+                               if usage_delta else None),
                 conversation_id=cid,
                 error="PLAYER_CANCELLED" if native_ok else "NATIVE_CANCEL_UNCONFIRMED",
                 usage_source="db_gen_metadata_delta_cancelled" if usage_delta else "cancelled",
