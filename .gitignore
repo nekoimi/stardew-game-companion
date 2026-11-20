@@ -101,8 +101,6 @@ MagicMock/
 !/tools/bootstrap-dotnet.ps1
 !/tools/build-mod.ps1
 !/tools/build-release.py
-!/tools/install-release.ps1
-!/tools/apply-update.ps1
 !/tools/release-package.ps1
 !/tools/candidate-package.ps1
 !/tools/check_release_boundaries.py
@@ -114,7 +112,6 @@ MagicMock/
 !/tools/setup-companion.ps1
 !/tools/start-companion.ps1
 !/tools/test.ps1
-!/tools/view-usage.py
 !/tools/run-companion-presets.ps1
 !/tools/companion_acceptance/
 !/tools/launch-game.ps1

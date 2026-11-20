@@ -16,7 +16,7 @@
 
 涉及掉落物时，旁观玩家停在远离任务区的农场可通行位置，并核对实际落点，避免抢先吸取物品或被农舍入口重定位后堵门。
 
-运行 `tools/run-companion-presets.ps1 -ReleaseDir <完整包目录>`。默认三组即完整回归；用 `-Cases care-guidance` 可只复测对应组。原有 water-refill、harvest-store、rest-water、mature-trees、walk-pickup、walk-pickup-full 保留为故障定位子场景，不重复加入默认回归。
+运行 `tools/run-companion-presets.ps1 -ReleaseDir <新解压的绿色包目录>`。脚本从中复制 Mod 到隔离目录，并为该实例加入源码测试启动脚本。默认执行三组，也可用 `-Cases care-guidance` 单独复测。
 
 需要已登录 mcode、游戏和本地春季基础存档；可用 `-SavePath <存档目录>` 指定只读来源。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒；此预算属于测试，不是生产模型整轮时限。
 

@@ -40,7 +40,12 @@ function Read-VerifiedRelease([string]$Root, [switch]$FullVerify) {
     if ($package.manifestType -ne 'windows-release' -or $package.schemaVersion -ne 1 -or
         $package.platform -ne 'windows-x64' -or $package.python -ne 'runtime/python/python.exe') { throw 'Unsupported release package.' }
     $seen = @{}
-    $requiredFiles = @('manifest.json', 'stardewai.companion.mod.dll', 'runtime/python/python.exe', 'runtime/src/stardew_ai_runtime/chat_bridge.py', 'tools/start-companion.ps1')
+    $requiredFiles = @('manifest.json', 'stardewai.companion.mod.dll', 'runtime/python/python.exe', 'runtime/src/stardew_ai_runtime/chat_bridge.py')
+    if ($package.distribution -eq 'desktop') {
+        $requiredFiles += @('desktop-providers.json', 'runtime/src/stardew_ai_runtime/desktop_service.py')
+    } else {
+        $requiredFiles += 'tools/start-companion.ps1'
+    }
     $requiredFiles += @('docs/agent-core-instructions-draft.md', 'docs/agent-domain-guidance-draft.md', 'agent-skills/stardew-companion/SKILL.md')
     $requiredFiles += 'agent-skills/stardew-companion/references/ingame-execution.md'
     foreach ($topic in @('crop-selection','farm-region','livestock-processing','procurement-travel','wiki-lookup','daily-rhythm')) { $requiredFiles += "docs/agent-guidance/$topic.md" }

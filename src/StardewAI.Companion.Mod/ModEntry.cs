@@ -86,12 +86,19 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
     public override void Entry(IModHelper helper)
     {
+        if (!_desktopMode && File.Exists(Path.Combine(helper.DirectoryPath, "desktop-providers.json"))
+            && !File.Exists(Path.Combine(helper.DirectoryPath, "tools", "start-companion.ps1")))
+        {
+            Monitor.Log("请从绿色包根目录打开「星露谷游戏伴侣.exe」，再点击「启动游戏」。", LogLevel.Warn);
+            return;
+        }
+
         Monitor.Log("Stardew AI Companion initializing Stage 0 mechanics and transport.", LogLevel.Info);
 
         _config = Helper.ReadConfig<ModConfig>();
         _connectionState.Initialize(_config.ConnectionSource);
         _config.ConnectionSource = _connectionState.Source;
-        if (!_desktopMode) InitializeUpdates();
+        _savedMode = _config.Mode;
         if (!_desktopMode && !PlayerModeEnabled) CompanionMenuClock.Install();
         _discoveryService = new DiscoveryService(helper.DirectoryPath, Monitor);
         _conversationStore = new CompanionConversationStore(Path.Combine(helper.DirectoryPath, "data", "conversations"));
@@ -716,7 +723,6 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     {
         while (_mainThreadActions.TryDequeue(out var action)) action();
         MeasureDesktopPhase("callbacks");
-        if (!_desktopMode) ShowPendingUpdate();
         _thinking?.Tick();
         TickUnattendedPassoutGuard();
         if (!_desktopMode && PlayerModeEnabled && e.IsMultipleOf(30) && _coordinator != null && _transportServer != null)

@@ -1,0 +1,22 @@
+Stardew Game Companion (星露谷游戏伴侣)
+
+Original project: Stardew Valley Agent (星露谷 AI 伙伴)
+Copyright 2026 CSXizhang and contributors
+Source: https://github.com/CSXizhang/star
+Based on revision cd05c4f1b0fdd93717e4f4070be863a275056882.
+
+Modifications in Stardew Game Companion
+Copyright 2026 nekoimi and contributors
+Source: https://github.com/nekoimi/star
+
+This independent distribution modifies the original work. Changes include
+the Windows desktop launcher, model integrations, portable packaging,
+gameplay and reliability fixes, and documentation. The Git history records
+individual contributions and changes.
+
+This project is licensed under the Apache License, Version 2.0.
+See LICENSE for the license terms. The portable distribution also carries
+license notices for the bundled .NET, Python, and Python dependencies.
+
+This is an unofficial project. Stardew Valley, SMAPI, and third-party
+software and services retain their respective names, rights, and terms.

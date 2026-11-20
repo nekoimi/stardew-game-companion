@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "stardew-ai-runtime"
 version = "0.1.0"
-description = "Out-of-process runtime for Stardew AI Companion"
+description = "Out-of-process runtime for Stardew Game Companion"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [

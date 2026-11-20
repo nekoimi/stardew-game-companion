@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    星露谷 AI 伙伴一键设置向导 (Stardew AI Companion Setup Wizard)
+    星露谷游戏伴侣的源码开发安装工具。
 .DESCRIPTION
     图形化/自动化配置工具：自动检测游戏目录、安全安装纯净生产 Mod、向 AI 客户端注册 MCP 服务。
     支持 Windows 原生 WinForms 界面双击运行，亦支持命令行参数无人值守自动化测试。
@@ -11,7 +11,6 @@ param(
     [string]$TargetModDir = "",
     [ValidateSet('agy', 'kimi', 'codex', 'dsh', 'mcode', 'pi', 'claude', 'all', 'none')][string]$Agent = 'kimi',
     [string]$Model = "",
-    [ValidateSet('default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$Effort = '',
     [switch]$AutoInstall,
     [switch]$DryRun,
     [switch]$CheckOnly,
@@ -25,16 +24,6 @@ $OutputEncoding = (New-Object System.Text.UTF8Encoding($false))
 # 1. 路径与常量解析 (基于脚本位置动态推导，杜绝个人绝对路径常量)
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
-if (Test-Path -LiteralPath (Join-Path $repoRoot 'release-manifest.json')) {
-    if ($Agent -notin @('kimi', 'agy', 'codex', 'dsh', 'mcode', 'pi', 'none')) { throw 'Release chat supports kimi, agy, codex, dsh, mcode or pi; use register-mcp.ps1 for other MCP clients.' }
-    $releaseArgs = @{}
-    foreach ($key in @('GameDir', 'TargetModDir', 'Agent', 'Model', 'Effort', 'AutoInstall', 'DryRun', 'CheckOnly')) {
-        if ($PSBoundParameters.ContainsKey($key)) { $releaseArgs[$key] = $PSBoundParameters[$key] }
-    }
-    & (Join-Path $scriptDir 'install-release.ps1') @releaseArgs
-    exit 0
-}
-if ($PSBoundParameters.ContainsKey('Effort')) { throw 'Explicit Effort is supported by the verified release installer; use tools/install-release.ps1 from the release package.' }
 $distSourceDir = Join-Path $repoRoot "artifacts\dist\StardewAI.Companion.Mod"
 $runtimeDir = Join-Path $repoRoot "runtime"
 $detectScript = Join-Path $scriptDir "detect-game.ps1"
@@ -575,13 +564,6 @@ $txtLog.Text = "向导已就绪。点击下方【一键完成设置】即可自�
 $grpLog.Controls.Add($txtLog)
 
 # 底部按钮区
-$btnViewUsage = New-Object System.Windows.Forms.Button
-$btnViewUsage.Text = "查看 Token 使用记录"
-$btnViewUsage.Location = New-Object System.Drawing.Point(20, 500)
-$btnViewUsage.Size = New-Object System.Drawing.Size(160, 32)
-$btnViewUsage.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
-$form.Controls.Add($btnViewUsage)
-
 $btnApply = New-Object System.Windows.Forms.Button
 $btnApply.Text = "一键完成设置 (安装 Mod + 注册 MCP)"
 $btnApply.Location = New-Object System.Drawing.Point(240, 500)
@@ -697,21 +679,6 @@ $btnApply.Add_Click({
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information
     )
-})
-
-$btnViewUsage.Add_Click({
-    $pyExe = Join-Path $repoRoot "runtime\.venv\Scripts\python.exe"
-    if (-not (Test-Path -LiteralPath $pyExe)) { $pyExe = "python.exe" }
-    $usageScript = Join-Path $scriptDir "view-usage.py"
-    $htmlOut = Join-Path $repoRoot "artifacts\reports\usage-report.html"
-    try {
-        Start-Process -FilePath $pyExe -ArgumentList @($usageScript, "--html", $htmlOut) -Wait -NoNewWindow
-        if (Test-Path -LiteralPath $htmlOut) {
-            Start-Process $htmlOut
-        }
-    } catch {
-        [System.Windows.Forms.MessageBox]::Show("无法启动使用记录脚本: $_", "提示", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-    }
 })
 
 $btnClose.Add_Click({ $form.Close() })

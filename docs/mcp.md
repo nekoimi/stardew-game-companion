@@ -1,6 +1,6 @@
-# MCP 与聊天接入
+# 源码调试与 MCP 接入
 
-本项目保留“游戏内启动伙伴”和“已有 AI 会话主动连接”两条路径，共用游戏观察、聊天和原生执行。0.3.22 的已有会话自动接入支持 MiniMax Code；其他客户端仍可使用下文的手动工具接入，不能据此认定游戏聊天已送回其原会话。模型客户端需要自行安装和登录；0.3.22 完整包已包含双路径接入。
+玩家从「星露谷游戏伴侣.exe」启动，在桌面选择本机模型客户端或接续已有 MiniMax Code 会话。两种来源共用游戏观察和原生执行。下文的手动适配器、MCP 注册与游戏内启动命令面向源码调试，也适用于曾发布的旧 Mod 安装。[绿色版使用说明](desktop-portable.md)
 
 ## 已有 MiniMax Code 伙伴主动连接
 
@@ -47,13 +47,13 @@ $python = Join-Path $mod "runtime\python\python.exe"
 
 以下是已有的独立手动工具入口，不包含上面的原会话自动消息回传；与游戏内启动路径的会话仍分开。不要在外部自动适配器已连接时另开手动派工来源。
 
-发行包安装完成后，在 PowerShell 运行实际安装目录里的脚本；`-ProjectDir` 指向你准备在 Codex 打开的已有文件夹：
+从源码安装 Mod 后，在仓库根目录运行脚本；`-ProjectDir` 指向你准备在 Codex 打开的已有文件夹：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\你的游戏目录\Mods\StardewAI.Companion.Mod\tools\register-mcp.ps1" -RunDir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" -Agent codex -ProjectDir "C:\我的农场对话" -Install
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/register-mcp.ps1 -RunDir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" -Agent codex -ProjectDir "C:\我的农场对话" -Install
 ```
 
-脚本只写该项目的 `.codex/config.toml` 和 `.agents/skills/stardew-companion/SKILL.md`，保留其他配置；已有同名非脚本配置或不同技能内容时停止并说明冲突。省略 `-ProjectDir` 则使用脚本所在发行包或仓库根目录。发行包使用自带 Python，玩家无需编译或安装开发环境。升级后可重跑注册；若旧技能不同，先保留自己的修改，再移走旧技能让脚本安装新版。
+脚本写入该项目的 `.codex/config.toml` 和 `.agents/skills/stardew-companion/SKILL.md`，保留其他配置。遇到同名自定义配置或不同的技能内容时会停止。省略 `-ProjectDir` 时使用仓库根目录。
 
 在 Codex 打开并信任这个项目，加载工具后恢复原对话，输入 `$stardew-companion 来陪我玩星露谷吧`。可用 `codex mcp get stardew-companion` 检查配置，详见 [Codex MCP 文档](https://developers.openai.com/codex/mcp)及[技能文档](https://developers.openai.com/codex/skills)。
 
@@ -63,7 +63,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\你的游戏目录\M
 
 ## 源码开发接入
 
-源码开发者先按[参与开发](../CONTRIBUTING.md#从源码构建)构建和安装 Mod，通过 SMAPI 启动游戏并进入存档。Mod 会在自己的 `data` 目录下生成 `transport-discovery.json`，供 Runtime 发现本地连接。
+源码开发者先按[参与开发](../CONTRIBUTING.md#从源码构建)构建 Mod，再运行 `tools/setup-companion.ps1 -AutoInstall` 安装到开发用游戏。通过 SMAPI 启动并进入存档后，Mod 在自己的 `data` 目录下生成 `transport-discovery.json`。
 
 当前动作执行依赖 Mod DLL 与本地配对清单一致：干净克隆可从源码编译后运行 `tools/setup-companion.ps1` 生成 `local-dev` 绑定完成安装；缺少清单时返回 `COMPATIBILITY_UNKNOWN`，DLL 与清单不一致时返回 `MOD_RUNTIME_MISMATCH`（重新运行设置向导同步）。
 
@@ -115,7 +115,7 @@ uv run --project runtime python -m stardew_ai_runtime.chat_bridge --run-dir "C:\
 
 保持服务运行，在游戏中按 `F8` 打开对话。发送指令后窗口会关闭，让游戏动作继续；再次按 `F8` 可查看同一条指令的后续进度和完整回复。打开菜单会暂停农活动作的推进，关闭菜单后才会继续执行。
 
-生活菜单、记忆、节点规划，以及暂停、取消与暂缓计划的区别，见[玩家指南](companion-guide.md)。
+桌面的记忆、计划和工作控制见[使用指南](desktop-portable.md#和伙伴一起玩)。
 
 ## 常见问题
 

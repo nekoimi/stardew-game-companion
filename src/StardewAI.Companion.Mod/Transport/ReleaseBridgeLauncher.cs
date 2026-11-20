@@ -109,11 +109,8 @@ public static class ReleaseBridgeLauncher
         }
         foreach (var failure in new (string Marker, string Message)[]
         {
-            ("Run the setup entry first", "尚未配置 AI 客户端和模型，请运行伙伴目录里的“设置星露谷伙伴.cmd”。"),
-            ("Choose Kimi, agy, or Codex", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
-            ("Choose Kimi, agy, Codex, or dsh", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
-            ("Choose Kimi, agy, Codex, dsh, or mcode", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
-            ("Choose Kimi, agy, Codex, dsh, mcode, or pi", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
+            ("Run the setup entry first", "尚未配置 AI 客户端和模型，请检查伙伴设置。"),
+            ("Choose Kimi, agy,", "AI 客户端配置无效，请检查伙伴设置。"),
             ("Packaged Python could not import", "伙伴随包运行环境缺少依赖，请重新安装完整伙伴包。"),
             ("Release file missing", "伙伴安装文件缺失，请重新安装完整伙伴包。"),
             ("Release file changed", "伙伴安装文件与发行包不一致，请重新安装匹配的伙伴包。"),

@@ -12,6 +12,9 @@ MOD_DLL = "StardewAI.Companion.Mod.dll"
 REQUIRED = {MOD_DLL, "manifest.json", "runtime/python/python.exe",
             "runtime/src/stardew_ai_runtime/chat_bridge.py", "tools/start-companion.ps1"}
 REQUIRED.update(path.as_posix() for path in INSTRUCTION_FILES)
+DESKTOP_REQUIRED = (REQUIRED - {"tools/start-companion.ps1"}) | {
+    "desktop-providers.json", "runtime/src/stardew_ai_runtime/desktop_service.py",
+}
 
 
 def managed_path(root: Path, relative: str) -> Path:
@@ -35,6 +38,7 @@ def verify_release(root: Path, *, full: bool = True) -> dict:
         raise ValueError("Unsupported release manifest")
     if package.get("python") != "runtime/python/python.exe" or package.get("platform") != "windows-x64":
         raise ValueError("Unsupported release runtime layout")
+    required = DESKTOP_REQUIRED if package.get("distribution") == "desktop" else REQUIRED
     seen = set()
     hashes = {}
     for entry in package.get("files", []):
@@ -43,7 +47,7 @@ def verify_release(root: Path, *, full: bool = True) -> dict:
         if canonical in seen:
             raise ValueError(f"Duplicate release file: {relative}")
         seen.add(canonical)
-        if not full and relative not in REQUIRED:
+        if not full and relative not in required:
             continue
         target = managed_path(root, relative)
         if not target.is_file():
@@ -52,7 +56,7 @@ def verify_release(root: Path, *, full: bool = True) -> dict:
         if actual != entry["sha256"].lower():
             raise ValueError(f"Release file changed: {relative}; reinstall the matching package")
         hashes[relative] = actual
-    if not REQUIRED.issubset(hashes):
+    if not required.issubset(hashes):
         raise ValueError("Release manifest omits required production files")
     native = json.loads((root / "manifest.json").read_text(encoding="utf-8-sig"))
     if (hashes[MOD_DLL] != package.get("modSha256", "").lower()

@@ -1,8 +1,8 @@
 {
-  "Name": "星露谷物语Stardew Valley Agent",
-  "Author": "CSXizhang",
+  "Name": "星露谷游戏伴侣",
+  "Author": "nekoimi 和贡献者（原项目作者 CSXizhang）",
   "Version": "0.3.22",
-  "Description": "通过自然语言和 MCP 指挥农场伙伴，完成种植、浇水、收获和物品管理。开发中。",
+  "Description": "为星露谷游戏伴侣提供世界观察、游戏动作与控制权管理。",
   "UniqueID": "CSXizhang.StardewAICompanion",
   "EntryDll": "StardewAI.Companion.Mod.dll",
   "MinimumApiVersion": "4.2.1",

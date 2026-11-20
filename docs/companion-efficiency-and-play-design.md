@@ -49,7 +49,7 @@
 
 ## 2 发布基线与待解决的问题
 
-0.3.21 发布记录报告固定三组伙伴实机回归通过，覆盖浇水补水、中途追加要求、收获拾取入箱出货，以及休息后采木并保留幼树。这是后续连续行动的基础，尚不证明新能力学习、完整跟随或跨启动会话复用已经完成。[0.3.21 更新说明](release-notes-0.3.21.md)、[可重复伙伴实机验收](repeatable-companion-acceptance.md)。
+原项目 0.3.21 报告了固定三组伙伴实机回归，覆盖浇水补水、中途追加要求、收获拾取入箱出货，以及休息后采木并保留幼树。每组任务的现行复测标准见[可重复伙伴实机验收](repeatable-companion-acceptance.md)。
 
 | 已有基础 | 仍需解决的问题 | 本次设计 |
 | --- | --- | --- |
@@ -576,9 +576,9 @@ flowchart TD
 
 ### 本项目
 
-- [0.3.21 更新说明](release-notes-0.3.21.md)：本次基线与已有实机结果。
+- [0.3.21 历史更新说明](https://github.com/nekoimi/star/blob/cd05c4f1b0fdd93717e4f4070be863a275056882/docs/release-notes-0.3.21.md)
 - [可重复伙伴实机验收](repeatable-companion-acceptance.md)：三组场景与隔离验证方法。
-- [玩家指南](companion-guide.md)、[自主生活与农场改造](farm-projects.md)：当前入口、持续经营与能力范围。
+- [桌面使用指南](desktop-portable.md)和[自主生活与农场改造](farm-projects.md)涵盖当前入口、持续经营与能力范围。
 - [游戏工具](../runtime/src/stardew_ai_runtime/game_tools.py)、[读档核对](../runtime/src/stardew_ai_runtime/game_reload.py)、[增量送达](../runtime/src/stardew_ai_runtime/prompt_delivery.py)：固定入口、即时执行与状态一致性。
 - [伙伴记忆](../runtime/src/stardew_ai_runtime/companion_memory.py)、[后端适配](../runtime/src/stardew_ai_runtime/agent_backends.py)、[mcode 原生压缩](../runtime/src/stardew_ai_runtime/mcode_compaction.py)：会话和记忆可复用基础。
 

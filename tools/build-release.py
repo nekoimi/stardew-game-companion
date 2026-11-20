@@ -1,8 +1,4 @@
-"""Build a relocatable Windows x64 player ZIP; Python/uv are build tools only.
-
-Usage: runtime/.venv/Scripts/python.exe tools/build-release.py --version 0.2.0
-       --mod-source artifacts/dist/StardewAI.Companion.Mod
-"""
+"""Build the portable Windows x64 desktop companion ZIP."""
 from __future__ import annotations
 
 import argparse
@@ -23,8 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_VERSION = "3.13.11"
 PYTHON_SHA256 = "1ec066fb61ba5e8c73e29e048cd07c26850f74585e3a116005135b31b8004890"
 MOD_FILES = ("manifest.json", "StardewAI.Companion.Mod.dll", "StardewAI.Companion.Mod.deps.json")
-TOOL_FILES = ("setup-companion.ps1", "start-companion.ps1", "register-mcp.ps1",
-              "candidate-package.ps1", "release-package.ps1", "install-release.ps1", "apply-update.ps1", "detect-game.ps1")
 
 
 def digest(path: Path) -> str:
@@ -91,36 +85,36 @@ def build(args) -> Path:
         raise ValueError("Production Mod DLL is not a Windows PE assembly")
     output = args.output.resolve()
     stage = output / f"stage-{args.version}"
-    desktop = getattr(args, "desktop_source", None)
-    package = (stage / "Mods" if desktop else stage) / "StardewAI.Companion.Mod"
-    name = "StardewGameCompanion" if desktop else "StardewAI.Companion.Mod"
-    archive = output / f"{name}-{args.version}-windows-x64.zip"
+    desktop = args.desktop_source.resolve()
+    package = stage / "Mods/StardewAI.Companion.Mod"
+    archive = output / f"StardewGameCompanion-{args.version}-windows-x64.zip"
     if stage.exists() or archive.exists():
         raise ValueError(f"Output already exists; select a fresh --output directory: {stage}")
+    launcher = "星露谷游戏伴侣.exe"
+    for name in (launcher, "coreclr.dll", "PresentationFramework.dll"):
+        if not (desktop / name).is_file():
+            raise ValueError(f"Desktop source must be a self-contained WPF publish: missing {name}")
     package.mkdir(parents=True)
-    if desktop:
-        desktop = desktop.resolve()
-        for name in ("星露谷游戏伴侣.exe", "coreclr.dll", "PresentationFramework.dll"):
-            if not (desktop / name).is_file():
-                raise ValueError(f"Desktop source must be a self-contained WPF publish: missing {name}")
-        for path in sorted(desktop.rglob("*")):
-            relative = path.relative_to(desktop)
-            if path.name in {"DotNet-LICENSE.txt", "DotNet-ThirdPartyNotices.txt"} or (
-                len(relative.parts) == 1 and path.suffix.lower() in {".exe", ".dll", ".json"}
-            ) or (
-                len(relative.parts) == 2 and path.name.endswith(".resources.dll")
-            ):
-                copy_file(path, stage / relative)
-        copy_file(ROOT / "docs/desktop-portable.md", stage / "使用说明.md")
-        copy_file(ROOT / "LICENSE", stage / "LICENSE")
+    for path in sorted(desktop.rglob("*")):
+        relative = path.relative_to(desktop)
+        if (
+            len(relative.parts) == 1 and (
+                path.name in {launcher, "DotNet-LICENSE.txt", "DotNet-ThirdPartyNotices.txt"}
+                or path.suffix.lower() in {".dll", ".json"}
+            )
+            or len(relative.parts) == 2 and path.name.endswith(".resources.dll")
+        ):
+            copy_file(path, stage / relative)
+    copy_file(ROOT / "docs/desktop-portable.md", stage / "使用说明.md")
+    copy_file(ROOT / "LICENSE", stage / "LICENSE")
+    copy_file(ROOT / "NOTICE", stage / "NOTICE")
+    copy_file(ROOT / "CHANGELOG.md", stage / "CHANGELOG.md")
     for name in MOD_FILES:
         copy_file(source / name, package / name)
     # PDBs can embed developer source paths; they are intentionally not shipped.
     for path in sorted((ROOT / "runtime/src/stardew_ai_runtime").rglob("*")):
         if path.suffix in {".py", ".mjs"}:
             copy_file(path, package / path.relative_to(ROOT))
-    for name in TOOL_FILES:
-        copy_file(ROOT / "tools" / name, package / "tools" / name)
     skill = Path("agent-skills/stardew-companion/SKILL.md")
     copy_file(ROOT / skill, package / skill)
     execution = Path("agent-skills/stardew-companion/references/ingame-execution.md")
@@ -131,22 +125,9 @@ def build(args) -> Path:
         copy_file(ROOT / "docs" / name, package / "docs" / name)
     for path in sorted((ROOT / "docs/agent-guidance").glob("*.md")):
         copy_file(path, package / path.relative_to(ROOT))
-    if desktop:
-        copy_file(ROOT / "config/usage-prices.example.json", package / "docs/usage-prices.example.json")
-    for name in ("设置星露谷伙伴.cmd", "启动伙伴服务.cmd", "LICENSE"):
-        copy_file(ROOT / name, package / name)
-    guide = (ROOT / "docs/release-guide.md").read_text(encoding="utf-8-sig")
-    guide = guide.replace("(companion-guide.md", "(docs/companion-guide.md").replace("(mcp.md", "(docs/mcp.md").replace("(../CONTRIBUTING.md)", "(CONTRIBUTING.md)")
-    guide = guide.replace("(pi-autonomous-agent.md", "(docs/pi-autonomous-agent.md")
-    (package / "使用说明.md").write_text(guide, encoding="utf-8")
-    copy_file(ROOT / "CONTRIBUTING.md", package / "CONTRIBUTING.md")
-    for name in ("release-guide.md", "companion-guide.md", "mcp.md", "farm-projects.md", "agent-self-integration.md",
-                 "companion-efficiency-and-play-design.md", "dual-connection-validation.md", "pi-autonomous-agent.md",
-                 "csharp-reliability-fixes.md"):
-        copy_file(ROOT / "docs" / name, package / "docs" / name)
-    release_notes = ROOT / "docs" / f"release-notes-{args.version}.md"
-    if release_notes.is_file():
-        copy_file(release_notes, package / "docs" / release_notes.name)
+    copy_file(ROOT / "LICENSE", package / "LICENSE")
+    copy_file(ROOT / "NOTICE", package / "NOTICE")
+    copy_file(ROOT / "config/usage-prices.example.json", package / "docs/usage-prices.example.json")
 
     cache = args.cache.resolve()
     cache.mkdir(parents=True, exist_ok=True)
@@ -198,14 +179,15 @@ def build(args) -> Path:
                 copy_file(path, licenses / metadata.name / path.relative_to(metadata))
     (licenses / "dependencies.json").write_text(json.dumps(dependencies, ensure_ascii=False, indent=2), encoding="utf-8")
     # Exercise stdlib, native wheels and actual app imports before writing hashes.
-    smoke = "import sqlite3,ssl,ctypes,win32api,win32job,mcp,pydantic_core,cryptography;import stardew_ai_runtime.chat_bridge,stardew_ai_runtime.mcp_server;print('portable-runtime-ok')"
-    if desktop:
-        smoke += ";import stardew_ai_runtime.desktop_service,stardew_ai_runtime.desktop_import"
+    smoke = (
+        "import sqlite3,ssl,ctypes,win32api,win32job,mcp,pydantic_core,cryptography;"
+        "import stardew_ai_runtime.chat_bridge,stardew_ai_runtime.mcp_server,"
+        "stardew_ai_runtime.desktop_service,stardew_ai_runtime.desktop_import"
+    )
     clean_env = {key: value for key, value in os.environ.items() if not key.startswith(("PYTHON", "STARDEW_"))}
     run([str(python), "-B", "-c", smoke], env=clean_env, cwd=str(output))
-    if desktop:
-        providers = run([str(python), "-B", "-m", "stardew_ai_runtime.provider_registry"], env=clean_env, cwd=str(output))
-        (package / "desktop-providers.json").write_text(providers + "\n", encoding="utf-8")
+    providers = run([str(python), "-B", "-m", "stardew_ai_runtime.provider_registry"], env=clean_env, cwd=str(output))
+    (package / "desktop-providers.json").write_text(providers + "\n", encoding="utf-8")
     # All bytecode is disposable, may encode build paths, and must not be shipped.
     for path in package.rglob("*.pyc"):
         path.unlink()
@@ -215,7 +197,7 @@ def build(args) -> Path:
         "manifestType": "windows-release", "schemaVersion": 1, "version": args.version,
         "sourceCommit": run(["git", "rev-parse", "HEAD"], cwd=ROOT),
         "sourceDirty": bool(run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=ROOT)),
-        "platform": "windows-x64", "python": "runtime/python/python.exe",
+        "platform": "windows-x64", "distribution": "desktop", "python": "runtime/python/python.exe",
         "pythonVersion": args.python_version, "pythonArchiveSha256": args.python_sha256.lower(),
         "dependencyLockSha256": digest(ROOT / "runtime/uv.lock"),
         "modSha256": digest(package / MOD_FILES[1]),
@@ -236,7 +218,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--mod-source", type=Path, default=ROOT / "artifacts/dist/StardewAI.Companion.Mod")
-    parser.add_argument("--desktop-source", type=Path, help="Self-contained win-x64 WPF publish folder for the portable GUI ZIP")
+    parser.add_argument("--desktop-source", type=Path, required=True, help="Self-contained win-x64 WPF publish folder")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/releases/windows")
     parser.add_argument("--cache", type=Path, default=ROOT / ".local/release-cache")
     parser.add_argument("--python-version", default=PYTHON_VERSION)

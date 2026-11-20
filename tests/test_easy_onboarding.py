@@ -55,20 +55,6 @@ def _run_powershell(
     )
 
 
-def test_double_click_entry_files_exist() -> None:
-    cmd_file = REPO_ROOT / "设置星露谷伙伴.cmd"
-    bat_file = REPO_ROOT / "设置星露谷伙伴.bat"
-    ps_file = REPO_ROOT / "tools" / "setup-companion.ps1"
-
-    assert cmd_file.is_file(), "设置星露谷伙伴.cmd missing"
-    assert bat_file.is_file(), "设置星露谷伙伴.bat missing"
-    assert ps_file.is_file(), "tools/setup-companion.ps1 missing"
-
-    content_cmd = cmd_file.read_text(encoding="utf-8")
-    assert "setup-companion.ps1" in content_cmd
-    assert "-STA" in content_cmd
-
-
 @WINDOWS_POWERSHELL_ONLY
 def test_setup_companion_check_only() -> None:
     cmd = [

@@ -402,19 +402,19 @@ try {
             $prodSource = Join-Path $repoRoot "artifacts\bin\StardewAI.Companion.Mod\Debug\net6.0"
         }
         if (Test-Path -LiteralPath $prodSource) {
-            # The frozen package is a distribution root that contains the actual SMAPI
-            # mod folder (e.g. <root>\StardewAI.Companion.Mod\StardewAI.Companion.Mod.dll)
-            # next to the launcher .bat/.cmd helpers. SMAPI only loads a DLL that sits
-            # directly inside the mod folder, so copy the *inner* mod folder contents,
-            # never the distribution root (which would nest the DLL one level too deep).
+            # Copy the actual Mod folder from the desktop ZIP, a historical release
+            # or a compiled output directory into the isolated SMAPI Mods directory.
             $modFolderName = "StardewAI.Companion.Mod"
+            $desktopModFolder = Join-Path $prodSource "Mods/$modFolderName"
             $nestedModFolder = Join-Path $prodSource $modFolderName
-            if (Test-Path -LiteralPath (Join-Path $nestedModFolder "$modFolderName.dll")) {
+            if (Test-Path -LiteralPath (Join-Path $desktopModFolder "$modFolderName.dll")) {
+                $modContentSource = $desktopModFolder
+            } elseif (Test-Path -LiteralPath (Join-Path $nestedModFolder "$modFolderName.dll")) {
                 $modContentSource = $nestedModFolder
             } elseif (Test-Path -LiteralPath (Join-Path $prodSource "$modFolderName.dll")) {
                 $modContentSource = $prodSource
             } else {
-                throw "Production Mod source '$prodSource' does not contain '$modFolderName.dll' (checked the root and the '$modFolderName' subfolder)."
+                throw "Production Mod source '$prodSource' does not contain '$modFolderName.dll'."
             }
 
             Copy-Item -Path (Join-Path $modContentSource "*") -Destination $prodDest -Recurse -Force
@@ -453,6 +453,13 @@ try {
         # Fresh runtime state is essential: never copy a live installed mod here.
         if (Test-Path -LiteralPath (Join-Path $prodDest 'chat_sessions.json')) {
             throw 'Use a clean release stage, not an installed Mod with session history.'
+        }
+        $presetTools = Join-Path $prodDest 'tools'
+        if (-not (Test-Path -LiteralPath (Join-Path $presetTools 'start-companion.ps1'))) {
+            [void][IO.Directory]::CreateDirectory($presetTools)
+            foreach ($name in @('start-companion.ps1', 'release-package.ps1')) {
+                Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $presetTools
+            }
         }
         $presetConfig = Join-Path $prodDest 'config'
         New-Item -ItemType Directory -Path $presetConfig -Force | Out-Null
