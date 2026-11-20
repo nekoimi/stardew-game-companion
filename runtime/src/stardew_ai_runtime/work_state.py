@@ -776,12 +776,14 @@ class WorkStore:
     def unresolved_player_notices(self, save_id: str) -> list[dict[str, Any]]:
         return [dict(n) for n in self.state(save_id).notices if not n.get("answeredAt") and not n.get("dismissedAt")]
 
-    def set_notice_visibility(self, save_id: str, notice_ids: list[str], dismissed: bool) -> None:
+    def set_notice_visibility(self, save_id: str, notice_ids: list[str], dismissed: bool, *, require_unanswered: bool = False) -> None:
         """Player-owned tombstones; hiding a question grants no execution authority."""
         def mutate(state: SaveWorkState) -> None:
             notices = [next((n for n in state.notices if n.get("id") == identifier), None) for identifier in notice_ids]
             if any(n is None for n in notices):
                 raise WorkStateError("Player decision is missing")
+            if require_unanswered and any(notice.get("answeredAt") for notice in notices):
+                raise WorkStateError("Player decision was already answered")
             for notice in notices:
                 if notice.get("answeredAt"):
                     continue

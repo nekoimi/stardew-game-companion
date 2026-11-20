@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.PlayerMode;
 using StardewAI.Companion.Mod.Transport;
 using StardewModdingAPI;
@@ -77,8 +78,21 @@ public sealed partial class ModEntry
             ["interruptedCommandId"] = _desktopInterruptedCommandId,
             ["activeCommandId"] = server.ActiveCommandId,
             ["activity"] = coordinator.GetActivityStatus(),
-            ["progress"] = coordinator.GetActivityLabel()
+            ["progress"] = coordinator.GetActivityLabel(),
+            ["inboxRevision"] = _lifeMenuUiState.ConversationRevision,
+            ["unreadMessages"] = CountUnreadDesktopMessages()
         });
+    }
+
+    private static bool IsDesktopMessage(CompanionConversationEntry entry) => entry.Id.StartsWith("care:", StringComparison.Ordinal);
+
+    private static bool IsUnreadDesktopMessage(CompanionConversationEntry entry, string gameDate) =>
+        IsDesktopMessage(entry) && entry.Unread && !entry.RolledBack && entry.GameDate == gameDate;
+
+    private int CountUnreadDesktopMessages()
+    {
+        string gameDate = GetCurrentGameDate();
+        return _lifeMenuUiState.Conversation.Count(entry => IsUnreadDesktopMessage(entry, gameDate));
     }
 
     private void CancelDesktopAction()
@@ -93,17 +107,28 @@ public sealed partial class ModEntry
             || payload["requestId"] is not JsonValue key || !key.TryGetValue<string>(out var requestId))
             return;
 
-        if (payload["action"]?.GetValue<string>() == "history")
+        string? action = payload["action"]?.GetValue<string>();
+        if (action is "history" or "inbox")
         {
             int? before = payload["before"] is JsonValue cursor && cursor.TryGetValue<int>(out int index) ? index : null;
-            _ = SendDesktopHistoryAsync(server, requestId, before);
+            _ = SendDesktopHistoryAsync(server, requestId, before, action == "inbox");
             return;
         }
 
         string? error = null;
-        switch (payload["action"]?.GetValue<string>())
+        switch (action)
         {
             case "status": break;
+            case "read-message":
+                var id = payload["entryId"]?.GetValue<string>();
+                if (!_lifeMenuUiState.Conversation.Any(entry => entry.Id == id && IsDesktopMessage(entry)))
+                    error = "MESSAGE_NOT_AVAILABLE";
+                else
+                {
+                    _lifeMenuUiState.MarkConversationRead(id);
+                    _careHintController.MarkRead(id!["care:".Length..]);
+                }
+                break;
             case "interrupt":
                 _desktopInterruptedCommandId ??= server.ActiveCommandId;
                 _desktopInterrupting = true;
@@ -167,6 +192,8 @@ public sealed partial class ModEntry
             ["activeCommandId"] = server.ActiveCommandId,
             ["activity"] = coordinator.GetActivityStatus(),
             ["progress"] = coordinator.GetActivityLabel(),
+            ["inboxRevision"] = _lifeMenuUiState.ConversationRevision,
+            ["unreadMessages"] = CountUnreadDesktopMessages(),
             ["interruptedCommandId"] = _desktopInterruptedCommandId,
             ["active"] = server.ActiveCommandId is not null || coordinator.ActiveMachine is not null || coordinator.HasRestTask,
             ["paused"] = _desktopPaused,
@@ -174,16 +201,19 @@ public sealed partial class ModEntry
             ["controlOwner"] = PlayerModeEnabled ? _authority?.AgentOwns == true ? "agent" : "human" : null,
             ["result"] = receipt is null ? null : JsonSerializer.SerializeToNode(receipt, WebSocketTransportServer.JsonOptions)
         };
-        if (payload["action"]?.GetValue<string>() != "status")
+        if (action is not ("status" or "read-message"))
             _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
         _ = server.SendDesktopStateAsync("desktop.control.result", reply);
     }
 
-    private async Task SendDesktopHistoryAsync(WebSocketTransportServer server, string requestId, int? before)
+    private async Task SendDesktopHistoryAsync(WebSocketTransportServer server, string requestId, int? before, bool inbox)
     {
         var store = _conversationStore;
         var saveId = _conversationSaveId;
         long generation = server.ChatGeneration;
+        string gameDate = GetCurrentGameDate();
+        var unread = inbox ? _lifeMenuUiState.Conversation.Where(entry => IsUnreadDesktopMessage(entry, gameDate))
+            .Select(entry => entry.Id).ToHashSet(StringComparer.Ordinal) : null;
         var reply = new JsonObject { ["requestId"] = requestId };
         try
         {
@@ -191,11 +221,13 @@ public sealed partial class ModEntry
             var page = await Task.Run(() =>
             {
                 var history = store.LoadHistory(saveId);
+                if (inbox) history = history.Where(IsDesktopMessage).ToArray();
                 int end = Math.Clamp(before ?? history.Count, 0, history.Count);
                 int start = Math.Max(0, end - 30);
+                var entries = history.Skip(start).Take(end - start).Reverse();
                 return new
                 {
-                    entries = history.Skip(start).Take(end - start).Reverse().ToArray(),
+                    entries = (unread is null ? entries : entries.Select(entry => entry with { Unread = unread.Contains(entry.Id) })).ToArray(),
                     nextBefore = start > 0 ? (int?)start : null
                 };
             }).ConfigureAwait(false);

@@ -41,6 +41,7 @@ public partial class MainWindow
         PlayStyle.SelectedIndex = Personality.SelectedIndex = CareFrequency.SelectedIndex = Bedtime.SelectedIndex = IdlePreference.SelectedIndex = -1;
         Initiative.IsChecked = false;
         ResetMemoryView();
+        ResetInboxViews();
     }
 
     private void RefreshSaveViewControls()
@@ -53,6 +54,7 @@ public partial class MainWindow
         ProfileFields.IsEnabled = ReadProfileButton.IsEnabled && _profileRevision.HasValue;
         CompanionIdentityFields.Visibility = _activeSource == "external" ? Visibility.Collapsed : Visibility.Visible;
         RefreshMemoryControls(connected);
+        RefreshInboxControls(connected);
     }
 
     private async void SaveViewSelected(object sender, SelectionChangedEventArgs e)
@@ -69,6 +71,8 @@ public partial class MainWindow
             await ChangeMemoryAsync(null);
         if (Pages.SelectedItem == CommandPage && CommandViews.SelectedItem == HistoryPage && !_hasHistoryPage)
             await RefreshHistoryAsync(null);
+        if (CarePageVisible && (!_hasMessages || _messagesChanged) && _messagesPageBefore is null)
+            await ReadMessagesAsync(null);
     }
 
     private static IEnumerable<JsonElement> Rows(JsonElement data, string key) =>

@@ -69,8 +69,11 @@
                                         <DockPanel LastChildFill="True" Margin="0,5,0,0">
                                             <Button x:Name="DecisionReplyButton" Content="回复此事项" DockPanel.Dock="Right"
                                                     Click="DecisionReplyClicked" Margin="8,0,0,0" />
+                                            <Button x:Name="DismissDecisionButton" Content="关闭事项" DockPanel.Dock="Right"
+                                                    Click="DismissDecisionClicked" Margin="8,0,0,0" />
                                             <TextBox x:Name="DecisionInput" MaxLength="500" AutomationProperties.Name="自定义回复" />
                                         </DockPanel>
+                                        <TextBlock x:Name="DecisionFeedback" Foreground="#537261" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
                                 <Grid Grid.Row="2" Margin="0,8,0,0">
@@ -119,6 +122,28 @@
                                 </ScrollViewer>
                             </Grid>
                         </TabItem>
+                        <TabItem Header="计划" x:Name="MilestonesPage">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="3*" />
+                                </Grid.ColumnDefinitions>
+                                <DockPanel Margin="0,0,12,0">
+                                    <TextBlock x:Name="MilestoneStatus" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                    <ListBox x:Name="MilestonePicker" DisplayMemberPath="Label" AutomationProperties.Name="计划节点"
+                                             SelectionChanged="MilestoneSelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+                                </DockPanel>
+                                <DockPanel Grid.Column="1">
+                                    <WrapPanel DockPanel.Dock="Bottom" Margin="0,9,0,0">
+                                        <Button x:Name="AdoptMilestoneButton" Tag="adopt" Content="采纳计划" Click="MilestoneClicked" />
+                                        <Button x:Name="DeferMilestoneButton" Tag="defer" Content="暂缓计划" Click="MilestoneClicked" />
+                                    </WrapPanel>
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl x:Name="MilestoneDetails" />
+                                    </ScrollViewer>
+                                </DockPanel>
+                            </Grid>
+                        </TabItem>
                         <TabItem Header="历史" x:Name="HistoryPage">
                             <DockPanel>
                                 <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
@@ -133,6 +158,45 @@
                         </TabItem>
                     </TabControl>
                 </Grid>
+            </TabItem>
+            <TabItem x:Name="MessagesPage" Header="伙伴消息">
+                <TabControl x:Name="MessageViews" Padding="8" SelectionChanged="SaveViewSelected">
+                    <TabItem x:Name="CarePage" Header="提醒">
+                        <DockPanel>
+                            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <Button x:Name="RefreshMessagesButton" Content="读取最新" Click="RefreshMessagesClicked" />
+                                <Button x:Name="OlderMessagesButton" Content="查看更早消息" Click="OlderMessagesClicked" />
+                                <Button x:Name="ReadMessageButton" Content="将所选消息标为已读" Click="ReadMessageClicked" />
+                                <Button Content="查看计划" Click="OpenMilestonesClicked" />
+                            </WrapPanel>
+                            <TextBlock x:Name="MessagesStatus" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <ListBox x:Name="MessagePicker" SelectionChanged="MessageSelected" AutomationProperties.Name="存档提醒"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="3,4">
+                                            <TextBlock Text="{Binding Label}" Foreground="#537261" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </TabItem>
+                    <TabItem Header="已关闭事项">
+                        <DockPanel>
+                            <TextBlock x:Name="ClosedDecisionStatus" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <Button x:Name="RestoreDecisionButton" Content="恢复所选事项" DockPanel.Dock="Bottom" Click="RestoreDecisionClicked"
+                                    HorizontalAlignment="Left" Margin="0,8,0,0" />
+                            <ListBox x:Name="ClosedDecisionPicker" SelectionChanged="ClosedDecisionSelected" AutomationProperties.Name="已关闭事项"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding Title}" TextWrapping="Wrap" Margin="3,4" /></DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </TabItem>
+                </TabControl>
             </TabItem>
             <TabItem x:Name="MemoryPage" Header="记忆与约定">
                 <Grid Margin="4">

@@ -330,3 +330,64 @@ def test_dsh_desktop_installation_is_version_checked_without_cmd_shell(tmp_path,
     command, options = calls[0]
     assert command[0] == str(host) and command[-1] == "--version"
     assert options["env"]["ELECTRON_RUN_AS_NODE"] == "1" and not options.get("shell")
+
+
+def test_desktop_adopts_and_defers_current_milestone_without_taking_control(tmp_path):
+    bridge = DesktopHarness(tmp_path)
+    ws = bridge._chat_ws = ReplySocket()
+    bridge.actor_mode = "player"
+    bridge.control_owner = "human"
+    bridge._latest_snapshot_payload["world"] = {"year": 1, "season": "spring", "dayOfMonth": 12, "timeOfDay": 800}
+    bridge._profile_store.set(bridge.save, {"playStyle": "earn"}, 0)
+    original = next(node for node in bridge.status()["milestones"] if "草莓" in node["title"])
+
+    async def verify():
+        binding = bridge.binding()
+        adopted = await bridge.change_milestone(binding, "adopt", original["id"], original["updatedAt"])
+        await asyncio.gather(*bridge._life_drain_tasks)
+        node = next(row for row in adopted["nodes"] if row["id"] == original["id"])
+        assert node["status"] == "adopted"
+        assert bridge.control_owner == "human" and bridge._active_task is None
+        assert bridge._pending_life_preparation[bridge.save] == {}
+        assert bridge._work_store.list_todos(bridge.save)
+        try:
+            await bridge.change_milestone(binding, "defer", original["id"], original["updatedAt"])
+        except DesktopError as error:
+            assert "最新状态" in str(error)
+        else:
+            raise AssertionError("Stale milestone action was accepted")
+        deferred = await bridge.change_milestone(binding, "defer", node["id"], node["updatedAt"])
+        assert next(row for row in deferred["nodes"] if row["id"] == node["id"])["status"] == "deferred"
+        assert all(todo["status"] == "cancelled" for todo in bridge._work_store.list_todos(bridge.save))
+
+    asyncio.run(verify())
+    assert bridge.calls == []
+    assert any(row["messageType"] == "life.milestones.state" for row in ws.sent)
+
+
+def test_desktop_closes_and_restores_one_pending_decision_without_answering_it(tmp_path):
+    bridge = DesktopHarness(tmp_path)
+    bridge._chat_ws = ReplySocket()
+    first = bridge._work_store.add_goal(bridge.save, "照料农场", source="user")
+    notice = bridge._work_store.request_player_decision(bridge.save, first.id, "先浇水还是收菜？", ["浇水", "收菜"])
+    other = bridge._work_store.request_player_decision(bridge.save, first.id, "种什么作物？")
+
+    async def verify():
+        transport = httpx.ASGITransport(app=create_app(bridge, "token"))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1",
+                                     headers={"Authorization": "Bearer token"}) as client:
+            body = {"gameSessionId": "old-session", "action": "dismiss", "noticeId": notice["id"]}
+            assert (await client.post("/v1/notices", json=body)).status_code == 409
+            body["gameSessionId"] = "session-a"
+            assert (await client.post("/v1/notices", json=body)).status_code == 200
+            snapshot = bridge.status()
+            assert [row["id"] for row in snapshot["decisions"]] == [other["id"]]
+            assert snapshot["closedDecisions"][0]["id"] == notice["id"]
+            assert (await client.post("/v1/notices", json={**body, "action": "restore"})).status_code == 200
+            assert bridge.status()["decisions"][0]["choices"] == ["浇水", "收菜"]
+            assert not any(row.get("answeredAt") for row in bridge._work_store.state(bridge.save).notices)
+            bridge._work_store.answer_player_notice(bridge.save, notice["id"], "浇水", "other-client")
+            assert (await client.post("/v1/notices", json=body)).status_code == 409
+
+    asyncio.run(verify())
+    assert bridge.calls == []

@@ -192,7 +192,15 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
-        if (PlayerModeEnabled) { _resourceDay=Game1.Date.TotalDays; _dayTransition=false; _coordinator?.OnTimeChanged(Game1.timeOfDay); return; }
+        if (PlayerModeEnabled)
+        {
+            _resourceDay = Game1.Date.TotalDays;
+            _dayTransition = false;
+            _coordinator?.OnTimeChanged(Game1.timeOfDay);
+            _careHintController.OnDayStarted(GetCurrentGameDate());
+            _lifeMenuUiState.MarkAllCareHintsRead();
+            return;
+        }
         if (_actor == null)
         {
             InitializeCompanion();
@@ -958,6 +966,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             // Life-system reset
             _conversationSaveId = null;
             _lifeMenuUiState.Reset();
+            _careHintController.Reset();
             CompanionConversationMenu.DraftText = string.Empty;
             CompanionConversationMenu.DraftDecisionId = null;
             _lifeControls.Supersede();

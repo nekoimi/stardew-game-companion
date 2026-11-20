@@ -251,6 +251,7 @@ public partial class MainWindow : Window
         _lastGameSessionId = _gameSessionId;
         if (payload.TryGetProperty("decisions", out var decisions)) ApplyDecisions(decisions);
         if (payload.TryGetProperty("work", out var work)) ApplyWork(work);
+        ApplyInboxStatus(payload);
         RefreshControls();
         if (previous != _gameSessionId) _ = LoadSelectedSaveViewAsync();
     }
@@ -337,7 +338,7 @@ public partial class MainWindow : Window
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
         RefreshImportControls();
         SendButton.IsEnabled = Input.IsEnabled = connected && _partnerReady;
-        DecisionPanel.IsEnabled = SendButton.IsEnabled;
+        DecisionInput.IsEnabled = DecisionReplyButton.IsEnabled = DecisionChoices.IsEnabled = SendButton.IsEnabled;
         InterruptButton.IsEnabled = SendButton.IsEnabled && !_paused && !_interrupting && (!_playerMode || _owner == "agent");
         PauseButton.IsEnabled = connected && !_paused && !_interrupting;
         ResumeButton.IsEnabled = connected && (_paused || _interrupting);

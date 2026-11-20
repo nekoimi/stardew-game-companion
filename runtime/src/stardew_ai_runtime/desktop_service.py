@@ -25,6 +25,7 @@ from starlette.routing import Route
 
 from .agent_backends import DshBackend, McodeBackend
 from .chat_bridge import ChatBridge, Envelope
+from .companion_milestones import MilestoneError
 from .desktop_partner import DesktopPartner
 from .external_connection import AcpError, read_binding
 from .owner_process import OwnerProcessGuard
@@ -160,11 +161,15 @@ class DesktopBridge(ChatBridge):
             "activity": self.native_state.get("activity", actor.get("activity")),
             "activeCommandId": self.native_state.get("activeCommandId", actor.get("activeCommandId")),
             "progress": self.native_state.get("progress"),
+            "inboxRevision": self.native_state.get("inboxRevision"),
+            "unreadMessages": self.native_state.get("unreadMessages", 0),
             "work": {key: work.get(key) for key in (
                 "currentGoalId", "activeGoals", "recentTodos", "recentExecutions", "activity",
                 "waitingConditions", "pauseReason",
             )},
             "decisions": [d for d in work.get("playerDecisions", []) or [] if d.get("status") == "pending"],
+            "closedDecisions": [d for d in work.get("playerDecisions", []) or [] if d.get("status") == "dismissed"],
+            "milestones": self._build_milestones_state(save, "").payload["nodes"],
         }
 
     async def native_control(self, binding, action: str, *, request_id: str | None = None, **params) -> dict:
@@ -185,6 +190,8 @@ class DesktopBridge(ChatBridge):
             if reply.get("error"):
                 if reply["error"] == "HISTORY_UNAVAILABLE":
                     raise DesktopError("当前存档的对话记录暂时无法读取。")
+                if reply["error"] == "MESSAGE_NOT_AVAILABLE":
+                    raise DesktopError("这条消息已移出可标记的范围，请刷新提醒。")
                 raise DesktopError("游戏未确认操作：" + reply["error"])
             return reply
         except TimeoutError as ex:
@@ -412,6 +419,48 @@ class DesktopBridge(ChatBridge):
         save, _, _ = self.binding()
         return any(item.get("id") == decision for item in self._work_store.unresolved_player_notices(save))
 
+    async def change_decision_visibility(self, binding, action: str, notice_id: str) -> None:
+        async with self.operation:
+            if binding != self.binding():
+                raise DesktopError("游戏会话已变化，请重新操作。")
+            save, _, ws = binding
+            try:
+                self._work_store.set_notice_visibility(save, [notice_id], action == "dismiss", require_unanswered=True)
+            except ValueError as ex:
+                raise DesktopError("该事项已回复或已不存在，请查看最新状态。") from ex
+            await self._push_work_state(ws, save)
+
+    async def change_milestone(self, binding, action: str, node_id: str, updated_at: float) -> dict:
+        async with self.operation:
+            if binding != self.binding():
+                raise DesktopError("游戏会话已变化，请重新操作。")
+            save, _, ws = binding
+            game_date, play_style = self._life_game_date_playstyle(save)
+            nodes = self._milestone_store.merged_nodes(save, game_date, play_style)
+            selected = next((node for node in nodes if node["id"] == node_id), None)
+            if not selected or selected["updatedAt"] != updated_at:
+                raise DesktopError("计划已变化，请查看最新状态后再操作。")
+            allowed = ("suggested", "deferred") if action == "adopt" else ("suggested", "adopted")
+            if selected["status"] not in allowed:
+                raise DesktopError("当前计划状态不支持此操作。")
+            try:
+                if action == "adopt":
+                    _, before = self._adopt_preparation(save, node_id, updated_at)
+                    self._pending_life_preparation.setdefault(save, before)
+                else:
+                    deferred = self._milestone_store.defer(save, node_id, work_store=self._work_store,
+                        game_date=game_date, expected_updated_at=updated_at)
+                    if deferred.get("goalId") and self._autonomy.state(save).goal_scope == deferred["goalId"]:
+                        self._autonomy.set_goal_scope(save, None)
+            except MilestoneError as ex:
+                raise DesktopError(str(ex)) from ex
+            projection = self._build_milestones_state(save, "")
+            await self._send_reply(ws, projection)
+            await self._push_work_state(ws, save)
+            if action == "adopt" and binding == self.binding():
+                self._schedule_life_drain(ws)
+            return projection.payload
+
 
 def create_app(bridge: DesktopBridge, token: str) -> Starlette:
     async def api(request: Request):
@@ -470,12 +519,30 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
                     return JSONResponse({"error": "目标或控制操作无效。"}, status_code=400)
                 await bridge.control(binding, action, **({"goalId": goal} if goal else {}))
                 return JSONResponse({"confirmed": True})
-            if path == "/v1/history":
+            if path in ("/v1/history", "/v1/messages"):
+                if path == "/v1/messages" and "readId" in body:
+                    entry = body["readId"]
+                    if not isinstance(entry, str) or not 1 <= len(entry) <= 200 or not entry.startswith("care:"):
+                        return JSONResponse({"error": "消息编号无效。"}, status_code=400)
+                    await bridge.native_control(binding, "read-message", entryId=entry)
+                    return JSONResponse({"confirmed": True})
                 before = body.get("before")
                 if before is not None and (type(before) is not int or not 1 <= before <= 2_147_483_647):
                     return JSONResponse({"error": "历史位置无效。"}, status_code=400)
-                reply = await bridge.native_control(binding, "history", before=before)
+                reply = await bridge.native_control(binding, "inbox" if path == "/v1/messages" else "history", before=before)
                 return JSONResponse(reply["history"])
+            if path == "/v1/notices":
+                action, notice_id = body.get("action"), body.get("noticeId")
+                if action not in ("dismiss", "restore") or not isinstance(notice_id, str) or not 1 <= len(notice_id) <= 120:
+                    return JSONResponse({"error": "待确认事项操作无效。"}, status_code=400)
+                await bridge.change_decision_visibility(binding, action, notice_id)
+                return JSONResponse({"confirmed": True})
+            if path == "/v1/milestones":
+                action, node, updated = body.get("action"), body.get("nodeId"), body.get("updatedAt")
+                if (action not in ("adopt", "defer") or not isinstance(node, str) or not 1 <= len(node) <= 120
+                        or type(updated) not in (int, float) or not 0 <= updated <= 1e12):
+                    return JSONResponse({"error": "计划操作无效。"}, status_code=400)
+                return JSONResponse(await bridge.change_milestone(binding, action, node, updated))
             if path == "/v1/profile":
                 if "patch" not in body:
                     return JSONResponse(bridge.preferences(binding[0]))
@@ -553,6 +620,8 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
         Route("/v1/memory", api, methods=["POST"]),
         Route("/v1/initiative", api, methods=["POST"]),
         Route("/v1/partner", api, methods=["POST"]),
+        Route("/v1/messages", api, methods=["POST"]), Route("/v1/notices", api, methods=["POST"]),
+        Route("/v1/milestones", api, methods=["POST"]),
     ])
 
 

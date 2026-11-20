@@ -4021,14 +4021,7 @@ class ChatBridge:
             proposal = self._current_life_proposal(save_id)
             if item.get("mode") != "plan" or not proposal or proposal["id"] != item["accepted_node_id"]:
                 raise ValueError("建议已更新、暂缓或方向已改变，请先重新商量；没有派发工作。")
-            before = self._accepted_preparation_state(save_id)
-            _, game_date = self._plan_snapshot_state()
-            adopted = self._milestone_store.adopt(
-                save_id, proposal["id"], work_store=self._work_store, game_date=game_date,
-            )
-            if adopted.get("playerRequestId"):
-                self._work_store.bind_goal_request(save_id, adopted["goalId"], adopted["playerRequestId"])
-            self._life_proposals.pop(save_id, None)
+            adopted, before = self._adopt_preparation(save_id, proposal["id"], proposal["updatedAt"])
             await self._send_reply(ws, Envelope.create_life_chat_reply(
                 self.instance_id, request_id, save_id, "processing",
                 self._profile_revision(save_id), self._memory_revision(save_id),
@@ -4041,6 +4034,17 @@ class ChatBridge:
             reply_text="安排已记好。",
             proposal_ready=False, activity=self._player_activity(save_id)))
         self._pending_life_preparation.setdefault(save_id, before)
+
+    def _adopt_preparation(self, save_id: str, node_id: str, expected_updated_at: float) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        before = self._accepted_preparation_state(save_id)
+        _, game_date = self._plan_snapshot_state()
+        adopted = self._milestone_store.adopt(save_id, node_id, work_store=self._work_store,
+                                              game_date=game_date, expected_updated_at=expected_updated_at)
+        if adopted.get("playerRequestId") and adopted.get("goalId"):
+            self._work_store.bind_goal_request(save_id, adopted["goalId"], adopted["playerRequestId"])
+        if self._life_proposals.get(save_id, (None,))[0] == node_id:
+            self._life_proposals.pop(save_id, None)
+        return adopted, before
 
     def _accepted_preparation_state(self, save_id: str) -> dict[str, dict[str, Any]]:
         if self._milestone_store is None or self._work_store is None:
@@ -4085,9 +4089,8 @@ class ChatBridge:
             return
         state = self._work_store.state(save_id)
         autonomy = self._autonomy.state(save_id) if self._autonomy is not None else None
-        if layout_goal_id and self._autonomy is not None:
-            self._autonomy.set_goal_scope(save_id, layout_goal_id)
         if (self._bedtime_winding_down(save_id) or state.paused or (autonomy is not None and autonomy.paused)
+                or (self.actor_mode == "player" and self.control_owner != "agent")
                 or self._active_task is not None
                 or self._work_settling(save_id)):
             self._pending_life_preparation.setdefault(save_id, before)
@@ -4098,6 +4101,8 @@ class ChatBridge:
         if not due:
             return "安排已保存，眼前还没到这项准备的时间。"
         if autonomy is not None and (autonomy.enabled or layout_project):
+            if layout_goal_id:
+                self._autonomy.set_goal_scope(save_id, layout_goal_id)
             self._autonomy.request_job_decision(save_id)
             return ("已接手这个持续项目。我会观察实际需要、保留安排并分批推进，跨天继续；常规进度留在日志，遇到需要你决定的事再告诉你。"
                     if layout_project else "已把眼前可做的准备交给日常工作安排；常规进度会记入日志。")

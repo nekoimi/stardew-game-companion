@@ -10,6 +10,23 @@ public class CareHintControllerTests
     private const string Day2 = "1:spring:2";
 
     [Fact]
+    public void ReturningToTitleLetsAnotherSaveReceiveTheSameCalendarEvent()
+    {
+        var controller = new CareHintController();
+        const string eventKey = "morning:1:spring:1:1:spring:1";
+        controller.OnDayStarted(Day1);
+        controller.ReceiveCareHint(eventKey, Day1, "morning", "第一个存档的提醒", isBlocked: true);
+
+        controller.Reset();
+        controller.OnDayStarted(Day1);
+
+        Assert.Empty(controller.TryDrainDeferred());
+        var nextSaveHint = controller.ReceiveCareHint(eventKey, Day1, "morning", "第二个存档的提醒", isBlocked: false);
+        Assert.Same(nextSaveHint, Assert.Single(controller.PendingHints));
+        Assert.Equal("第二个存档的提醒", nextSaveHint!.Text);
+    }
+
+    [Fact]
     public void UnblockedHint_IsReturnedImmediately_AndQueuedAsPending()
     {
         var controller = new CareHintController();

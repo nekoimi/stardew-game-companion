@@ -578,6 +578,7 @@ class CompanionMilestoneStore:
             node = _template_node(template_id, current_key)
             days_until = node.get("daysUntil")
             if isinstance(days_until, int) and 0 <= days_until <= int(template["windowDays"]):
+                node["updatedAt"] = 0.0  # A catalogue suggestion has no persisted revision yet.
                 suggested.append(node)
         return suggested
 
@@ -720,6 +721,7 @@ class CompanionMilestoneStore:
         terms_note: str | None = None,
         work_store: WorkStore | None = None,
         game_date: dict[str, Any] | None = None,
+        expected_updated_at: float | None = None,
     ) -> dict[str, Any]:
         """Adopt a suggested/deferred node; capability prep items enter the WorkStore.
 
@@ -729,6 +731,7 @@ class CompanionMilestoneStore:
         current_key = _game_date_key(game_date)
 
         def mutate(record: dict[str, Any]) -> dict[str, Any]:
+            self._check_display_revision(record, node_id, expected_updated_at)
             node = self._resolve_for_write(record, node_id, current_key)
             self._check_transition("adopt", node)
             if reserved_funds is not None:
@@ -828,10 +831,12 @@ class CompanionMilestoneStore:
         reason: str | None = None,
         work_store: WorkStore | None = None,
         game_date: dict[str, Any] | None = None,
+        expected_updated_at: float | None = None,
     ) -> dict[str, Any]:
         current_key = _game_date_key(game_date)
 
         def mutate(record: dict[str, Any]) -> dict[str, Any]:
+            self._check_display_revision(record, node_id, expected_updated_at)
             node = self._resolve_for_write(record, node_id, current_key)
             self._check_transition("defer", node)
             if work_store is not None:
@@ -843,6 +848,11 @@ class CompanionMilestoneStore:
             return node
 
         return self._mutate(save_id, mutate)
+
+    @staticmethod
+    def _check_display_revision(record: dict[str, Any], node_id: str, expected: float | None) -> None:
+        if expected is not None and record["nodes"].get(node_id, {}).get("updatedAt", 0.0) != expected:
+            raise MilestoneError("计划已更新，请重新查看后再操作。")
 
     def reopen(
         self,

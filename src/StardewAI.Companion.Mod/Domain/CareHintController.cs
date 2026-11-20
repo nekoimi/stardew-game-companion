@@ -33,6 +33,14 @@ public sealed class CareHintController
     /// </summary>
     public IReadOnlyList<PendingCareHint> PendingHints => _pendingHints;
 
+    public void Reset()
+    {
+        _seenEventKeys.Clear();
+        _pendingHints.Clear();
+        _deferredHints.Clear();
+        _currentGameDate = string.Empty;
+    }
+
     /// <summary>
     /// Notifies the controller that a new game day has started.
     /// All hints whose <c>gameDate</c> differs from <paramref name="newGameDate"/> are discarded.
