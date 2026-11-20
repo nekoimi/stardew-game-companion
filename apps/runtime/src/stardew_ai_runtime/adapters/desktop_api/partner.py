@@ -9,7 +9,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .adapters.providers.mcode_external import AcpError, call_adapter, read_binding
+from stardew_ai_runtime.adapters.providers.mcode_external import (
+    AcpError,
+    call_adapter,
+    read_binding,
+)
 
 
 class DesktopPartner:

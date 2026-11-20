@@ -11,13 +11,13 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from .adapters.providers.mcode_external import AcpError, read_binding
-from .application.player_service import PlayerOperationError as DesktopError
-from .application.player_service import PlayerService
-from .chat_bridge import ChatBridge
-from .desktop_partner import DesktopPartner
-from .protocol import Envelope
-from .provider_registry import PROVIDERS, ClientError
+from stardew_ai_runtime.adapters.desktop_api.partner import DesktopPartner
+from stardew_ai_runtime.adapters.providers.mcode_external import AcpError, read_binding
+from stardew_ai_runtime.application.player_service import PlayerOperationError as DesktopError
+from stardew_ai_runtime.application.player_service import PlayerService
+from stardew_ai_runtime.chat_bridge import ChatBridge
+from stardew_ai_runtime.protocol import Envelope
+from stardew_ai_runtime.provider_registry import PROVIDERS, ClientError
 
 log = logging.getLogger(__name__)
 
@@ -400,7 +400,7 @@ class DesktopBridge:
         try:
             action = self.player.control_utterance(text)
             if action and decision is None:
-                from .work_controls import explicit_cancel_scope
+                from stardew_ai_runtime.work_controls import explicit_cancel_scope
                 params = {"allArrangements": True} if explicit_cancel_scope(text) == "all" else {}
                 await self.control(binding, action, **params)
                 self.publish("chat.reply", {"requestId": request_id, "status": "completed", "replyText": "控制操作已确认。"})

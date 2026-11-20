@@ -100,8 +100,8 @@ def test_transient_socket_failure_reconnects_while_owner_is_alive(tmp_path, monk
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
+    from stardew_ai_runtime.adapters.game_bridge.websocket import WebSocketError
     from stardew_ai_runtime.chat_bridge import ChatBridge
-    from stardew_ai_runtime.websocket_client import WebSocketError
 
     lifetime = FakeLifetime()
     monkeypatch.setattr(owner_process, "_WindowsProcessLifetime", lambda pid: lifetime)

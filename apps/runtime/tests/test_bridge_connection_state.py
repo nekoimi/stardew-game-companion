@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from stardew_ai_runtime.adapters.game_bridge.websocket import WebSocketError
 from stardew_ai_runtime.chat_bridge import ChatBridge
-from stardew_ai_runtime.websocket_client import WebSocketError
 
 
 @pytest.mark.parametrize("connected", [False, True])

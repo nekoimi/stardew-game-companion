@@ -6,8 +6,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from stardew_ai_runtime.adapters.game_bridge.websocket import WebSocketClient, WebSocketError
 from stardew_ai_runtime.protocol import Envelope, ProtocolError, validate_native_action_parameters
-from stardew_ai_runtime.websocket_client import WebSocketClient, WebSocketError
 
 
 class TransportClientError(WebSocketError):

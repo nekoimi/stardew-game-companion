@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from stardew_ai_runtime.websocket_client import WebSocketClient
+from stardew_ai_runtime.adapters.game_bridge.websocket import WebSocketClient
 
 
 def frame(payload: bytes, opcode: int = 1) -> bytes:

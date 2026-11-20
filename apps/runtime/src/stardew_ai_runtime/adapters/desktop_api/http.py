@@ -12,9 +12,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from .desktop_runtime import DesktopBridge, DesktopError
-from .protocol import ProtocolError
-from .websocket_client import WebSocketError
+from stardew_ai_runtime.adapters.desktop_api.runtime import DesktopBridge, DesktopError
+from stardew_ai_runtime.adapters.game_bridge.websocket import WebSocketError
+from stardew_ai_runtime.protocol import ProtocolError
 
 
 def create_app(bridge: DesktopBridge, token: str) -> Starlette:

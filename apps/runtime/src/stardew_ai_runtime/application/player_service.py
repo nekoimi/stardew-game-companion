@@ -11,8 +11,8 @@ from stardew_ai_runtime.companion_milestones import MilestoneError
 from stardew_ai_runtime.protocol import Envelope, LifeMemoryEditPayload, LifeProfileSetPayload
 
 if TYPE_CHECKING:
+    from stardew_ai_runtime.adapters.game_bridge.websocket import WebSocketClient
     from stardew_ai_runtime.chat_bridge import ChatBridge
-    from stardew_ai_runtime.websocket_client import WebSocketClient
 
 
 class PlayerOperationError(RuntimeError):
