@@ -11,6 +11,7 @@ using StardewAI.Companion.Mod.Avatar;
 using StardewAI.Companion.Mod.Discovery;
 using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.Execution;
+using StardewAI.Companion.Mod.Hosting;
 using StardewAI.Companion.Mod.Menus;
 using StardewAI.Companion.Mod.Navigation;
 using StardewAI.Companion.Mod.Observation;

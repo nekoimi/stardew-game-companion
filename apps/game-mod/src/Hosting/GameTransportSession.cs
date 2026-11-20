@@ -1,7 +1,8 @@
 using StardewAI.Companion.Mod.Discovery;
+using StardewAI.Companion.Mod.Transport;
 using StardewModdingAPI;
 
-namespace StardewAI.Companion.Mod.Transport;
+namespace StardewAI.Companion.Mod.Hosting;
 
 internal sealed class GameTransportSession : IDisposable
 {
