@@ -562,15 +562,17 @@ def test_mcode_long_unicode_prompt_reaches_stdin_literally(tmp_path):
     assert result["response"] == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
-@pytest.mark.parametrize("suffix", [".cmd", ".ps1"])
-def test_mcode_npm_launch_uses_node_without_shell(tmp_path, suffix):
+@pytest.mark.parametrize("shim", ["mcode.cmd", "mcode.ps1", "node_modules/.bin/mcode.cmd"])
+def test_mcode_npm_launch_uses_node_without_shell(tmp_path, shim):
     prefix = tmp_path / "npm with spaces & symbols"
     entry = prefix / "node_modules/@minimax-ai/code/cli.js"
     entry.parent.mkdir(parents=True)
     entry.touch()
-    node = prefix / "node.exe"
+    executable = prefix / shim
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    node = executable.with_name("node.exe")
     node.touch()
-    command = McodeBackend(tmp_path)._command(str(prefix / ("mcode" + suffix)), tmp_path, None)
+    command = McodeBackend(tmp_path)._command(str(executable), tmp_path, None)
     assert command[:2] == [str(node), "--import"]
     assert command[3:5] == [str(entry), "exec"]
     assert command[command.index("--input") + 1] == "-"

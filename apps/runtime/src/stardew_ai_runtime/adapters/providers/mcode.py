@@ -127,8 +127,10 @@ class McodeBackend:
             import shutil
             # npm shims invoke cmd.exe; run their JS entry directly so neither
             # game paths nor model arguments are interpreted by a shell.
-            entry = Path(executable).parent / "node_modules" / "@minimax-ai" / "code" / "cli.js"
-            sibling = Path(executable).parent / "node.exe"
+            shim_dir = Path(executable).parent
+            modules = shim_dir.parent if shim_dir.name.lower() == ".bin" else shim_dir / "node_modules"
+            entry = modules / "@minimax-ai" / "code" / "cli.js"
+            sibling = shim_dir / "node.exe"
             node = str(sibling) if sibling.is_file() else shutil.which("node")
             if not node or not entry.is_file():
                 raise FileNotFoundError("Repair the MiniMax Code npm installation and Node.js")
