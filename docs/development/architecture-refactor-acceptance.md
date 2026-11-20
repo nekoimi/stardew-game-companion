@@ -49,7 +49,7 @@ Mod 731 项、传输 64 项通过，TestDriver 构建成功。Python 全量测�
 
 ## 正式伙伴实机回归
 
-已在隔离工具目录安装官方 `@minimax-ai/code@0.6.2`。桌面 Python 和游戏内 PowerShell 均通过真实客户端版本探测，本地 npm 的 `.bin` 路径已有对应启动回归。两次正式 CLI 执行均提示 `Sign in to MiniMax to use Agent features`。三组均待账号登录后执行并登记原生回执。 [固定实机用例](../repeatable-companion-acceptance.md)
+已在隔离工具目录安装官方 `@minimax-ai/code@0.6.2`。用最终 ZIP 的独立解压副本配置 mcode，`start-companion.ps1 -CheckOnly` 通过完整性、内置 Python 和正式客户端启动检查。TestDriver 构建通过，验收用单人存档为第一年春季第 5 天。正式 CLI 执行仍提示 `Sign in to MiniMax to use Agent features`，三组均待登录后执行。 [固定实机用例](../repeatable-companion-acceptance.md)
 
 | 场景 | 结果 |
 | --- | --- |
