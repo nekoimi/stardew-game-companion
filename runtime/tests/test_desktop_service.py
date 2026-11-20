@@ -18,6 +18,7 @@ class DesktopHarness(DesktopBridge):
         self.game_session = self._player_session_id = "session-a"
         self._chat_ws = object()
         self._latest_snapshot_payload = {"companion": {"activity": "idle"}}
+        self._awaiting_native_control = False
         self.calls = []
         self.disconnect_on_status = False
         self.receipt_reads = 0
@@ -49,6 +50,66 @@ class ReplySocket:
 
     async def send_text(self, text):
         self.sent.append(json.loads(text))
+
+
+def test_desktop_recovery_waits_for_native_receipt_before_dispatching(tmp_path):
+    class RecoverySocket(ReplySocket):
+        async def send_text(self, text):
+            await super().send_text(text)
+            request = self.sent[-1]["payload"]
+            assert request["action"] == "recover"
+            assert bridge._work_store.state(save).paused and bridge._autonomy.state(save).paused
+            project(recoveryPending=receipt is None, requestId=request["requestId"], result=receipt,
+                    error="TERMINAL_UNKNOWN" if receipt is None else None)
+
+    def project(**payload):
+        bridge.desktop_message({"messageType": "desktop.control.result", "saveId": save,
+                                "gameSessionId": session, "payload": {"paused": True, **payload}}, save)
+
+    bridge = DesktopBridge(tmp_path, "", "pi")
+    save, session = "Farm_1", "session-a"
+    bridge.save = save
+    bridge.game_session = bridge._player_session_id = session
+    bridge._latest_snapshot_payload = {"companion": {"activity": "idle"}}
+    bridge._chat_ws = socket = RecoverySocket()
+    bridge.actor_mode, bridge.control_owner = "player", "human"
+    receipt = None
+
+    async def verify():
+        nonlocal receipt
+        transport = httpx.ASGITransport(app=create_app(bridge, "token"))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1",
+                                     headers={"Authorization": "Bearer token"}) as client:
+            async def control(action):
+                return await client.post("/v1/control", json={"gameSessionId": session, "action": action})
+
+            async def submit():
+                return await client.post("/v1/commands", json={"gameSessionId": session,
+                                                              "requestId": "fresh", "text": "浇水"})
+
+            assert not bridge._connection_ready()  # No native projection after runtime startup.
+            assert (await control("handoff")).status_code == 409
+            assert (await submit()).status_code == 409
+            project(recoveryPending=True)
+            assert bridge.status()["recoveryPending"]
+            assert not bridge._connection_ready()
+            assert (await control("resume")).status_code == 409
+            assert (await submit()).status_code == 409
+            assert socket.sent == [] and bridge.turns == set()
+
+            assert (await control("recover")).status_code == 409
+            assert bridge.status()["recoveryPending"] and bridge.status()["paused"]
+            assert bridge.events_after(0) == []
+            assert (await control("handoff")).status_code == 409
+
+            receipt = {"commandId": "old-action", "terminalState": "cancelled", "completedCount": 2}
+            assert (await control("recover")).status_code == 200
+            assert bridge.events_after(0)[0][1] == {"type": "result", "payload": receipt}
+            assert bridge.status()["paused"] and bridge.status()["controlOwner"] == "human"
+            assert bridge._connection_ready() and not bridge.status()["recoveryPending"]
+            assert [item["payload"]["action"] for item in socket.sent] == ["recover", "recover"]
+
+    asyncio.run(verify())
 
 
 def test_desktop_usage_shares_receipts_and_only_projects_the_current_game_session(tmp_path):
@@ -378,6 +439,7 @@ def test_registered_provider_runs_a_game_turn_without_bridge_dispatch_changes(tm
     monkeypatch.setitem(PROVIDERS, spec.id, spec)
     assert next(row for row in desktop_catalogue() if row["id"] == spec.id)["defaultModel"] == "game-test"
     bridge = DesktopBridge(tmp_path, "", "configured.exe", backend=spec.id, effort="high")
+    bridge._awaiting_native_control = False
     task = ActiveChatTask("turn", "Farm_1")
     result = bridge._execute_turn(task, "existing", "玩家说：看看农场")
 

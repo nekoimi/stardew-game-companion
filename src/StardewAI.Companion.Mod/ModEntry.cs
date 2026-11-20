@@ -302,7 +302,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             );
 
             _coordinator.SetTransportServer(_transportServer);
-            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching && (!_desktopMode || (!_desktopPaused && !_desktopInterrupting));
+            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching && DesktopActionsAllowed;
             var sessionServer = _transportServer;
             void InSession(Action action) => _mainThreadActions.Enqueue(() =>
             {
@@ -614,7 +614,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             );
 
             _coordinator.SetTransportServer(_transportServer);
-            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching && (!_desktopMode || (!_desktopPaused && !_desktopInterrupting));
+            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching && DesktopActionsAllowed;
             var sessionServer = _transportServer;
             void InSession(Action action) => _mainThreadActions.Enqueue(() =>
             {

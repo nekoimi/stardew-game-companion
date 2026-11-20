@@ -58,6 +58,7 @@ public sealed class WebSocketTransportServer : ITransportServer
     public TransportState State { get; private set; } = TransportState.Disconnected;
     public bool IsClientConnected => _activeSocket is { State: WebSocketState.Open };
     public string? ActiveCommandId { get; private set; }
+    internal string? LatestDesktopActionId { get; set; }
     public IdempotencyManager Idempotency => _idempotencyManager;
 
     private WebSocket? _chatSocket;
@@ -91,8 +92,10 @@ public sealed class WebSocketTransportServer : ITransportServer
     public event Action<string, JsonObject>? OnPlayerMessage;
     public event Action<JsonObject>? OnDesktopControl;
     public bool DesktopClientEnabled { get; set; }
-    public Task<bool> SendDesktopStateAsync(string type, JsonObject payload) =>
-        SendChatEnvelopeAsync(CreateEnvelope(type, payload));
+    private long _desktopDisconnectRevision;
+    internal long DesktopDisconnectRevision => Interlocked.Read(ref _desktopDisconnectRevision);
+    public Task<bool> SendDesktopStateAsync(string type, JsonObject payload, long? expectedGeneration = null) =>
+        SendChatEnvelopeAsync(CreateEnvelope(type, payload), expectedGeneration);
     public Task<bool> SendPlayerAuthorityAsync(string owner,string reason) => SendChatEnvelopeAsync(CreateEnvelope("player.authority",new JsonObject { ["owner"]=owner,["reason"]=reason,["saveId"]=_saveId }));
     public event Action<LifeChatReplyPayload>? OnLifeChatReplyReceived;
     public event Action<LifeProfileStatePayload>? OnLifeProfileStateReceived;
@@ -1115,7 +1118,12 @@ public sealed class WebSocketTransportServer : ITransportServer
         ActiveCommandId = payload.CommandId;
 
         // Dispatch to mechanics actor / handler on main thread
-        if (!_handler.TryAcceptSkillExecute(payload, envelope, out var rejectResult))
+        if (_handler.TryAcceptSkillExecute(payload, envelope, out var rejectResult))
+        {
+            // The terminal receipt can land before either socket notices the runtime exit.
+            if (DesktopClientEnabled && !IsObservationSkill(payload.SkillId)) LatestDesktopActionId = payload.CommandId;
+        }
+        else
         {
             ActiveCommandId = null;
             if (rejectResult != null)
@@ -1593,10 +1601,11 @@ public sealed class WebSocketTransportServer : ITransportServer
     {
         _logger?.Invoke($"Accepting Chat WebSocket connection from {context.Request.RemoteEndPoint}...", "Info");
         var wsContext = await context.AcceptWebSocketAsync(subProtocol: null).ConfigureAwait(false);
-        long gen = Interlocked.Increment(ref _chatSocketGeneration);
-
+        long gen;
         lock (_chatLock)
         {
+            if (DesktopClientEnabled && _chatSocket is not null) NotifyChatDisconnected();
+            gen = Interlocked.Increment(ref _chatSocketGeneration);
             _chatSocketCts?.Cancel();
             _chatSocketCts?.Dispose();
             _chatSocketCts = new CancellationTokenSource();
@@ -1783,12 +1792,18 @@ public sealed class WebSocketTransportServer : ITransportServer
                 if (_chatSocket == socket)
                 {
                     _chatSocket = null;
-                    OnPlayerMessage?.Invoke("disconnected",new JsonObject());
+                    NotifyChatDisconnected();
                     if (_chatSendFailureGeneration != gen)
                         _pendingChatProblems.Enqueue((gen, "伙伴连接已断开，请恢复服务后重试；动作结果未确认。", false));
                 }
             }
         }
+    }
+
+    private void NotifyChatDisconnected()
+    {
+        if (DesktopClientEnabled) Interlocked.Increment(ref _desktopDisconnectRevision);
+        OnPlayerMessage?.Invoke("disconnected", new JsonObject());
     }
 
     public async Task<bool> SendChatSubmitAsync(ChatSubmitPayload payload)
@@ -2045,11 +2060,12 @@ public sealed class WebSocketTransportServer : ITransportServer
     /// <summary>
     /// Shared helper: serialise and send an envelope on the /chat WebSocket with a 5-second timeout.
     /// </summary>
-    private async Task<bool> SendChatEnvelopeAsync(EnvelopeDto envelope)
+    private async Task<bool> SendChatEnvelopeAsync(EnvelopeDto envelope, long? expectedGeneration = null)
     {
         WebSocket? socket;
         long generation;
         lock (_chatLock) { socket = _chatSocket; generation = _chatSocketGeneration; }
+        if (expectedGeneration is { } expected && generation != expected) return false;
         if (socket == null || socket.State != WebSocketState.Open) return false;
 
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope, JsonOptions));

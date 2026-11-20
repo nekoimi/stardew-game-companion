@@ -68,7 +68,7 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
                 raise DesktopError("请等待桌面状态刷新后再提交。")
             if path == "/v1/control":
                 action = body.get("action")
-                if action not in ("pause", "resume", "cancel", "takeover", "handoff"):
+                if action not in ("pause", "resume", "cancel", "takeover", "handoff", "recover"):
                     return JSONResponse({"error": "未知控制操作。"}, status_code=400)
                 goal = body.get("goalId")
                 if goal is not None and (action != "cancel" or not isinstance(goal, str) or not 1 <= len(goal) <= 120):

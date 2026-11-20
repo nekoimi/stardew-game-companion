@@ -24,12 +24,26 @@ internal sealed class DesktopSession
     private readonly string _stopFile = Path.Combine(Path.GetTempPath(), $"stardew-desktop-{Guid.NewGuid():N}.stop");
     private readonly Action<string> _log;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly SemaphoreSlim _lifecycle = new(1, 1);
+    private CancellationTokenSource? _runtimeLifetime;
+    private DesktopSettings? _settings;
+    private volatile int _runtimeGeneration;
     private Process? _runtime;
     private Process? _game;
     private HttpClient? _client;
     private FileStream? _packageLease;
     private bool _stopping;
-    public event Action<JsonElement>? EventReceived;
+    private Task? _stopTask;
+    public event Action<int, JsonElement>? EventReceived;
+    public event Action<int>? RuntimeExited;
+    public int RuntimeGeneration => _runtimeGeneration;
+    public bool CanReconnect => !_stopping && IsRunning(_game) && !IsRunning(_runtime);
+
+    private static bool IsRunning(Process? process)
+    {
+        try { return process is { HasExited: false }; }
+        catch (InvalidOperationException) { return false; }
+    }
     public event Action? GameExited;
     public string SettingsFile => Path.Combine(_root, "data", "desktop-settings.json");
 
@@ -42,16 +56,20 @@ internal sealed class DesktopSession
 
     public async Task StartAsync(DesktopSettings settings)
     {
+        await _lifecycle.WaitAsync(_lifetime.Token);
+        try { await StartGameAsync(settings); }
+        finally { _lifecycle.Release(); }
+    }
+
+    private async Task StartGameAsync(DesktopSettings settings)
+    {
         if (AnyGameRunning())
             throw new InvalidOperationException("游戏已在运行，请先在游戏中保存并退出，再从桌面启动。");
         var gameDirectory = Path.GetFullPath(settings.GameDirectory);
         var smapi = Path.Combine(gameDirectory, "StardewModdingAPI.exe");
         if (!IsGameDirectory(gameDirectory))
             throw new FileNotFoundException("请选择包含星露谷和 StardewModdingAPI.exe 的游戏目录。");
-        var python = Path.Combine(_mod, "runtime", "python", "python.exe");
-        if (!File.Exists(python) || !File.Exists(Path.Combine(_mod, "release-manifest.json")))
-            throw new FileNotFoundException("发行包文件不完整，请完整解压 ZIP 后再打开程序。");
-
+        string python = ResolveRuntime();
         _packageLease = AcquirePackageLease(_root);
         if (ImportPending(_root)) throw new InvalidOperationException("请在「设置」完成上次导入后再启动游戏。");
         var configPath = Path.Combine(_mod, "config.json");
@@ -63,6 +81,61 @@ internal sealed class DesktopSession
         WriteJson(configPath, config);
         WriteJson(SettingsFile, settings);
 
+        _settings = settings;
+        await StartRuntimeAsync(python, settings);
+        _lifetime.Token.ThrowIfCancellationRequested();
+        if (!IsRunning(_runtime)) throw new InvalidOperationException("伴侣服务提前退出，请查看诊断。");
+
+        if (AnyGameRunning())
+            throw new InvalidOperationException("游戏已在运行，请先保存并退出。");
+        var gameStart = new ProcessStartInfo(smapi)
+        {
+            WorkingDirectory = gameDirectory, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        gameStart.ArgumentList.Add("--mods-path");
+        gameStart.ArgumentList.Add(Path.Combine(_root, "Mods"));
+        gameStart.Environment["STARDEW_DESKTOP_MODE"] = "1";
+        _game = new Process { StartInfo = gameStart, EnableRaisingEvents = true };
+        _game.OutputDataReceived += (_, args) => { if (args.Data is { } line) _log(line); };
+        _game.ErrorDataReceived += (_, args) => { if (args.Data is { } line) _log(line); };
+        _game.Exited += (_, _) => GameExited?.Invoke();
+        if (!_game.Start()) throw new InvalidOperationException("无法启动星露谷。");
+        _game.BeginOutputReadLine();
+        _game.BeginErrorReadLine();
+    }
+
+    private string ResolveRuntime()
+    {
+        var python = Path.Combine(_mod, "runtime", "python", "python.exe");
+        if (!File.Exists(python) || !File.Exists(Path.Combine(_mod, "release-manifest.json")))
+            throw new FileNotFoundException("发行包文件不完整，请完整解压 ZIP 后再打开程序。");
+        return python;
+    }
+
+    public async Task ReconnectAsync()
+    {
+        await _lifecycle.WaitAsync(_lifetime.Token);
+        try
+        {
+            if (!CanReconnect || _settings is not { } settings)
+                throw new InvalidOperationException("当前无法重连伴侣服务。");
+            await StopRuntimeAsync();
+            try { await StartRuntimeAsync(ResolveRuntime(), settings); }
+            catch
+            {
+                await StopRuntimeAsync();
+                throw;
+            }
+        }
+        finally { _lifecycle.Release(); }
+    }
+
+    private async Task StartRuntimeAsync(string python, DesktopSettings settings)
+    {
+        var generation = ++_runtimeGeneration;
+        _runtimeLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        var runtimeToken = _runtimeLifetime.Token;
         var credential = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         var runtimeStart = new ProcessStartInfo(python)
         {
@@ -104,44 +177,27 @@ internal sealed class DesktopSession
         _runtime.ErrorDataReceived += (_, args) => { if (args.Data is { } line) _log(line); };
         _runtime.Exited += (_, _) =>
         {
-            if (!ready.TrySetException(new InvalidOperationException("伴侣服务提前退出，请查看诊断。")))
-                _log("伴侣服务已退出。");
+            ready.TrySetException(new InvalidOperationException("伴侣服务提前退出，请查看诊断。"));
+            if (!runtimeToken.IsCancellationRequested) RuntimeExited?.Invoke(generation);
         };
         if (!_runtime.Start()) throw new InvalidOperationException("无法启动伴侣服务。");
         _runtime.BeginOutputReadLine();
         _runtime.BeginErrorReadLine();
-        int endpoint = await ready.Task.WaitAsync(TimeSpan.FromSeconds(35), _lifetime.Token);
+        int endpoint = await ready.Task.WaitAsync(TimeSpan.FromSeconds(35), runtimeToken);
+        if (!IsRunning(_runtime)) throw new InvalidOperationException("伴侣服务提前退出，请查看诊断。");
         _client = new HttpClient(new HttpClientHandler { UseProxy = false })
         {
             BaseAddress = new Uri($"http://127.0.0.1:{endpoint}"),
             Timeout = Timeout.InfiniteTimeSpan
         };
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", credential);
-        _ = ReceiveEventsAsync(_client, _lifetime.Token);
-
-        if (AnyGameRunning())
-            throw new InvalidOperationException("游戏已在运行，请先保存并退出。");
-        var gameStart = new ProcessStartInfo(smapi)
-        {
-            WorkingDirectory = gameDirectory, UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true
-        };
-        gameStart.ArgumentList.Add("--mods-path");
-        gameStart.ArgumentList.Add(Path.Combine(_root, "Mods"));
-        gameStart.Environment["STARDEW_DESKTOP_MODE"] = "1";
-        _game = new Process { StartInfo = gameStart, EnableRaisingEvents = true };
-        _game.OutputDataReceived += (_, args) => { if (args.Data is { } line) _log(line); };
-        _game.ErrorDataReceived += (_, args) => { if (args.Data is { } line) _log(line); };
-        _game.Exited += (_, _) => GameExited?.Invoke();
-        if (!_game.Start()) throw new InvalidOperationException("无法启动星露谷。");
-        _game.BeginOutputReadLine();
-        _game.BeginErrorReadLine();
+        _ = ReceiveEventsAsync(_client, generation, runtimeToken);
     }
 
     public async Task<JsonElement> PostAsync(string route, object body, int timeoutSeconds = 25)
     {
         var client = _client ?? throw new InvalidOperationException("伴侣服务尚未启动。");
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_runtimeLifetime?.Token ?? _lifetime.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         using var response = await client.PostAsJsonAsync(route, body, timeout.Token);
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: timeout.Token);
@@ -149,7 +205,7 @@ internal sealed class DesktopSession
         throw new InvalidOperationException(payload.TryGetProperty("error", out var message) ? message.GetString() : "请求未获确认。");
     }
 
-    private async Task ReceiveEventsAsync(HttpClient client, CancellationToken cancellationToken)
+    private async Task ReceiveEventsAsync(HttpClient client, int generation, CancellationToken cancellationToken)
     {
         string? cursor = null;
         while (!cancellationToken.IsCancellationRequested)
@@ -168,7 +224,7 @@ internal sealed class DesktopSession
                     if (line.StartsWith("id: ", StringComparison.Ordinal)) id = line[4..];
                     if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
                     using var json = JsonDocument.Parse(line.AsMemory(6));
-                    EventReceived?.Invoke(json.RootElement.Clone());
+                    EventReceived?.Invoke(generation, json.RootElement.Clone());
                     cursor = id ?? cursor;
                     id = null;
                 }
@@ -179,36 +235,64 @@ internal sealed class DesktopSession
                 _log($"本地状态连接断开：{ex.Message}");
             }
             using var disconnected = JsonDocument.Parse("""{"type":"status","payload":{"ready":false}}""");
-            EventReceived?.Invoke(disconnected.RootElement.Clone());
-            if (_runtime?.HasExited != false) return;
+            if (cancellationToken.IsCancellationRequested || generation != _runtimeGeneration || !IsRunning(_runtime)) return;
+            EventReceived?.Invoke(generation, disconnected.RootElement.Clone());
             try { await Task.Delay(1000, cancellationToken); }
             catch (OperationCanceledException) { return; }
         }
     }
 
-    public async Task StopAsync()
+    public Task StopAsync() => _stopTask ??= StopCoreAsync();
+
+    private async Task StopCoreAsync()
     {
-        if (_stopping) return;
         _stopping = true;
         _lifetime.Cancel();
+        await _lifecycle.WaitAsync();
+        try { await StopRuntimeAsync(); }
+        finally
+        {
+            _game?.Dispose();
+            _packageLease?.Dispose();
+            _lifecycle.Release();
+        }
+    }
+
+    private async Task StopRuntimeAsync()
+    {
+        _runtimeLifetime?.Cancel();
+        _runtimeLifetime?.Dispose();
+        _runtimeLifetime = null;
         _client?.Dispose();
-        _game?.Dispose();
+        _client = null;
         var runtime = _runtime;
+        _runtime = null;
         try
         {
-            if (runtime is not null && !runtime.HasExited)
+            if (runtime is not null && IsRunning(runtime))
             {
-                File.WriteAllText(_stopFile, "stop");
-                try { await runtime.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(13)); }
-                catch (TimeoutException) when (!runtime.HasExited) { runtime.Kill(entireProcessTree: true); }
+                try
+                {
+                    File.WriteAllText(_stopFile, "stop");
+                    await runtime.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(13));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
+                {
+                    _log($"未能正常停止伙伴服务：{ex.Message}");
+                    if (IsRunning(runtime)) runtime.Kill(entireProcessTree: true);
+                    await runtime.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+                }
             }
         }
         catch (InvalidOperationException) { }
         finally
         {
             runtime?.Dispose();
-            _packageLease?.Dispose();
-            if (File.Exists(_stopFile)) File.Delete(_stopFile);
+            try { File.Delete(_stopFile); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _log($"未能清理伙伴服务停止信号：{ex.Message}");
+            }
         }
     }
 

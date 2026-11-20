@@ -24,6 +24,8 @@ public partial class MainWindow : Window
     private bool _playerMode;
     private bool _paused;
     private bool _interrupting;
+    private bool _recoveryPending;
+    private bool _reconnecting;
     private bool _closing;
     private bool _closed;
     private string? _decisionSignature;
@@ -77,7 +79,15 @@ public partial class MainWindow : Window
         _session = session;
         _activeSource = settings.ConnectionSource;
         _partnerReady = false;
-        session.EventReceived += message => Dispatcher.BeginInvoke(() => { if (_session == session) ApplyEvent(message); });
+        session.EventReceived += (generation, message) => Dispatcher.BeginInvoke(() =>
+        {
+            if (_session == session && session.RuntimeGeneration == generation && !session.CanReconnect) ApplyEvent(message);
+        });
+        session.RuntimeExited += generation => Dispatcher.BeginInvoke(() =>
+        {
+            if (_session == session && session.RuntimeGeneration == generation && session.CanReconnect && !_closing)
+                MarkRuntimeExited();
+        });
         session.GameExited += () => Dispatcher.BeginInvoke(() => _ = EndSessionAsync(session, "游戏已退出，可以再次启动。"));
         Pages.SelectedItem = _activeSource == "external" ? SettingsPage : CommandPage;
         ConnectionText.Text = "正在检查运行组件";
@@ -99,6 +109,38 @@ public partial class MainWindow : Window
                 Log(ex.Message);
                 await EndSessionAsync(session, ex.Message);
             }
+        }
+    }
+
+    private void MarkRuntimeExited()
+    {
+        ApplyStatus(default);
+        ConnectionText.Text = "伙伴服务已退出";
+        ActivityText.Text = "游戏仍在运行。点击「重连伙伴服务」后核对旧动作。";
+        AddEntry("连接中断", "上一轮回复或动作结果可能尚未确认。可在连接恢复后核对旧动作，或到历史中查看已保存的对话。");
+    }
+
+    private async void ReconnectClicked(object sender, RoutedEventArgs e)
+    {
+        if (_reconnecting || _closing || _session is not { CanReconnect: true } session) return;
+        _reconnecting = true;
+        ConnectionText.Text = "正在重连伙伴服务";
+        ActivityText.Text = "等待当前游戏重新连接。";
+        RefreshControls();
+        try { await session.ReconnectAsync(); }
+        catch (Exception ex)
+        {
+            if (_session == session && !_closing)
+            {
+                ConnectionText.Text = "重连伙伴服务失败";
+                ActivityText.Text = ex.Message;
+                Log(ex.Message);
+            }
+        }
+        finally
+        {
+            _reconnecting = false;
+            RefreshControls();
         }
     }
 
@@ -217,6 +259,10 @@ public partial class MainWindow : Window
                     AddEntry(error.Length > 0 ? "未完成" : "伴侣", reply.Length > 0 ? reply : error);
                 break;
             case "result": ApplyResult(payload); break;
+            case "recovery":
+                AddEntry("连接已恢复", Flag(payload, "hasReceipt") ? "已核对旧动作的游戏回执，工作仍保持暂停。"
+                    : "已核对游戏中没有待结算的旧动作，工作仍保持暂停。");
+                break;
         }
     }
 
@@ -225,7 +271,7 @@ public partial class MainWindow : Window
         bool hadService = _partnerServiceReady;
         ApplyPartnerStatus(payload);
         var previous = _gameSessionId;
-        _gameSessionId = Flag(payload, "ready") ? Text(payload, "gameSessionId") : null;
+        _gameSessionId = payload.ValueKind == JsonValueKind.Object && Flag(payload, "ready") ? Text(payload, "gameSessionId") : null;
         bool saveChanged = previous != _gameSessionId;
         bool usageChanged = saveChanged || hadService != _partnerServiceReady;
         if (usageChanged)
@@ -238,6 +284,7 @@ public partial class MainWindow : Window
         _playerMode = Text(payload, "actorMode") == "player";
         _paused = Flag(payload, "paused");
         _interrupting = Flag(payload, "interrupting");
+        _recoveryPending = Flag(payload, "recoveryPending");
         if (_gameSessionId is null)
         {
             if (previous is not null) ConnectionText.Text = "等待游戏重新连接";
@@ -249,9 +296,10 @@ public partial class MainWindow : Window
         ConnectionText.Text = _playerMode ? "游戏已连接 · AI 自己玩" : "游戏已连接 · 伙伴模式";
         var action = Text(payload, "activity");
         var progress = Text(payload, "progress");
-        ActivityText.Text = _playerMode && _owner != "agent" ? "玩家控制中。点击「交给 AI」开始托管。"
-            : _interrupting ? "正在确认旧动作终态"
+        ActivityText.Text = _recoveryPending ? "已重连。请先核对旧动作，工作保持暂停。"
             : _paused ? "已暂停"
+            : _playerMode && _owner != "agent" ? "玩家控制中。点击「交给 AI」开始托管。"
+            : _interrupting ? "正在确认旧动作终态"
             : Text(payload, "activeCommandId").Length > 0 ? $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}"
             : Flag(payload, "thinking") ? "伴侣正在规划或回复"
             : action is "" or "idle" ? "等待指令" : StatusLabel(action);
@@ -348,14 +396,20 @@ public partial class MainWindow : Window
     {
         bool connected = _gameSessionId is not null && !_closing;
         LaunchHeader.IsEnabled = _session is null && !_closing && !_importing;
+        bool reconnect = _session?.CanReconnect == true;
+        LaunchHeader.Visibility = reconnect || _reconnecting ? Visibility.Collapsed : Visibility.Visible;
+        ReconnectHeader.Visibility = reconnect || _reconnecting ? Visibility.Visible : Visibility.Collapsed;
+        ReconnectHeader.IsEnabled = reconnect && !_reconnecting && !_closing;
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
         RefreshImportControls();
         SendButton.IsEnabled = Input.IsEnabled = connected && _partnerReady;
         DecisionInput.IsEnabled = DecisionReplyButton.IsEnabled = DecisionChoices.IsEnabled = SendButton.IsEnabled;
         InterruptButton.IsEnabled = SendButton.IsEnabled && !_paused && !_interrupting && (!_playerMode || _owner == "agent");
         PauseButton.IsEnabled = connected && !_paused && !_interrupting;
-        ResumeButton.IsEnabled = connected && (_paused || _interrupting);
-        CancelButton.IsEnabled = connected;
+        ResumeButton.IsEnabled = connected && !_recoveryPending && (_paused || _interrupting);
+        CancelButton.IsEnabled = connected && !_recoveryPending;
+        RecoverButton.Visibility = _recoveryPending ? Visibility.Visible : Visibility.Collapsed;
+        RecoverButton.IsEnabled = connected && _recoveryPending;
         AuthorityButton.Visibility = _playerMode ? Visibility.Visible : Visibility.Collapsed;
         AuthorityButton.IsEnabled = connected && (_owner == "agent" || (_partnerReady && !_interrupting));
         AuthorityButton.Content = _owner == "agent" ? "玩家接管（F9）" : "交给 AI";
@@ -383,7 +437,7 @@ public partial class MainWindow : Window
             ? value.GetString() ?? "" : "";
 
     private static bool Flag(JsonElement data, string key) =>
-        data.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.True;
+        data.ValueKind == JsonValueKind.Object && data.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.True;
 
     protected override async void OnClosing(CancelEventArgs e)
     {

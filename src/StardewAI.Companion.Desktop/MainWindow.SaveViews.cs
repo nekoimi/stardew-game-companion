@@ -49,7 +49,7 @@ public partial class MainWindow
     private void RefreshSaveViewControls()
     {
         bool connected = _gameSessionId is not null && !_closing;
-        WithdrawGoalButton.IsEnabled = connected && !_withdrawingGoal && !_interrupting && GoalPicker.SelectedItem is DesktopGoal;
+        WithdrawGoalButton.IsEnabled = connected && !_withdrawingGoal && !_interrupting && !_recoveryPending && GoalPicker.SelectedItem is DesktopGoal;
         HistoryRefreshButton.IsEnabled = connected && !_readingHistory;
         HistoryOlderButton.IsEnabled = HistoryRefreshButton.IsEnabled && _historyBefore.HasValue;
         ReadProfileButton.IsEnabled = connected && !_savingPreferences;

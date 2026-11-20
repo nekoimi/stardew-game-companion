@@ -13,8 +13,13 @@ public sealed partial class ModEntry
     private readonly bool _desktopMode = Environment.GetEnvironmentVariable("STARDEW_DESKTOP_MODE") == "1";
     private bool _desktopPaused;
     private bool _desktopInterrupting;
+    private bool _desktopRecoveryPending;
     private string? _desktopInterruptedCommandId;
     private long _desktopSnapshotGeneration;
+    private long _desktopHandledDisconnectRevision;
+
+    private bool DesktopActionsAllowed => !_desktopMode || (!_desktopPaused && !_desktopInterrupting
+        && _desktopHandledDisconnectRevision == _transportServer?.DesktopDisconnectRevision);
 
     private void EnableDesktopFocusPolicy()
     {
@@ -37,9 +42,10 @@ public sealed partial class ModEntry
     private void AttachDesktopControls(WebSocketTransportServer server)
     {
         if (!_desktopMode) return;
-        _desktopPaused = _desktopInterrupting = false;
+        _desktopPaused = _desktopInterrupting = _desktopRecoveryPending = false;
         _desktopInterruptedCommandId = null;
         _desktopSnapshotGeneration = -1;
+        _desktopHandledDisconnectRevision = 0;
         server.DesktopClientEnabled = true;
         server.OnDesktopControl += payload =>
         {
@@ -47,17 +53,23 @@ public sealed partial class ModEntry
             _mainThreadActions.Enqueue(() =>
             {
                 if (ReferenceEquals(_transportServer, server) && server.IsChatConnected && generation == server.ChatGeneration)
-                    HandleDesktopControl(server, payload);
+                    HandleDesktopControl(server, payload, generation);
             });
         };
         server.OnPlayerMessage += (type, _) =>
         {
             if (type != "disconnected") return;
+            long revision = server.DesktopDisconnectRevision;
             _mainThreadActions.Enqueue(() =>
             {
-                if (!ReferenceEquals(_transportServer, server) || server.IsChatConnected) return;
-                _desktopPaused = true;
+                if (!ReferenceEquals(_transportServer, server)) return;
+                _desktopInterruptedCommandId ??= server.LatestDesktopActionId;
+                _desktopPaused = _desktopInterrupting = _desktopRecoveryPending = true;
                 CancelDesktopAction();
+                if (_lifeMenuUiState.PendingChatRequestIds.Any())
+                    ShowChatChannelProblem(null, null, "伙伴服务连接中断，回复尚未确认。");
+                if (revision > _desktopHandledDisconnectRevision)
+                    _desktopHandledDisconnectRevision = revision;
             });
         };
     }
@@ -65,9 +77,11 @@ public sealed partial class ModEntry
     private void PublishDesktopControlState()
     {
         if (_transportServer is not { IsChatConnected: true } server || _coordinator is not { } coordinator) return;
-        if (_desktopSnapshotGeneration != server.ChatGeneration && _observer is not null)
+        long generation = server.ChatGeneration;
+        if (_desktopHandledDisconnectRevision != server.DesktopDisconnectRevision) return;
+        if (_desktopSnapshotGeneration != generation && _observer is not null)
         {
-            _desktopSnapshotGeneration = server.ChatGeneration;
+            _desktopSnapshotGeneration = generation;
             if (!PlayerModeEnabled)
                 _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
         }
@@ -75,13 +89,14 @@ public sealed partial class ModEntry
         {
             ["paused"] = _desktopPaused,
             ["interrupting"] = _desktopInterrupting,
+            ["recoveryPending"] = _desktopRecoveryPending,
             ["interruptedCommandId"] = _desktopInterruptedCommandId,
             ["activeCommandId"] = server.ActiveCommandId,
             ["activity"] = coordinator.GetActivityStatus(),
             ["progress"] = coordinator.GetActivityLabel(),
             ["inboxRevision"] = _lifeMenuUiState.ConversationRevision,
             ["unreadMessages"] = CountUnreadDesktopMessages()
-        });
+        }, generation);
     }
 
     private static bool IsDesktopMessage(CompanionConversationEntry entry) => entry.Id.StartsWith("care:", StringComparison.Ordinal);
@@ -101,13 +116,14 @@ public sealed partial class ModEntry
             _coordinator?.ActiveMachine?.RequestCancel("Desktop control");
     }
 
-    private void HandleDesktopControl(WebSocketTransportServer server, JsonObject payload)
+    private void HandleDesktopControl(WebSocketTransportServer server, JsonObject payload, long generation)
     {
         if (!Context.IsWorldReady || _coordinator is not { } coordinator || _observer is null
             || payload["requestId"] is not JsonValue key || !key.TryGetValue<string>(out var requestId))
             return;
 
         string? action = payload["action"]?.GetValue<string>();
+        if (_desktopHandledDisconnectRevision != server.DesktopDisconnectRevision) return;
         if (action is "history" or "inbox")
         {
             int? before = payload["before"] is JsonValue cursor && cursor.TryGetValue<int>(out int index) ? index : null;
@@ -116,9 +132,33 @@ public sealed partial class ModEntry
         }
 
         string? error = null;
+        if (_desktopRecoveryPending && action is not ("status" or "read-message" or "recover" or "takeover"))
+            error = "RECOVERY_PENDING";
+        SkillResultPayload? receipt = null;
+        string? receiptId = payload["commandId"]?.GetValue<string>();
+        if (action == "recover") receiptId = _desktopInterruptedCommandId;
+        if (receiptId is { Length: > 0 } commandId)
+        {
+            server.Idempotency.TryGetCompletedResult(commandId, out receipt);
+            if (receipt is null && coordinator.LastSkillResultPayload is { } last && last.CommandId == commandId)
+                receipt = last;
+        }
+        bool active = server.ActiveCommandId is not null || coordinator.ActiveMachine is not null || coordinator.HasRestTask;
+        if (error is null)
         switch (action)
         {
             case "status": break;
+            case "recover":
+                if (!_desktopRecoveryPending) break;
+                if (active) error = "ACTION_STILL_RUNNING";
+                else if (receiptId is not null && receipt is null) error = "TERMINAL_UNKNOWN";
+                else
+                {
+                    _desktopRecoveryPending = _desktopInterrupting = false;
+                    _desktopInterruptedCommandId = null;
+                    server.LatestDesktopActionId = null;
+                }
+                break;
             case "read-message":
                 var id = payload["entryId"]?.GetValue<string>();
                 if (!_lifeMenuUiState.Conversation.Any(entry => entry.Id == id && IsDesktopMessage(entry)))
@@ -178,13 +218,6 @@ public sealed partial class ModEntry
             default: error = "CONTROL_UNAVAILABLE"; break;
         }
 
-        SkillResultPayload? receipt = null;
-        if (payload["commandId"]?.GetValue<string>() is { Length: > 0 } commandId)
-        {
-            server.Idempotency.TryGetCompletedResult(commandId, out receipt);
-            if (receipt is null && coordinator.LastSkillResultPayload is { } last && last.CommandId == commandId)
-                receipt = last;
-        }
         var reply = new JsonObject
         {
             ["requestId"] = requestId,
@@ -198,12 +231,13 @@ public sealed partial class ModEntry
             ["active"] = server.ActiveCommandId is not null || coordinator.ActiveMachine is not null || coordinator.HasRestTask,
             ["paused"] = _desktopPaused,
             ["interrupting"] = _desktopInterrupting,
+            ["recoveryPending"] = _desktopRecoveryPending,
             ["controlOwner"] = PlayerModeEnabled ? _authority?.AgentOwns == true ? "agent" : "human" : null,
             ["result"] = receipt is null ? null : JsonSerializer.SerializeToNode(receipt, WebSocketTransportServer.JsonOptions)
         };
         if (action is not ("status" or "read-message"))
             _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
-        _ = server.SendDesktopStateAsync("desktop.control.result", reply);
+        _ = server.SendDesktopStateAsync("desktop.control.result", reply, generation);
     }
 
     private async Task SendDesktopHistoryAsync(WebSocketTransportServer server, string requestId, int? before, bool inbox)
@@ -239,6 +273,6 @@ public sealed partial class ModEntry
             reply["error"] = "HISTORY_UNAVAILABLE";
         }
         if (server.ChatGeneration == generation && server.IsChatConnected)
-            await server.SendDesktopStateAsync("desktop.control.result", reply).ConfigureAwait(false);
+            await server.SendDesktopStateAsync("desktop.control.result", reply, generation).ConfigureAwait(false);
     }
 }

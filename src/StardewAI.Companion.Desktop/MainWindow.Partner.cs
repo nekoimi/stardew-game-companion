@@ -180,7 +180,7 @@ public partial class MainWindow
 
     private void ApplyPartnerStatus(JsonElement payload)
     {
-        if (!payload.TryGetProperty("connection", out var state) || state.ValueKind != JsonValueKind.Object)
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("connection", out var state) || state.ValueKind != JsonValueKind.Object)
         {
             _partnerReady = _partnerServiceReady = _adapterOwned = false;
             if (_activeSource is not null) PartnerStatus.Text = "伴侣服务连接已中断";

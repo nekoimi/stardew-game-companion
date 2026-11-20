@@ -726,6 +726,39 @@ public class WebSocketTransportServerTests
         });
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DesktopCanIdentifyNativeActionAfterCommandSocketDisconnect(bool terminalBeforeDisconnect)
+    {
+        var handler = new TestTransportHandler();
+        var disconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var server = new WebSocketTransportServer(0, "test-token", handler, saveId: "save-123", gameSessionId: "session-456",
+            logger: (message, _) => { if (message.Contains("disconnect scheduled")) disconnected.TrySetResult(); });
+        server.DesktopClientEnabled = true;
+        server.Start();
+        using var client = await ConnectClientAsync(server.Port, "test-token");
+        await SendRawJsonAsync(client, CreateHelloJson("test-token"));
+        await ReceiveEnvelopeAsync(client);
+        server.Update();
+        await ReceiveEnvelopeAsync(client);
+        await SendAndDrainAsync(client, server, CreateExecuteJson("old-command", "old-task", "old-key"));
+
+        var receipt = new SkillResultPayload("old-command", "old-task", "partially-succeeded", 2, 0, 1, 2,
+            new List<Dictionary<string, object>>(), new SkillResultResources(4, 2, 10));
+        if (terminalBeforeDisconnect) await server.SendSkillResultAsync(receipt, "original-execute", "old-key");
+        await client.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "command socket closed first", CancellationToken.None);
+        await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        server.Update();
+
+        Assert.Null(server.ActiveCommandId);
+        Assert.Equal("old-command", server.LatestDesktopActionId);
+        if (!terminalBeforeDisconnect) await server.SendSkillResultAsync(receipt, "original-execute", "old-key");
+        Assert.True(server.Idempotency.TryGetCompletedResult(server.LatestDesktopActionId!, out var recovered));
+        Assert.Equal(receipt, recovered);
+        Assert.Equal(1, handler.AcceptCount);
+    }
+
+    [Theory]
     [InlineData("succeeded")]
     [InlineData("partially-succeeded")]
     [InlineData("cancelled")]
@@ -973,7 +1006,9 @@ public class WebSocketTransportServerTests
     public async Task Disconnect_QueuedToMainThread_ExecutesOnUpdateThread()
     {
         var handler = new TestTransportHandler();
-        using var server = new WebSocketTransportServer(0, "test-token", handler, saveId: "save-123", gameSessionId: "session-456");
+        var disconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var server = new WebSocketTransportServer(0, "test-token", handler, saveId: "save-123", gameSessionId: "session-456",
+            logger: (message, _) => { if (message.Contains("disconnect scheduled")) disconnected.TrySetResult(); });
         server.Start();
 
         var client = await ConnectClientAsync(server.Port, "test-token");
@@ -990,8 +1025,7 @@ public class WebSocketTransportServerTests
         client.Abort();
         client.Dispose();
 
-        // Give network loop time to notice socket closure
-        await Task.Delay(100);
+        await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Before Update() is called, OnTransportDisconnected must NOT have run on the network thread!
         Assert.Equal(0, handler.DisconnectCount);

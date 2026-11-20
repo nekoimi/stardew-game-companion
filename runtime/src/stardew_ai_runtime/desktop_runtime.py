@@ -45,6 +45,7 @@ class DesktopBridge(ChatBridge):
         self.operation = asyncio.Lock()
         self._desktop_control_pending = False
         self.native_state: dict = {}
+        self._awaiting_native_control = True
         self.settling: str | None = None
         self.partner = DesktopPartner(run_dir)
 
@@ -76,6 +77,8 @@ class DesktopBridge(ChatBridge):
             if signature != current[0]:
                 raise DesktopError("此请求编号已用于另一条指令。")
             return current[1], False
+        if self._awaiting_native_control or self.native_state.get("recoveryPending"):
+            raise DesktopError("请先等待游戏状态同步，或核对旧动作后继续。")
         if decision and not self.has_pending_decision(decision):
             raise DesktopError("该决定已结束，请刷新后重试。")
         if len(self.turns) >= 8:
@@ -104,6 +107,7 @@ class DesktopBridge(ChatBridge):
         self._latest_snapshot_payload = None
         self.save = active_save_id
         self.native_state = {}
+        self._awaiting_native_control = True
         try:
             await super()._receive_loop(ws, active_save_id, stop_event)
         finally:
@@ -135,6 +139,7 @@ class DesktopBridge(ChatBridge):
             return
         if "paused" in payload:
             self.native_state = payload
+            self._awaiting_native_control = False
         future = self.controls.get(payload.get("requestId"))
         if future is not None and not future.done():
             future.set_result(payload)
@@ -147,6 +152,9 @@ class DesktopBridge(ChatBridge):
         return self.save, session, ws
 
     def _connection_ready(self) -> bool:
+        return not (self._awaiting_native_control or self.native_state.get("recoveryPending")) and self._partner_available()
+
+    def _partner_available(self) -> bool:
         if not super()._connection_ready():
             return False
         if self.connection_source != "external":
@@ -159,11 +167,13 @@ class DesktopBridge(ChatBridge):
         ready = self._connection_ready()
         if self.connection_source == "builtin":
             state["clientName"] = PROVIDERS[self.backend_name].name
-        elif not ready and state["status"] == "connected":
+        elif not self._partner_available() and state["status"] == "connected":
             state["status"] = "waiting"
         return {**state, "ready": ready, "ownedAdapter": self.partner.active()}
 
     def require_partner(self) -> None:
+        if self._awaiting_native_control or self.native_state.get("recoveryPending"):
+            raise DesktopError("请先等待游戏状态同步，或核对旧动作后继续。")
         if not self._connection_ready():
             raise DesktopError("原伙伴尚未连接，请在设置中恢复原会话。")
 
@@ -181,6 +191,7 @@ class DesktopBridge(ChatBridge):
             "actorMode": self.actor_mode, "controlOwner": self.control_owner,
             "paused": bool(work.get("paused") or self.native_state.get("paused")),
             "interrupting": bool(self._desktop_control_pending or self.native_state.get("interrupting")),
+            "recoveryPending": bool(self.native_state.get("recoveryPending")),
             "thinking": bool(self._busy_lock.locked() or self._active_task),
             "activity": self.native_state.get("activity", actor.get("activity")),
             "activeCommandId": self.native_state.get("activeCommandId", actor.get("activeCommandId")),
@@ -216,6 +227,12 @@ class DesktopBridge(ChatBridge):
                     raise DesktopError("当前存档的对话记录暂时无法读取。")
                 if reply["error"] == "MESSAGE_NOT_AVAILABLE":
                     raise DesktopError("这条消息已移出可标记的范围，请刷新提醒。")
+                if reply["error"] == "TERMINAL_UNKNOWN":
+                    raise DesktopError("游戏找不到旧动作的终态回执，已保持暂停。请在游戏中核对后保存并重新进入存档。")
+                if reply["error"] == "ACTION_STILL_RUNNING" and action == "recover":
+                    raise DesktopError("旧动作仍在停止，请稍候再核对。")
+                if reply["error"] == "RECOVERY_PENDING":
+                    raise DesktopError("请先核对旧动作。")
                 raise DesktopError("游戏未确认操作：" + reply["error"])
             return reply
         except TimeoutError as ex:
@@ -258,6 +275,21 @@ class DesktopBridge(ChatBridge):
         async with self.operation:
             if binding != self.binding():
                 raise DesktopError("游戏会话已变化，请重新发送。")
+            if action == "recover":
+                if self.native_state.get("recoveryPending"):
+                    self._work_store.set_paused(save, True)
+                    self._autonomy.set_paused(save, True)
+                else:
+                    raise DesktopError("当前没有待核对的断线动作。")
+                reply = await self.native_control(binding, "recover")
+                self.settling = None
+                self._pending_native_cancels.pop(save, None)
+                if receipt := reply.get("result"):
+                    self.publish("result", receipt)
+                self.publish("recovery", {"hasReceipt": bool(reply.get("result"))})
+                return
+            if self._awaiting_native_control or self.native_state.get("recoveryPending"):
+                raise DesktopError("请先核对旧动作。")
             self._desktop_control_pending = True
             held_native = False
 
