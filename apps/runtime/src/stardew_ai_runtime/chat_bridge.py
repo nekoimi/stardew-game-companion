@@ -28,18 +28,20 @@ import logging
 import os
 import re
 import sqlite3
-import subprocess
 import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+from stardew_ai_runtime.adapters.mcp.plan_client import InternalMcpPlanClient
+from stardew_ai_runtime.adapters.persistence.provider_sessions import ProviderSessionStore
 from stardew_ai_runtime.agent_instructions import instructions_revision, load_instruction_bundle
 from stardew_ai_runtime.agy_process import run_agy_process, terminate_agy_process
+from stardew_ai_runtime.application.plan_worker import PlanWorker
+from stardew_ai_runtime.application.turns import ActiveChatTask, cancel_active_turn
 from stardew_ai_runtime.autonomy import AutonomyController
 from stardew_ai_runtime.chat_backend_config import load_chat_backend_config, project_root
 from stardew_ai_runtime.codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
@@ -58,6 +60,7 @@ from stardew_ai_runtime.decision_context import (
     render_decision_context,
 )
 from stardew_ai_runtime.decision_policy import decision_policy
+from stardew_ai_runtime.domain.player_clock import player_mode_clock_gate
 from stardew_ai_runtime.job_feedback import (
     compact_job_feedback,
     compact_task_feedback,
@@ -67,10 +70,7 @@ from stardew_ai_runtime.kimi_wire_usage import read_usage_since, wire_offset
 from stardew_ai_runtime.life_chat import LifeChatService
 from stardew_ai_runtime.owner_process import OwnerProcessGuard
 from stardew_ai_runtime.plan_executor import (
-    DispatchDeferred,
-    PlanExecutor,
     StepExecution,
-    merge_reconciled_operation_result,
     normalise_native_result,
 )
 from stardew_ai_runtime.prompt_delivery import PromptDelivery
@@ -108,7 +108,6 @@ from stardew_ai_runtime.work_controls import explicit_cancel_scope
 from stardew_ai_runtime.work_state import (
     WorkStateError,
     WorkStore,
-    bind_execution_scope_params,
 )
 
 logger = logging.getLogger("stardew_ai_runtime.chat_bridge")
@@ -465,635 +464,6 @@ def check_new_quota_error(conversation_id: str | None, start_step_idx: int) -> t
         return False, ""
 
 
-class InternalMcpPlanClient:
-    """Persistent internal MCP client the bridge owns for plan execution.
-
-    It speaks to the *same* MCP server implementation the model uses (spawned
-    with the harness-only ``--surface internal`` — the light game surface plus the
-    read-only reconcile tool — and the same ``--run-dir``), so the worker path uses
-    the same policy/budget/chest checks and the same real scheduler code as a
-    normal tool call — it is not a second independent scheduler socket next to a
-    provider.
-
-    The Mod transport accepts a single command socket and answers a concurrent
-    connection with 409 Conflict, so ownership is serialized: the bridge closes
-    this client before starting a provider turn and reopens it afterwards.
-
-    The stdio session lives in one dedicated asyncio task that opens, calls and
-    closes it in the same task context (the only supported usage for
-    ``stdio_client``'s cancel scopes).
-    """
-
-    def __init__(
-        self,
-        run_dir: str | Path | None,
-        *,
-        python_executable: str | None = None,
-        timeout_seconds: float = 120.0,
-    ):
-        self.run_dir = Path(run_dir) if run_dir else None
-        self.python_executable = python_executable or sys.executable
-        self.timeout_seconds = timeout_seconds
-        self._task: asyncio.Task | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._requests: asyncio.Queue | None = None
-        self._ready: asyncio.Future | None = None
-        self._closed = False
-        self._live_session: Any | None = None
-        self._close_lock = asyncio.Lock()
-
-    @property
-    def connected(self) -> bool:
-        return bool(self._ready and self._ready.done() and not self._ready.cancelled())
-
-    def build_command(self) -> list[str]:
-        if self.run_dir is None:
-            raise RuntimeError("internal plan client requires a run directory")
-        return [
-            self.python_executable,
-            "-m",
-            "stardew_ai_runtime.mcp_server",
-            "--run-dir",
-            str(self.run_dir),
-            "--surface",
-            "internal",
-        ]
-
-    async def open(self) -> None:
-        # An idle worker may be closing the old session while a player control
-        # needs a new one. Never let that close clear the new session's state.
-        async with self._close_lock:
-            await self._open_session()
-
-    async def _open_session(self) -> None:
-        """Open while holding the lifecycle lock, including native control calls."""
-        if self._task is None or self._task.done():
-            self._loop = asyncio.get_running_loop()
-            self._requests = asyncio.Queue()
-            self._ready = self._loop.create_future()
-            self._closed = False
-            self._task = self._loop.create_task(self._session_loop())
-        await asyncio.wait_for(asyncio.shield(self._ready), timeout=self.timeout_seconds)
-
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        # Native controls must reach the existing scheduler while a long native
-        # operation is awaiting its terminal result. The read that determines
-        # whether cancellation is needed must not queue behind that job either.
-        if name in {"cancel_plan_command", "reconcile_plan_command"} or name == "dispatch_plan_operation" and (arguments or {}).get("operation") in {"cancel_task", "pause_task", "resume_task"}:
-            # Receiving a terminal can make the worker idle while this read is
-            # still pending. Keep that idle close from interrupting the reply.
-            async with self._close_lock:
-                await self._open_session()
-                result = await asyncio.wait_for(self._live_session.call_tool(name, arguments or {}), timeout=10)
-                if getattr(result, "isError", False):
-                    raise RuntimeError(f"Native control rejected: {_tool_result_payload(result)}")
-                return _tool_result_payload(result)
-        await self.open()
-        return await self._command(("call", name, arguments or {}))
-
-    async def current_save_id(self) -> str | None:
-        try:
-            status = await self.call_tool("get_status", {"detail": False})
-        except Exception:
-            logger.debug("Unable to read save id for plan worker", exc_info=True)
-            return None
-        save_id = status.get("saveId") if isinstance(status, dict) else None
-        if not save_id or save_id == "unknown":
-            return None
-        return str(save_id)
-
-    async def reconcile(self, command_id: str) -> Any:
-        """Ask the same server to reconcile a persisted command id (read-only)."""
-        return await self.call_tool("reconcile_plan_command", {"command_id": command_id})
-
-    async def close(self) -> None:
-        """Release the internal execution socket so a provider turn can own it."""
-        async with self._close_lock:
-            if self._task is None:
-                return
-            try:
-                if not self._task.done():
-                    await asyncio.wait_for(self._command(("close", None, None)), timeout=5.0)
-            except Exception:
-                logger.debug("Internal MCP client close command failed", exc_info=True)
-            task, self._task = self._task, None
-            if not task.done():
-                try:
-                    await asyncio.wait_for(task, timeout=5.0)
-                except (TimeoutError, asyncio.CancelledError):
-                    task.cancel()
-                    with contextlib.suppress(Exception, asyncio.CancelledError):
-                        await task
-                except Exception:
-                    logger.debug("Internal MCP session task ended with error", exc_info=True)
-            self._requests = None
-            self._ready = None
-
-
-    # ------------------------------------------------------------- internals
-    async def _command(self, command: tuple[str, Any, Any]) -> Any:
-        if self._requests is None or self._loop is None or self._closed:
-            raise RuntimeError("internal MCP client is not open")
-        future: asyncio.Future = self._loop.create_future()
-        self._requests.put_nowait((command, future))
-        return await future
-
-    async def _session_loop(self) -> None:
-        """Own the stdio session for its whole lifetime in one task."""
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        cmd = self.build_command()
-        env = {**os.environ, "STARDEW_MCP_SURFACE": "internal"}
-        try:
-            async with stdio_client(
-                StdioServerParameters(command=cmd[0], args=cmd[1:], env=env)
-            ) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    self._live_session = session
-                    self._resolve_ready(None)
-                    try:
-                        await self._serve(session)
-                    finally:
-                        self._live_session = None
-        except BaseException as ex:  # noqa: BLE001 - reported to the awaiting caller
-            self._resolve_ready(ex)
-            if not isinstance(ex, (asyncio.CancelledError, GeneratorExit)):
-                logger.warning("Internal MCP session ended: %s", ex)
-        finally:
-            self._closed = True
-            self._fail_queued_requests()
-
-    def _fail_queued_requests(self) -> None:
-        queue = self._requests
-        if queue is None:
-            return
-        while not queue.empty():
-            _, future = queue.get_nowait()
-            if not future.done():
-                future.set_exception(RuntimeError("Internal MCP session closed before request completed; native outcome is unknown."))
-
-    def _resolve_ready(self, error: BaseException | None) -> None:
-        ready = self._ready
-        if ready is not None and not ready.done():
-            if error is None:
-                ready.set_result(True)
-            else:
-                ready.set_exception(error)
-
-    async def _serve(self, session: Any) -> None:
-        queue = self._requests
-        if queue is None:
-            return
-        while True:
-            command, future = await queue.get()
-            kind, name, arguments = command
-            if kind == "close":
-                if not future.done():
-                    future.set_result(None)
-                return
-            try:
-                result = await asyncio.wait_for(
-                    session.call_tool(name, arguments or {}),
-                    timeout=self.timeout_seconds,
-                )
-                if getattr(result, "isError", False):
-                    raise RuntimeError(
-                        f"internal MCP tool '{name}' failed: {_tool_result_payload(result)}"
-                    )
-                payload = _tool_result_payload(result)
-            except BaseException as ex:  # noqa: BLE001 - release caller even on cancellation
-                if not future.done():
-                    future.set_exception(
-                        RuntimeError("Internal MCP session interrupted; native outcome is unknown.")
-                        if isinstance(ex, (asyncio.CancelledError, GeneratorExit)) else ex
-                    )
-                if not isinstance(ex, Exception):
-                    raise
-            else:
-                if not future.done():
-                    future.set_result(payload)
-
-    # Kept for explicit teardown paths (bridge shutdown) where awaiting is unsafe.
-    def terminate_sync(self) -> None:
-        task, self._task = self._task, None
-        if task is not None and not task.done():
-            task.cancel()
-
-
-def _tool_result_payload(result: Any) -> Any:
-    """Normalise an MCP CallToolResult to its structured JSON payload."""
-    structured = getattr(result, "structuredContent", None)
-    if isinstance(structured, dict):
-        if set(structured) == {"result"}:
-            return structured["result"]
-        return structured
-    content = getattr(result, "content", None)
-    if isinstance(content, list):
-        for item in content:
-            text = getattr(item, "text", None)
-            if isinstance(text, str):
-                try:
-                    return json.loads(text)
-                except ValueError:
-                    return text
-    return None
-
-
-class PlanWorker:
-    """Advances committed short plans without one model turn per step.
-
-    Wakes on new native snapshots, after provider turns, and after new player
-    instructions. It claims ready steps through the shared ``PlanExecutor`` (same
-    store, same commit discipline as the MCP ``run_next_step`` tool), chains
-    successful steps without any LLM call, and only reports a model wake when a
-    step deviates (partial/unknown), when a dependency is blocked, or when a
-    waiting condition requires a decision.
-    """
-
-    def __init__(
-        self,
-        store: WorkStore,
-        client: Any,
-        *,
-        worker_id: str | None = None,
-        idle_seconds: float = 5.0,
-        step_limit: int = 200,
-    ):
-        self.store = store
-        self.client = client
-        self.worker_id = worker_id or f"bridge-{uuid.uuid4().hex[:8]}"
-        self.idle_seconds = idle_seconds
-        self.step_limit = step_limit
-        self._wake = asyncio.Event()
-        self._task: asyncio.Task | None = None
-        self._dirty = False
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._provider_active = False
-        self._executing = False
-        self.supplied_save_id: str | None = None
-        self.last_result: StepExecution | None = None
-        self.progress_callback = None
-        self.terminal_callback: Any | None = None
-        self.completed_steps = 0
-        self.attempted_steps = 0
-        self.pending_reasons: list[str] = []
-        self.pending_decisions: list[dict[str, Any]] = []
-        # Latest native snapshot used to gate explicit waiting conditions. The
-        # bridge refreshes it on every world.snapshot; the worker never invents it.
-        self.snapshot_provider: Any | None = None
-        self.business_gate: Any | None = None
-
-    def _fresh_state(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        if self.snapshot_provider is None:
-            return None, None
-        try:
-            return self.snapshot_provider()
-        except Exception:
-            logger.debug("Plan worker snapshot provider failed", exc_info=True)
-            return None, None
-
-    # ----------------------------------------------------------- lifecycle
-    def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._loop = asyncio.get_running_loop()
-            self._task = asyncio.create_task(self._run())
-
-    def notify(self, *, dirty: bool = True) -> None:
-        """Signal new potential work (snapshot, provider turn end, player input)."""
-        if dirty:
-            self._dirty = True
-        loop = self._loop
-        if loop is not None and not loop.is_closed():
-            try:
-                loop.call_soon_threadsafe(self._wake.set)
-                return
-            except RuntimeError:
-                pass
-        self._wake.set()
-
-    def set_provider_active(self, active: bool) -> None:
-        self._provider_active = active
-
-    async def stop(self) -> None:
-        task, self._task = self._task, None
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-    # -------------------------------------------------------------- work
-    async def _run(self) -> None:
-        while True:
-            try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self.idle_seconds)
-            except TimeoutError:
-                pass
-            self._wake.clear()
-            if self._provider_active:
-                continue
-            try:
-                await self.evaluate()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning("Plan worker evaluation failed", exc_info=True)
-
-    async def evaluate(self) -> list[StepExecution]:
-        """Own the native socket only for this execution batch, never while idle."""
-        self._executing = True
-        try:
-            return await self._evaluate_ready_steps()
-        finally:
-            # External Codex/observation turns do not pass through the bridge's
-            # _claim_execution. Release here after native reconciliation settles,
-            # so a finished worker cannot monopolize the sole command socket.
-            try:
-                await self._release_idle_session()
-            finally:
-                self._executing = False
-
-    async def _release_idle_session(self) -> None:
-        close = getattr(self.client, "close", None)
-        if callable(close) and getattr(self.client, "connected", True):
-            try:
-                await close()
-            except Exception:
-                logger.warning("Plan worker could not release its idle MCP session", exc_info=True)
-
-    async def _evaluate_ready_steps(self) -> list[StepExecution]:
-        """Run ready steps until none remain (or a deviation needs the model)."""
-        self._dirty = False
-        executions: list[StepExecution] = []
-        for _ in range(self.step_limit):
-            if self._provider_active:
-                break
-            save_id = await self._resolve_save_id()
-            if not save_id:
-                break
-            # A day rollover can close the native socket after it accepts a
-            # command but before the worker receives its terminal.  An expired
-            # running lease is otherwise invisible to has_ready_step forever.
-            if await self._recover_expired_step(save_id):
-                break
-            # Receipt reconciliation is read-only and must remain possible under
-            # a disconnect hold or human pause. The gate still blocks dispatch;
-            # otherwise a stale running lease can prevent the recovery decision
-            # that would release a program hold from ever becoming eligible.
-            if self.business_gate is not None and not self.business_gate(save_id):
-                break
-            # Read-only readiness check against the shared store; it never touches
-            # the Mod, so an idle plan costs no provider and no LLM call. Waiting
-            # steps stay parked until their explicit native condition is met.
-            try:
-                snapshot, game_date = self._fresh_state()
-                if not self.store.has_ready_step(save_id, snapshot=snapshot, game_date=game_date):
-                    break
-            except Exception:
-                break
-            executor = PlanExecutor(
-                self.store,
-                dispatch=self._dispatch,
-                reconcile=self._reconcile,
-                snapshot_provider=self._fresh_state,
-            )
-            execution = await executor.run_once(save_id, self.worker_id)
-            if execution.status == "idle":
-                break
-            executions.append(execution)
-            self.last_result = execution
-            if self.progress_callback:
-                await self.progress_callback(execution)
-            # ``completed_steps`` counts only steps the harness actually confirmed
-            # complete. A parked (waiting) or failed/unknown dispatch is NOT
-            # progress: counting it was the round6 false-progress bug that let the
-            # acceptance script report a failed plan as multi-step success.
-            self.attempted_steps += 1
-            if execution.status == "executed" and execution.outcome == "completed":
-                self.completed_steps += 1
-            if execution.recovery_decisions:
-                self.pending_decisions.extend(execution.recovery_decisions)
-            if execution.task_status == "completed" or execution.needs_model or execution.outcome in {"failed", "partial", "unknown", "rejected", "cancelled"} or (execution.outcome == "waiting" and (execution.result or {}).get("waitCondition", {}).get("type") != "transportRetry"):
-                completed_task = next((t for t in self.store.state(save_id).tasks if t.id == execution.task_id), None)
-                feedback = compact_task_feedback(completed_task,
-                    {**(execution.result or {}), "effects": execution.effects,
-                     "reasonCode": execution.reason_code, "commandId": execution.command_id,
-                     "message": execution.message},
-                    operation=execution.operation or "", status=execution.outcome)
-                feedback["effectCount"] = sum(len(step.effects) for step in completed_task.steps) if completed_task else len(execution.effects)
-                # Publish finished only after releasing the native owner: an
-                # external client may immediately observe upon seeing this flag.
-                await self._release_idle_session()
-                self.store.finish_job(save_id, feedback, task_id=execution.task_id)
-                self.pending_reasons.append("SHORT_JOB_TERMINAL")
-                if self.terminal_callback:
-                    try:
-                        res = self.terminal_callback(save_id, execution, "SHORT_JOB_TERMINAL")
-                        if asyncio.iscoroutine(res):
-                            await res
-                    except Exception:
-                        logger.warning("Plan worker terminal callback failed", exc_info=True)
-                break
-            if execution.needs_model:
-                reason = execution.reason_code or execution.outcome or "STEP_DEVIATION"
-                self.pending_reasons.append(reason)
-                if self.terminal_callback:
-                    try:
-                        res = self.terminal_callback(save_id, execution, reason)
-                        if asyncio.iscoroutine(res):
-                            await res
-                    except Exception:
-                        logger.warning("Plan worker terminal callback failed", exc_info=True)
-                break
-        if executions:
-            # Re-check on the next tick: a completed step may unlock the next one.
-            self._dirty = True
-        return executions
-
-    async def _recover_expired_step(self, save_id: str) -> bool:
-        now = time.monotonic()
-        state = self.store.state(save_id)
-        for task in state.tasks:
-            for step in task.steps:
-                if step.status != "running" or step.lease_until > now:
-                    continue
-                native = None
-                if step.command_id:
-                    try:
-                        native = await asyncio.wait_for(self._reconcile(step.command_id), timeout=10.0)
-                    except Exception:
-                        logger.warning("Could not reconcile expired native command %s", step.command_id, exc_info=True)
-                goal = next((goal for goal in state.goals if goal.id == task.goal_id), None)
-                native = merge_reconciled_operation_result(step.operation, step.feedback, native,
-                    params=bind_execution_scope_params(step.operation, step.params, goal.constraints if goal else {}))
-                outcome, reason, effects, revision = normalise_native_result(native)
-                if outcome is None:
-                    # The existing store recovery records an explicit unknown
-                    # once; it never re-dispatches the unconfirmed command.
-                    decisions = self.store.recover(save_id, now=now)
-                    if not any(item.get("stepId") == step.id for item in decisions):
-                        return True
-                    outcome, reason, effects = "unknown", "NATIVE_TERMINAL_UNCONFIRMED", []
-                else:
-                    self.store.commit_step_result(
-                        save_id, task_id=task.id, step_id=step.id,
-                        outcome=outcome, effects=effects, reason_code=reason,
-                        snapshot_revision=revision, command_id=step.command_id,
-                        game_date=self._fresh_state()[1],
-                        feedback=compact_job_feedback(native, operation=step.operation, status=outcome, params=step.params),
-                    )
-                recovered_task = next((item for item in self.store.state(save_id).tasks if item.id == task.id), None)
-                execution = StepExecution(
-                    status="executed", task_id=task.id, goal_id=task.goal_id,
-                    step_id=step.id, operation=step.operation,
-                    command_id=step.command_id, outcome=outcome,
-                    task_status=recovered_task.status if recovered_task else "unknown",
-                    reason_code=reason, effects=effects, result=native,
-                )
-                if outcome == "completed" and execution.task_status == "pending":
-                    # This receipt closes one step; the same decision still owns
-                    # the remaining serial work. Do not send a job terminal.
-                    self._dirty = True
-                    return True
-                feedback = compact_task_feedback(recovered_task,
-                    {**(native if isinstance(native, dict) else {}), "commandId": step.command_id, "reasonCode": reason,
-                     "terminalState": native.get("terminalState", "unknown") if isinstance(native, dict) else "unknown",
-                     "effects": effects}, operation=step.operation, status=outcome,
-                )
-                await self._release_idle_session()
-                self.store.finish_job(save_id, feedback, task_id=task.id)
-                self.pending_reasons.append(reason or "NATIVE_RECOVERED")
-                if self.terminal_callback:
-                    try:
-                        callback = self.terminal_callback(save_id, execution, reason or "NATIVE_RECOVERED")
-                        if asyncio.iscoroutine(callback):
-                            await callback
-                    except Exception:
-                        logger.warning("Plan worker recovery callback failed", exc_info=True)
-                return True
-        return False
-
-    async def _dispatch(self, operation: str, params: dict[str, Any], command_id: str) -> Any:
-        # The harness-only internal tool runs the identical validated plan
-        # operation implementation ``run_next_step`` uses and forwards the stable
-        # persisted command id to the real scheduler/native command. It must not go
-        # through ``call_capability``: that model-facing schema has no
-        # ``command_id`` and rejected the step (round6 STEP_DISPATCH_FAILED).
-        if self.progress_callback:
-            state = self.store.state(self.supplied_save_id or await self._resolve_save_id())
-            task = next((t for t in state.tasks if any(s.command_id == command_id for s in t.steps)), None)
-            await self.progress_callback(StepExecution(status="dispatching", task_id=task.id if task else None,
-                operation=operation, command_id=command_id, outcome="running"))
-        save_id = self.supplied_save_id or await self._resolve_save_id()
-        state = self.store.state(save_id)
-        task = next((t for t in state.tasks if any(s.command_id == command_id for s in t.steps)), None)
-        snapshot, _ = self.snapshot_provider() if self.snapshot_provider else (None, None)
-        companion = (snapshot or {}).get("companion") or {}
-        world = (snapshot or {}).get("world") or {}
-        bedtime = companion.get("bedtime", 2400)
-        clock = world.get("timeOfDay", 600)
-        if (snapshot or {}).get("actorMode") == "player":
-            # Player mode: no companion profile bedtime. Late gates only steer
-            # new dispatches toward native sleep so the player is not idled
-            # into collapse (≥00:30 non-sleep defers, ≥01:30 sleep only).
-            gate = ChatBridge._player_mode_clock_gate(operation, clock, params)
-            if gate:
-                # No native send has occurred. Park this exact unfinished step
-                # until the next real day and return the model slot for sleep.
-                # DispatchDeferred is for human/revoked authority only: retrying
-                # a clock-gated selection each snapshot deadlocks recovery.
-                year, season, day = world.get("year"), world.get("season"), world.get("dayOfMonth")
-                seasons = ("spring", "summer", "fall", "winter")
-                if type(year) is not int or type(day) is not int or season not in seasons or not 1 <= day <= 28:
-                    raise RuntimeError("Late action deferred; native calendar unavailable. Re-observe before selecting recovery.")
-                if day < 28:
-                    next_date = {"year": year, "season": season, "day": day + 1}
-                else:
-                    index = seasons.index(season)
-                    next_date = {"year": year + (index == 3), "season": seasons[(index + 1) % 4], "day": 1}
-                return {"status": "waiting", "commandId": command_id,
-                        "reasonCode": "PLAYER_LATE_ACTION_DEFERRED", "message": gate,
-                        "nativeDispatched": False,
-                        "waitCondition": {"type": "gameDay", "params": next_date,
-                                          "reasonCode": "PLAYER_LATE_ACTION_DEFERRED"}, "effects": []}
-        else:
-            resting = companion.get("restState") in {"winding-down", "returning-home", "waiting-for-bed", "sleeping"}
-            if resting or (isinstance(clock, int) and isinstance(bedtime, int)
-                    and clock // 100 * 60 + clock % 100 >= bedtime // 100 * 60 + bedtime % 100 - 60):
-                raise DispatchDeferred("bedtime: keep this step for tomorrow")
-        if (state.paused or task is None or state.decision.get("taskId") != task.id
-                or state.decision.get("finished")):
-            logger.warning("Native dispatch authority deferred: save=%s command=%s task=%s decisionTask=%s paused=%s finished=%s",
-                           save_id, command_id, task.id if task else None,
-                           state.decision.get("taskId"), state.paused, state.decision.get("finished"))
-            raise DispatchDeferred("paused or decision revoked before native send")
-        try:
-            return await self.client.call_tool(
-                "dispatch_plan_operation",
-                {"operation": operation, "params": dict(params), "command_id": command_id},
-            )
-        except Exception as ex:
-            if "UNAUTHORIZED_JOB_COMMAND" in str(ex):
-                # A rejected persisted claim is a real fault, not an idle wait.
-                # Commit it so the model can recover instead of silently
-                # reattempting the same unauthorized command forever.
-                raise RuntimeError(str(ex)) from ex
-            raise
-
-    async def _reconcile(self, command_id: str) -> Any:
-        reconcile = getattr(self.client, "reconcile", None)
-        if callable(reconcile):
-            result = await reconcile(command_id)
-            if isinstance(result, dict) and "found" in result:
-                return result.get("native") if result.get("found") else None
-            return result
-        return None
-
-    async def _resolve_save_id(self) -> str | None:
-        if self.supplied_save_id:
-            return self.supplied_save_id
-        resolver = getattr(self.client, "current_save_id", None)
-        if callable(resolver):
-            try:
-                return await resolver()
-            except Exception:
-                logger.debug("Plan worker could not resolve a save id", exc_info=True)
-        return None
-
-@dataclass
-class ActiveChatTask:
-    request_id: str
-    save_id: str
-    prompt: str = ""
-    command_id: str = ""
-    start_max_idx: int = -1
-    start_max_step_idx: int = -1
-    wire_start_offset: int = 0
-    process: subprocess.Popen | None = None
-    async_task: asyncio.Task | None = None
-    cancelled: bool = False
-    abort_reason: str | None = None
-    start_time: float = field(default_factory=time.monotonic)
-    recorded: bool = False
-    interrupted_result: dict[str, Any] | None = None
-    decision_token: str | None = None
-    decision_day: str | None = None
-    provider_conversation_id: str | None = None
-    instructions_text: str | None = None
-    # Full original context is retained only for a provider's fresh-session recovery.
-    provider_bootstrap_prompt: str | None = None
-    execution_deferred: bool = False
-    # Conversations retain their session while existing native work settles.
-    preserve_session: bool = False
-    goal_scope: str | None = None
-    goal_default: str | None = None
-    work_request_ids: list[str] = field(default_factory=list)
-    delivered_speech: set[str] = field(default_factory=set)
-
-
 class ChatBridge:
     """Bridges WebSocket /chat messages to agy CLI executions with lifecycle and cancel management."""
 
@@ -1156,6 +526,7 @@ class ChatBridge:
         self._busy_lock = asyncio.Lock()
         self._active_task: ActiveChatTask | None = None
         self._sessions_file = sessions_file or self._default_sessions_file()
+        self._provider_sessions = ProviderSessionStore(self._sessions_file, self._session_history_path())
         self._commands_file = commands_file or self._default_commands_file()
         self._usage_display = UsageDisplay(self._commands_file, project_root() / "config" / "usage-prices.json",
                                            self._commands_file.parent / "data" / "model-usage.jsonl")
@@ -1637,24 +1008,10 @@ class ChatBridge:
         return base / "chat_commands.jsonl"
 
     def _load_sessions(self) -> dict[str, str]:
-        if self._sessions_file.is_file():
-            try:
-                data = json.loads(self._sessions_file.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    return {str(k): str(v) for k, v in data.items()}
-            except Exception as ex:
-                logger.warning("Failed to load chat sessions from %s: %s", self._sessions_file, ex)
-        return {}
+        return self._provider_sessions.load_bindings()
 
     def _save_sessions(self) -> None:
-        try:
-            self._sessions_file.parent.mkdir(parents=True, exist_ok=True)
-            self._sessions_file.write_text(
-                json.dumps(self._sessions, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except Exception as ex:
-            logger.warning("Failed to save chat sessions to %s: %s", self._sessions_file, ex)
+        self._provider_sessions.save_bindings(self._sessions)
 
     def _provider_usage(self, result: dict[str, Any], request_id: str, save_id: str | None):
         spec = self._provider_spec()
@@ -1755,19 +1112,7 @@ class ChatBridge:
 
     def abort_active_task(self, reason: str = "aborted") -> None:
         """Kills only the active provider child process and cancels its task."""
-        if self._active_task is not None:
-            logger.info("Aborting active chat task [%s] (%s)", self._active_task.request_id, reason)
-            self._active_task.cancelled = True
-            self._active_task.abort_reason = reason
-            proc = self._active_task.process
-            if proc and proc.poll() is None:
-                try:
-                    self._cancel_provider_process(proc)
-                    logger.info("Cancelled %s game turn (owned process pid=%s)", self.backend_name, getattr(proc, "pid", None))
-                except Exception as ex:
-                    logger.debug("Error killing process: %s", ex)
-            if self._active_task.async_task and not self._active_task.async_task.done():
-                self._active_task.async_task.cancel()
+        cancel_active_turn(self._active_task, reason, self.backend_name, self._cancel_provider_process)
 
     def _cancel_provider_process(self, proc: Any) -> None:
         """Stop an owned provider process using its provider-specific tree policy."""
@@ -3257,20 +2602,7 @@ class ChatBridge:
     PLAYER_DEFER_NON_SLEEP = 2330
     PLAYER_SLEEP_ONLY = 2530
 
-    @staticmethod
-    def _player_mode_clock_gate(operation: str, clock: Any, params: dict[str, Any] | None = None) -> str | None:
-        """Reserve the remaining native night for rest, never freeze an action."""
-        if type(clock) is not int or clock < ChatBridge.PLAYER_DEFER_NON_SLEEP:
-            return None
-        if operation in {"sleep", "native_advance", "native_answer"} or operation.startswith(("observe_", "query_", "inspect_", "get_")):
-            return None
-        if operation == "navigate_to" and (params or {}).get("location_id") in {"Farm", "FarmHouse"}:
-            return None
-        return ("late-night: from 23:30 new unrelated work/travel waits until tomorrow. "
-                "Use sleep for the native route to the player's own bed, confirmation and save; "
-                "another NPC's bed/tent is not the player's sleep destination. "
-                "Read-only observations and returning to Farm/FarmHouse remain available. "
-                "Actions still consume normal game time; waiting until 01:30 can cause collapse en route.")
+    _player_mode_clock_gate = staticmethod(player_mode_clock_gate)
 
     def _bedtime_winding_down(self, save_id: str, snapshot: dict[str, Any] | None = None) -> bool:
         # Player mode has no companion profile bedtime (and the player-mode
@@ -4396,32 +3728,11 @@ class ChatBridge:
         return None
 
     def _load_session_history(self) -> None:
-        if self._session_history:
-            return
-        path = self._session_history_path()
-        if not path.is_file():
-            return
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                self._session_history = {
-                    str(k): [str(v) for v in vals]
-                    for k, vals in data.items()
-                    if isinstance(vals, list)
-                }
-        except Exception:
-            logger.debug("Failed to load session history", exc_info=True)
+        if not self._session_history:
+            self._session_history = self._provider_sessions.load_history()
 
     def _save_session_history(self) -> None:
-        try:
-            path = self._session_history_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(self._session_history, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except Exception:
-            logger.debug("Failed to save session history", exc_info=True)
+        self._provider_sessions.save_history(self._session_history)
 
     def _rotate_provider_session(self, save_id: str | None, *, reason: str) -> str | None:
         """End the current provider session, keeping the old id in history.
