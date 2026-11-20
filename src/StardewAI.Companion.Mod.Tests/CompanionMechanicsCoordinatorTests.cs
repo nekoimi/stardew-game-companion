@@ -64,6 +64,57 @@ public class CompanionMechanicsCoordinatorTests
     }
 
     [Fact]
+    public void RouteObservationYieldsAndCancellationDoesNotStealActiveWorkReceipt()
+    {
+        var (coordinator, actor, observer) = CreateHarness();
+        observer.SetDirt(new(10, 12), TileDirtState.DryDirt());
+        var work = new SkillExecutePayload("water-owned", "water-task", "water-zone", "0.1", 1,
+            new WaterZoneParameters("Farm", new() { new(10, 12) }), new ExecutionBudgets(60, 50, 20), "safe-point", "test");
+        var workEnvelope = CreateEnvelope("skill.execute", "water-owned-message");
+        Assert.True(coordinator.TryAcceptSkillExecute(work, workEnvelope, out _));
+        coordinator.ActiveMachine!.RequestPause();
+        var query = work with { CommandId = "route-query", TaskId = "route-query-task", SkillId = "inspect-route",
+            Parameters = new WaterZoneParameters("Farm") { Tile = new(100, 100) } };
+        var queryEnvelope = CreateEnvelope("skill.execute", "query-message");
+        Assert.True(coordinator.TryAcceptSkillExecute(query, queryEnvelope, out _));
+        Assert.Null(coordinator.LastSkillResultPayload);
+        coordinator.Update(null, 1);
+        Assert.Null(coordinator.LastSkillResultPayload);
+        Assert.True(coordinator.StateMachine.IsPaused);
+        Assert.False(coordinator.TryAcceptSkillExecute(query with { CommandId = "second-query" }, queryEnvelope, out var busy));
+        Assert.Equal("OBSERVATION_BUSY", busy!.Error!.Code);
+        coordinator.OnCancelSkill(new SkillCancelPayload(query.CommandId, "cancel preview", true, "safe-point"), queryEnvelope);
+        Assert.Equal("cancelled", coordinator.LastSkillResultPayload!.TerminalState);
+        Assert.Equal(query.CommandId, coordinator.LastSkillResultPayload.CommandId);
+        int reads = observer.TilePassabilityChecks;
+        coordinator.Update(null, 2);
+        Assert.Equal(reads, observer.TilePassabilityChecks);
+        coordinator.OnCancelSkill(new SkillCancelPayload(work.CommandId, "cancel work", true, "safe-point"), workEnvelope);
+        coordinator.Update(null, 3);
+        Assert.Equal(work.CommandId, coordinator.LastSkillResultPayload!.CommandId);
+        Assert.Null(actor.ActiveTaskId);
+    }
+
+    [Fact]
+    public void RouteObservationCompletesOnTicksWithFinalRoutePayload()
+    {
+        var (coordinator, actor, observer) = CreateHarness();
+        for (int x = 10; x <= 40; x++) observer.SetPassable("Farm", new(x, 10), true);
+        var query = new SkillExecutePayload("route-query", "query-task", "inspect-route", "0.1", 1,
+            new WaterZoneParameters("Farm") { Tile = new(40, 10) }, new ExecutionBudgets(60, 0, 0), "safe-point", "test");
+        Assert.True(coordinator.TryAcceptSkillExecute(query, CreateEnvelope("skill.execute", "route-message"), out _));
+        Assert.Null(coordinator.LastSkillResultPayload);
+        for (int tick = 1; tick < 30 && coordinator.LastSkillResultPayload is null; tick++) coordinator.Update(null, tick);
+        var result = coordinator.LastSkillResultPayload!;
+        Assert.Equal("succeeded", result.TerminalState);
+        var route = Assert.IsType<Dictionary<string, object>>(result.Details!["route"]);
+        Assert.Equal(true, route["reachable"]);
+        Assert.Equal(29, route["walkingTiles"]);
+        Assert.Equal(new TileCoordinate(10, 10), actor.Tile);
+        Assert.Null(coordinator.ActiveMachine);
+    }
+
+    [Fact]
     public void ExtensionDiscoveryCannotStealRunningActionReceiptOrCancellation()
     {
         var (coordinator, actor, observer) = CreateHarness();

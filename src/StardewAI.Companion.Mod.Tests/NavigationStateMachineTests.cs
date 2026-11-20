@@ -36,9 +36,12 @@ public class NavigationStateMachineTests
         var machine = new NavigationStateMachine(actor, observer, new SameMapNavigator(observer), new WorldMapGraph(),
             log: (text, _) => logs.Add(text));
         Assert.True(machine.Start(new NavigationRequest("blocked", "task", "Farm", new(10, 1), 120), out _));
-        machine.Update(null, 1);
+        int planningTick = 1;
+        while (machine.CurrentState == ExecutionState.Preparing && planningTick < 100) machine.Update(null, planningTick++);
+        Assert.Equal(ExecutionState.Navigating, machine.CurrentState);
         observer.PlayerTile = new(1, 1);
-        for (int tick = 2; tick <= 3; tick++) machine.Update(null, tick);
+        machine.Update(null, planningTick++);
+        machine.Update(null, planningTick++);
         Assert.Equal(ExecutionState.Preparing, machine.CurrentState);
         int before = observer.TilePassabilityChecks;
         var original = actor.Tile;
@@ -77,7 +80,8 @@ public class NavigationStateMachineTests
         for (int x = 0; x <= 10; x++) observer.SetPassable("Farm", new(x, 1), true);
         var machine = new NavigationStateMachine(actor, observer, new SameMapNavigator(observer), new WorldMapGraph());
         Assert.True(machine.Start(new NavigationRequest("no-path", "task", "Farm", new(10, 1), 120), out _));
-        machine.Update(null, 1);
+        for (int tick = 1; tick < 100 && machine.CurrentState == ExecutionState.Preparing; tick++) machine.Update(null, tick);
+        Assert.Equal(ExecutionState.Navigating, machine.CurrentState);
         for (int x = 1; x <= 10; x++) observer.SetPassable("Farm", new(x, 1), false);
         for (int tick = 2; tick < 300 && machine.IsExecuting; tick++) machine.Update(null, tick);
         Assert.False(machine.IsExecuting);
@@ -525,7 +529,7 @@ public class NavigationStateMachineTests
         );
 
         Assert.True(machine.Start(req, out _));
-        machine.Update(null, 1);
+        for (int tick = 1; tick < 20 && machine.IsExecuting; tick++) machine.Update(null, tick);
 
         Assert.Equal(ExecutionState.Failed, machine.CurrentState);
         Assert.NotNull(machine.FinalResult);

@@ -27,6 +27,10 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
     private readonly SameMapNavigator _navigator;
     private readonly IWorldMapGraph _mapGraph;
     private readonly ReachableRoutePlanner _routePlanner;
+    private NavigationSearch<RouteSearchResult>? _routeSearch;
+    private NavigationSearch<PathResult>? _legSearch;
+    private string? _searchLocation;
+    private TileCoordinate _searchTile;
     private IReadOnlyList<MapEdge> _plannedEdges = Array.Empty<MapEdge>();
     private readonly CompanionAvatar? _avatar;
     private readonly Action<string, LogLevel>? _log;
@@ -75,21 +79,37 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
     public NavigationRequest? CurrentRequest => _currentRequest;
     public Dictionary<string, object> PreviewRoute(string location, TileCoordinate target)
     {
-        var route = _routePlanner.Find(_actor.LocationName, _actor.Tile, location, target,
-            _observer.TimeOfDay, _actor.GameFarmer, out var failure, requireExactDestination: ActorGuards.IsPlayerBound(_actor));
+        using var search = BeginPreviewRoute(location, target);
+        return search.Complete();
+    }
+
+    public NavigationSearch<Dictionary<string, object>> BeginPreviewRoute(string location, TileCoordinate target)
+    {
+        string origin = _actor.LocationName;
+        var tile = _actor.Tile;
+        var routeSearch = _routePlanner.BeginFind(origin, tile, location, target,
+            _observer.TimeOfDay, _actor.GameFarmer, requireExactDestination: ActorGuards.IsPlayerBound(_actor));
         var result = new Dictionary<string, object>
         {
-            ["reachable"] = route is not null,
             ["exactArrivalRequired"] = ActorGuards.IsPlayerBound(_actor),
             ["nativeMovementGeometry"] = ActorGuards.IsPlayerBound(_actor) ? "standing-center-v2" : "avatar-grid-v1",
             ["nativeUiClear"] = (!Game1.eventUp || ActorGuards.FestivalFreeRoam) && Game1.activeClickableMenu == null,
-            ["nativeCollisionChecked"] = ActorGuards.IsPlayerBound(_actor) && location==_actor.LocationName,
-            ["collisionEvidenceScope"] = location==_actor.LocationName ? "current-location-native-pathfinding-no-effects" : "cross-map-geometry-not-a-native-unlock-proof",
+            ["nativeCollisionChecked"] = ActorGuards.IsPlayerBound(_actor) && location==origin,
+            ["collisionEvidenceScope"] = location==origin ? "current-location-native-pathfinding-no-effects" : "cross-map-geometry-not-a-native-unlock-proof",
             ["observedTime"] = _observer.TimeOfDay,
-            ["origin"] = new { locationId = _actor.LocationName, tile = _actor.Tile },
+            ["origin"] = new { locationId = origin, tile },
             ["destination"] = new { locationId = location, tile = target },
             ["estimateBasis"] = "Normal 60 FPS walking and 7-second game clock; excludes model deliberation, supplies and service time. Recheck service availability at dispatch."
         };
+        return new NavigationSearch<Dictionary<string, object>>(search => BuildPreview(search, routeSearch, result, origin));
+    }
+
+    private static IEnumerable<NavigationSearch?> BuildPreview(NavigationSearch<Dictionary<string, object>> search,
+        NavigationSearch<RouteSearchResult> routeSearch, Dictionary<string, object> result, string origin)
+    {
+        yield return routeSearch;
+        var (route, failure) = routeSearch.Result;
+        result["reachable"] = route is not null;
         if (route is null)
         {
             result["reason"] = failure?.Message ?? "No reachable route";
@@ -97,12 +117,12 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
         }
         else
         {
-            result["locations"] = new[] { _actor.LocationName }.Concat(route.Edges.Select(e => e.TargetLocation)).ToArray();
+            result["locations"] = new[] { origin }.Concat(route.Edges.Select(e => e.TargetLocation)).ToArray();
             result["walkingTiles"] = route.WalkingTiles;
             result["estimatedGameMinutes"] = (int)Math.Ceiling(route.WalkingTiles * 16d / 60d * 10d / 7d);
             result["arrivalTile"] = route.TargetTile;
         }
-        return result;
+        search.Result = result;
     }
     public string? ActiveTaskId => _currentRequest?.TaskId;
     public int TotalTargets => _locationRoute.Count;
@@ -138,6 +158,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
 
         lock (_stateLock)
         {
+            ClearSearches();
             _currentRequest = request;
             _locationRoute.Clear();
             _plannedEdges = Array.Empty<MapEdge>();
@@ -250,7 +271,9 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
                     _pausedGameMinutes += IWorldObserver.CalculateGameMinutesElapsed(pauseClock, _observer.TimeOfDay);
                 _pauseStartedClock = null;
                 _pauseRequested = false;
+                ClearSearches();
                 _locationRoute.Clear();
+                _plannedEdges = Array.Empty<MapEdge>();
                 CurrentState = ExecutionState.Preparing;
                 Log($"navigate-to resumed (task={ActiveTaskId}).");
             }
@@ -286,6 +309,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
             if (_pauseRequested && CurrentState is ExecutionState.Navigating or ExecutionState.Preparing or ExecutionState.Verifying)
             {
                 _pauseRequested = false;
+                ClearSearches();
                 CurrentState = ExecutionState.Paused;
                 _pauseStartedClock = _observer.TimeOfDay;
                 _actor.Halt();
@@ -336,6 +360,15 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
     {
         if (CheckPauseOrCancel()) return;
         if (_elapsedTicks < _replanAfterTick) return;
+        if ((_routeSearch is not null || _legSearch is not null)
+            && (_searchLocation != _actor.LocationName || _searchTile != _actor.Tile))
+        {
+            ClearSearches();
+            _locationRoute.Clear();
+            _plannedEdges = Array.Empty<MapEdge>();
+            _currentLegIndex = 0;
+            _currentExitEdge = null;
+        }
         if (TryVerifyArrival()) return;
 
         // If route not yet calculated, find route across maps
@@ -344,8 +377,16 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
             string startLoc = _actor.LocationName;
             string targetLoc = _currentRequest!.LocationId;
 
-            var route = _routePlanner.Find(startLoc, _actor.Tile, targetLoc, _currentRequest.TargetTile,
-                _observer.TimeOfDay, _actor.GameFarmer, out var routeFailure, requireExactDestination: ActorGuards.IsPlayerBound(_actor));
+            if (_routeSearch is null)
+            {
+                CaptureSearchOrigin();
+                _routeSearch = _routePlanner.BeginFind(startLoc, _actor.Tile, targetLoc, _currentRequest.TargetTile,
+                    _observer.TimeOfDay, _actor.GameFarmer, requireExactDestination: ActorGuards.IsPlayerBound(_actor));
+            }
+            if (!_routeSearch.Advance()) return;
+            var (route, routeFailure) = _routeSearch.Result;
+            _routeSearch.Dispose();
+            _routeSearch = null;
             if (route == null)
             {
                 // Same-map requests keep the established DESTINATION_UNREACHABLE code;
@@ -384,108 +425,60 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
         PlanCurrentLeg();
     }
 
+    private void CaptureSearchOrigin()
+    {
+        _searchLocation = _actor.LocationName;
+        _searchTile = _actor.Tile;
+    }
+
+    private void ClearSearches()
+    {
+        _routeSearch?.Dispose();
+        _routeSearch = null;
+        _legSearch?.Dispose();
+        _legSearch = null;
+        _searchLocation = null;
+    }
+
     private void PlanCurrentLeg()
     {
         if (CheckPauseOrCancel()) return;
-
-        bool isFinalLeg = _currentLegIndex >= _locationRoute.Count - 1;
-        if (isFinalLeg)
+        CurrentState = ExecutionState.Preparing;
+        bool final = _currentLegIndex >= _locationRoute.Count - 1;
+        if (final && TryVerifyArrival()) return;
+        var edge = final ? null : _plannedEdges[_currentLegIndex];
+        if (edge is not null && !_mapGraph.CheckEdgeTraversable(edge, _observer.TimeOfDay, _actor.GameFarmer, out var reason, out var details))
         {
-            if (TryVerifyArrival()) return;
-            var requestedTile = _currentRequest!.TargetTile;
-            var pathResult = _routePlanner.FindDestinationPath(_actor.LocationName, _actor.Tile, requestedTile, requireExactDestination: ActorGuards.IsPlayerBound(_actor));
-            if (!pathResult.Success || pathResult.Steps.Count == 0)
-            {
-                string reason = pathResult.ErrorMessage ?? $"Destination {requestedTile} on '{_actor.LocationName}' is unreachable.";
-                if (_replanCount > 0) RetryBlockedLeg(reason, "DESTINATION_UNREACHABLE");
-                else FinishExecution(ExecutionState.Failed, reason, "DESTINATION_UNREACHABLE");
-                return;
-            }
-            _effectiveTargetTile = pathResult.Steps[^1].Tile;
-            _targetAdjusted = _effectiveTargetTile != requestedTile;
-
-            _currentExitEdge = null;
-            _currentPath = pathResult.Steps.ToList();
-            _currentPathIndex = 0;
-            CurrentState = ExecutionState.Navigating;
+            FinishExecution(ExecutionState.Failed, reason ?? "Exit is unavailable.", "DESTINATION_UNREACHABLE_NOW", details);
             return;
         }
-
-        // Mid-route hop: find edge to next location
-        string currentLoc = _locationRoute[_currentLegIndex];
-        string nextLoc = _locationRoute[_currentLegIndex + 1];
-
-        var candidateEdges = new[] { _plannedEdges[_currentLegIndex] };
-        if (candidateEdges.Length == 0)
+        if (_legSearch is null)
         {
-            FinishExecution(ExecutionState.Failed,
-                $"No outgoing warp or door found from '{currentLoc}' to '{nextLoc}'.",
-                "NO_WARP");
+            CaptureSearchOrigin();
+            _legSearch = final
+                ? _routePlanner.BeginDestinationPath(_actor.LocationName, _actor.Tile, _currentRequest!.TargetTile,
+                    requireExactDestination: ActorGuards.IsPlayerBound(_actor))
+                : _routePlanner.BeginExitPath(_actor.LocationName, _actor.Tile, edge!);
+        }
+        if (!_legSearch.Advance()) return;
+        var path = _legSearch.Result;
+        _legSearch.Dispose();
+        _legSearch = null;
+        if (!path.Success || path.Steps.Count == 0)
+        {
+            string code = final ? "DESTINATION_UNREACHABLE" : "PATH_UNREACHABLE";
+            string message = path.ErrorMessage ?? "No passable path to the destination or exit.";
+            if (_replanCount > 0) RetryBlockedLeg(message, code);
+            else FinishExecution(ExecutionState.Failed, message, code);
             return;
         }
-
-        // Pre-evaluate traversability
-        var availableEdges = new List<MapEdge>();
-        string? firstUnavailableReason = null;
-        Dictionary<string, object>? firstLockDetails = null;
-
-        foreach (var edge in candidateEdges)
+        if (final)
         {
-            if (_mapGraph.CheckEdgeTraversable(edge, _observer.TimeOfDay, _actor.GameFarmer, out var reason, out var lockDetails))
-            {
-                availableEdges.Add(edge);
-            }
-            else if (firstUnavailableReason == null)
-            {
-                firstUnavailableReason = reason;
-                firstLockDetails = lockDetails;
-            }
+            _effectiveTargetTile = path.Steps[^1].Tile;
+            _targetAdjusted = _effectiveTargetTile != _currentRequest!.TargetTile;
         }
-
-        if (availableEdges.Count == 0)
-        {
-            FinishExecution(ExecutionState.Failed,
-                firstUnavailableReason ?? $"Exit to '{nextLoc}' is unavailable.",
-                "DESTINATION_UNREACHABLE_NOW", firstLockDetails);
-            return;
-        }
-
-        // Find shortest path to any candidate edge
-        IReadOnlyList<PathStep>? bestSteps = null;
-        MapEdge? bestEdge = null;
-
-        foreach (var edge in availableEdges)
-        {
-            PathResult pr;
-            if (_observer.IsTilePassable(currentLoc, edge.SourceTile))
-            {
-                pr = _navigator.FindPath(currentLoc, _actor.Tile, edge.SourceTile);
-            }
-            else
-            {
-                pr = _navigator.FindPathToInteract(_actor, currentLoc, edge.SourceTile);
-            }
-
-            if (pr.Success && pr.Steps.Count > 0)
-            {
-                if (bestSteps == null || pr.Steps.Count < bestSteps.Count)
-                {
-                    bestSteps = pr.Steps;
-                    bestEdge = edge;
-                }
-            }
-        }
-
-        if (bestSteps == null || bestEdge == null)
-        {
-            string reason = $"No passable path to the exit from '{currentLoc}' to '{nextLoc}'.";
-            if (_replanCount > 0) RetryBlockedLeg(reason, "PATH_UNREACHABLE");
-            else FinishExecution(ExecutionState.Failed, reason, "PATH_UNREACHABLE");
-            return;
-        }
-
-        _currentExitEdge = bestEdge;
-        _currentPath = bestSteps.ToList();
+        _currentExitEdge = edge;
+        _currentPath = path.Steps.ToList();
         _currentPathIndex = 0;
         CurrentState = ExecutionState.Navigating;
     }
@@ -495,6 +488,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
         if (!string.Equals(_actor.LocationName, _currentRequest!.LocationId, StringComparison.OrdinalIgnoreCase)
             || _actor.Tile != (_effectiveTargetTile ?? _currentRequest.TargetTile)
             || IsWarpOrDoorTriggerTile(_actor.LocationName, _actor.Tile)) return false;
+        ClearSearches();
         _actor.Halt();
         _effectiveTargetTile ??= _actor.Tile;
         if (_visitedLocations.Count == 0) _visitedLocations.Add(_actor.LocationName);
@@ -850,6 +844,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
         Dictionary<string, object>? lockDetails = null,
         Dictionary<string, object>? failureDetails = null)
     {
+        ClearSearches();
         CurrentState = terminalState;
         _actor.SetActiveTask(null);
         _actor.Halt();

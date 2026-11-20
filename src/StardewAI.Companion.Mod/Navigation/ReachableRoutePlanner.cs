@@ -4,6 +4,8 @@ using StardewAI.Companion.Mod.Observation;
 
 namespace StardewAI.Companion.Mod.Navigation;
 
+public sealed record RouteSearchResult(ReachableRoute? Route, RouteFailure? Failure);
+
 public sealed record ReachableRoute(IReadOnlyList<MapEdge> Edges, int WalkingTiles, TileCoordinate TargetTile);
 
 /// <summary>Structured cross-map route failure: a stable reason code, a human-readable
@@ -40,12 +42,26 @@ public sealed class ReachableRoutePlanner
     public ReachableRoute? Find(string location, TileCoordinate start, string targetLocation,
         TileCoordinate target, int time, Farmer? farmer, out RouteFailure? failure, bool requireExactDestination = false)
     {
+        using var search = BeginFind(location, start, targetLocation, target, time, farmer, requireExactDestination);
+        var result = search.Complete();
+        failure = result.Failure;
+        return result.Route;
+    }
+
+    public NavigationSearch<RouteSearchResult> BeginFind(string location, TileCoordinate start, string targetLocation,
+        TileCoordinate target, int time, Farmer? farmer, bool requireExactDestination = false) =>
+        new(search => Search(search, location, start, targetLocation, target, time, farmer, requireExactDestination));
+
+    private IEnumerable<NavigationSearch?> Search(NavigationSearch<RouteSearchResult> search, string location,
+        TileCoordinate start, string targetLocation, TileCoordinate target, int time, Farmer? farmer, bool requireExactDestination)
+    {
         if (requireExactDestination && (IsTrigger(targetLocation, target) || !_observer.IsTilePassable(targetLocation, target)))
         {
-            failure = new RouteFailure("DESTINATION_UNREACHABLE", "Requested standing tile is blocked or a map transition trigger. Choose an observed walkable standing tile; an adjacent arrival is not exact arrival.",
+            var failure = new RouteFailure("DESTINATION_UNREACHABLE", "Requested standing tile is blocked or a map transition trigger. Choose an observed walkable standing tile; an adjacent arrival is not exact arrival.",
                 new Dictionary<string, object> { ["blockedSide"] = "destination", ["locationId"] = targetLocation,
                     ["requestedTile"] = target, ["exactArrivalRequired"] = true });
-            return null;
+            search.Result = new RouteSearchResult(null, failure);
+            yield break;
         }
         var origin = Key(location, start);
         var costs = new Dictionary<Entrance, int> { [origin] = 0 };
@@ -62,11 +78,14 @@ public sealed class ReachableRoutePlanner
         string? firstLockReason = null;
         while (queue.TryDequeue(out var node, out int cost) && explored++ < MaxExploredEntrances)
         {
+            yield return null;
             if (cost != costs[node.State]) continue;
             if (best is not null && cost >= best.WalkingTiles) break;
             if (string.Equals(node.Name, targetLocation, StringComparison.OrdinalIgnoreCase))
             {
-                var final = FindDestinationPath(node.Name, node.State.Tile, target, requireExactDestination);
+                var finalSearch = BeginDestinationPath(node.Name, node.State.Tile, target, requireExactDestination);
+                yield return finalSearch;
+                var final = finalSearch.Result;
                 if (final.Success)
                 {
                     int total = cost + Math.Max(0, final.Steps.Count - 1);
@@ -87,17 +106,23 @@ public sealed class ReachableRoutePlanner
             }
             foreach (var edge in _graph.GetOutgoingEdges(node.Name))
             {
+                yield return null;
                 if (!_graph.CheckEdgeTraversable(edge, time, farmer, out var blocked, out _))
                 {
                     // Only a reachable entrance into the requested destination can
                     // explain its failure; locked side branches are irrelevant.
-                    if (string.Equals(edge.TargetLocation, targetLocation, StringComparison.OrdinalIgnoreCase)
-                        && FindExitPath(node.Name, node.State.Tile, edge).Success)
-                        unavailable ??= blocked;
+                    if (string.Equals(edge.TargetLocation, targetLocation, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var lockedExit = BeginExitPath(node.Name, node.State.Tile, edge);
+                        yield return lockedExit;
+                        if (lockedExit.Result.Success) unavailable ??= blocked;
+                    }
                     firstLockReason ??= blocked;
                     continue;
                 }
-                var walk = FindExitPath(node.Name, node.State.Tile, edge);
+                var walkSearch = BeginExitPath(node.Name, node.State.Tile, edge);
+                yield return walkSearch;
+                var walk = walkSearch.Result;
                 if (!walk.Success)
                 {
                     exitFailures.Add(new EdgeAttempt(edge, node.Name, node.State.Tile));
@@ -117,15 +142,25 @@ public sealed class ReachableRoutePlanner
             }
         }
 
-        failure = best is not null ? null : ClassifyFailure(location, start, targetLocation, queue.Count > 0,
-            unavailable, exitFailures, arrivalFailures, firstLockReason, target, destinationFailures);
-        return best;
+        var blocking = new List<Dictionary<string, object>>();
+        if (best is null)
+        {
+            NavigationSearch<List<Dictionary<string, object>>>? frontier = null;
+            if (destinationFailures.Count > 0)
+                frontier = BeginBlockingFrontier(destinationFailures[0].Location, destinationFailures[0].Entrance);
+            else if (unavailable is null && queue.Count == 0 && arrivalFailures.Count == 0 && exitFailures.Count > 0)
+                frontier = BeginBlockingFrontier(exitFailures[0].FromLocation, exitFailures[0].FromTile);
+            if (frontier is not null) { yield return frontier; blocking = frontier.Result; }
+        }
+        search.Result = new RouteSearchResult(best, best is not null ? null : ClassifyFailure(location, start, targetLocation, queue.Count > 0,
+            unavailable, exitFailures, arrivalFailures, firstLockReason, target, destinationFailures, blocking));
     }
 
     private RouteFailure ClassifyFailure(string location, TileCoordinate start, string targetLocation,
         bool searchLimitExceeded, string? unavailable,
         List<EdgeAttempt> exitFailures, List<EdgeAttempt> arrivalFailures, string? firstLockReason,
-        TileCoordinate target, List<(string Location, TileCoordinate Entrance)> destinationFailures)
+        TileCoordinate target, List<(string Location, TileCoordinate Entrance)> destinationFailures,
+        List<Dictionary<string, object>> blocking)
     {
         if (destinationFailures.Count > 0)
         {
@@ -140,7 +175,7 @@ public sealed class ReachableRoutePlanner
                     ["targetLocation"] = reached.Location,
                     ["targetTile"] = new Dictionary<string, object> { ["x"] = target.X, ["y"] = target.Y },
                     ["reachableEntryTile"] = new Dictionary<string, object> { ["x"] = reached.Entrance.X, ["y"] = reached.Entrance.Y },
-                    ["blockingTiles"] = FindBlockingFrontier(reached.Location, reached.Entrance),
+                    ["blockingTiles"] = blocking,
                 });
         }
         if (unavailable is not null)
@@ -207,7 +242,6 @@ public sealed class ReachableRoutePlanner
                 ["edge"] = DescribeEdge(attempt.Edge),
                 ["exitTile"] = new Dictionary<string, object> { ["x"] = attempt.Edge.SourceTile.X, ["y"] = attempt.Edge.SourceTile.Y },
             };
-            var blocking = FindBlockingFrontier(attempt.FromLocation, attempt.FromTile);
             if (blocking.Count > 0) details["blockingTiles"] = blocking;
             return new RouteFailure("EXIT_PATH_BLOCKED",
                 $"Exit path blocked on '{attempt.FromLocation}': no passable path to the '{attempt.Edge.TargetLocation}' exit at tile {attempt.Edge.SourceTile}.",
@@ -241,46 +275,57 @@ public sealed class ReachableRoutePlanner
     /// stopped the expansion (weeds, stones, wood, debris — usually clearable), nearest
     /// first. Best-effort: an empty result just means no frontier detail is available.
     /// </summary>
-    private List<Dictionary<string, object>> FindBlockingFrontier(string location, TileCoordinate start, int maxTiles = MaxBlockingTiles)
+    private NavigationSearch<List<Dictionary<string, object>>> BeginBlockingFrontier(string location, TileCoordinate start) =>
+        new(search => SearchBlockingFrontier(search, location, start));
+
+    private IEnumerable<NavigationSearch?> SearchBlockingFrontier(NavigationSearch<List<Dictionary<string, object>>> search,
+        string location, TileCoordinate start)
     {
+        search.Result = new();
         var blocked = new List<(TileCoordinate Tile, int Distance)>();
-        try
+        var visited = new HashSet<TileCoordinate> { start };
+        var frontier = new Queue<(TileCoordinate Tile, int Distance)>();
+        frontier.Enqueue((start, 0));
+        int explored = 0;
+        while (frontier.Count > 0 && explored++ < BlockingFrontierSearchBudget)
         {
-            var visited = new HashSet<TileCoordinate> { start };
-            var frontier = new Queue<(TileCoordinate Tile, int Distance)>();
-            frontier.Enqueue((start, 0));
-            int explored = 0;
-            while (frontier.Count > 0 && explored < BlockingFrontierSearchBudget)
+            var (current, distance) = frontier.Dequeue();
+            bool failed = false;
+            try
             {
-                var (current, distance) = frontier.Dequeue();
-                explored++;
                 foreach (var neighbor in current.CardinalNeighbors())
                 {
                     if (!visited.Add(neighbor)) continue;
-                    if (_observer.IsTilePassable(location, neighbor))
-                        frontier.Enqueue((neighbor, distance + 1));
-                    else
-                        blocked.Add((neighbor, distance + 1));
+                    if (_observer.IsTilePassable(location, neighbor)) frontier.Enqueue((neighbor, distance + 1));
+                    else blocked.Add((neighbor, distance + 1));
                 }
             }
+            catch { failed = true; }
+            if (failed) yield break;
+            yield return null;
         }
-        catch
-        {
-            return new List<Dictionary<string, object>>();
-        }
-        return blocked
-            .OrderBy(b => b.Distance)
-            .ThenBy(b => b.Tile.Y)
-            .ThenBy(b => b.Tile.X)
-            .Take(maxTiles)
-            .Select(b => new Dictionary<string, object> { ["x"] = b.Tile.X, ["y"] = b.Tile.Y })
-            .ToList();
+        search.Result = blocked.OrderBy(b => b.Distance).ThenBy(b => b.Tile.Y).ThenBy(b => b.Tile.X)
+            .Take(MaxBlockingTiles).Select(b => new Dictionary<string, object> { ["x"] = b.Tile.X, ["y"] = b.Tile.Y }).ToList();
     }
 
-    public PathResult FindExitPath(string location, TileCoordinate start, MapEdge edge) =>
-        _observer.IsTilePassable(location, edge.SourceTile)
-            ? _navigator.FindPath(location, start, edge.SourceTile)
-            : _navigator.FindPathToInteract(new AuthoritativePose(location, start, FacingDirection.Down), location, edge.SourceTile);
+    public PathResult FindExitPath(string location, TileCoordinate start, MapEdge edge)
+    {
+        using var search = BeginExitPath(location, start, edge);
+        return search.Complete();
+    }
+
+    public NavigationSearch<PathResult> BeginExitPath(string location, TileCoordinate start, MapEdge edge) =>
+        new(search => SearchExitPath(search, location, start, edge));
+
+    private IEnumerable<NavigationSearch?> SearchExitPath(NavigationSearch<PathResult> search, string location,
+        TileCoordinate start, MapEdge edge)
+    {
+        var path = _observer.IsTilePassable(location, edge.SourceTile)
+            ? _navigator.BeginPath(location, start, edge.SourceTile)
+            : _navigator.BeginPathToInteract(new AuthoritativePose(location, start, FacingDirection.Down), location, edge.SourceTile);
+        yield return path;
+        search.Result = path.Result;
+    }
 
     public bool TryArrival(MapEdge edge, out TileCoordinate tile)
     {
@@ -299,16 +344,35 @@ public sealed class ReachableRoutePlanner
 
     public PathResult FindDestinationPath(string location, TileCoordinate start, TileCoordinate target, bool requireExactDestination = false)
     {
+        using var search = BeginDestinationPath(location, start, target, requireExactDestination);
+        return search.Complete();
+    }
+
+    public NavigationSearch<PathResult> BeginDestinationPath(string location, TileCoordinate start, TileCoordinate target,
+        bool requireExactDestination = false) =>
+        new(search => SearchDestinationPath(search, location, start, target, requireExactDestination));
+
+    private IEnumerable<NavigationSearch?> SearchDestinationPath(NavigationSearch<PathResult> search, string location,
+        TileCoordinate start, TileCoordinate target, bool exact)
+    {
         if (!IsTrigger(location, target) && _observer.IsTilePassable(location, target))
         {
-            var exact = _navigator.FindPath(location, start, target);
-            if (exact.Success) return exact;
+            var path = _navigator.BeginPath(location, start, target);
+            yield return path;
+            if (path.Result.Success) { search.Result = path.Result; yield break; }
         }
-        if (requireExactDestination)
-            return PathResult.Failed($"Requested exact standing tile {target} on '{location}' is unreachable; no adjacent substitute is authorized.");
+        if (exact)
+        {
+            search.Result = PathResult.Failed($"Requested exact standing tile {target} on '{location}' is unreachable; no adjacent substitute is authorized.");
+            yield break;
+        }
         if (start.IsAdjacentTo(target) && _observer.IsTilePassable(location, start) && !IsTrigger(location, start))
-            return PathResult.Completed(new[] { new PathStep(start, FacingDirection.Down) });
-        var nearby = _navigator.FindNearestPassableReachableTile(location, start, target, 3, t => IsTrigger(location, t));
-        return nearby?.Path ?? PathResult.Failed($"Destination {target} on '{location}' is unreachable.");
+        {
+            search.Result = PathResult.Completed(new[] { new PathStep(start, FacingDirection.Down) });
+            yield break;
+        }
+        var nearby = _navigator.BeginNearest(location, start, target, 3, t => IsTrigger(location, t));
+        yield return nearby;
+        search.Result = nearby.Result?.Path ?? PathResult.Failed($"Destination {target} on '{location}' is unreachable.");
     }
 }

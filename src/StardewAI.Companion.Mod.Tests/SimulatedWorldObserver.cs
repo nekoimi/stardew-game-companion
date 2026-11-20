@@ -54,6 +54,7 @@ public sealed class SimulatedWorldObserver : IWorldObserver
 
     public bool IsTilePassable(string locationName, TileCoordinate tile)
     {
+        OnCollisionRead?.Invoke();
         TilePassabilityChecks++;
         if (_locationPassability.TryGetValue(locationName, out var map))
             return map.TryGetValue(tile, out bool value) && value;
@@ -62,10 +63,14 @@ public sealed class SimulatedWorldObserver : IWorldObserver
         return _passability.TryGetValue(tile, out bool passable) ? passable : true;
     }
 
+    public Action? OnCollisionRead { get; set; }
     public int TilePassabilityChecks { get; private set; }
     public HashSet<(TileCoordinate From, TileCoordinate To)> BlockedWalkingSegments { get; } = new();
-    public bool CanWalkBetween(string locationName, TileCoordinate from, TileCoordinate to) =>
-        !BlockedWalkingSegments.Contains((from, to));
+    public bool CanWalkBetween(string locationName, TileCoordinate from, TileCoordinate to)
+    {
+        OnCollisionRead?.Invoke();
+        return !BlockedWalkingSegments.Contains((from, to));
+    }
     public Exception? FarmWorkScanFailure { get; set; }
 
     public bool IsWarpOrDoorTile(string locationName, TileCoordinate tile)

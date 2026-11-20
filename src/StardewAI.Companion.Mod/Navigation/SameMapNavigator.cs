@@ -41,179 +41,108 @@ public sealed class SameMapNavigator
     /// actor already stands on is always exempt: it was reached legally and
     /// rejecting it would make every replan fail identically.
     /// </summary>
-    public PathResult FindPathToInteract(
-        AuthoritativePose currentPose,
-        string targetLocation,
-        TileCoordinate targetTile,
-        IReadOnlyCollection<TileCoordinate>? avoidTiles = null)
+    public PathResult FindPathToInteract(AuthoritativePose currentPose, string targetLocation,
+        TileCoordinate targetTile, IReadOnlyCollection<TileCoordinate>? avoidTiles = null)
     {
-        ArgumentNullException.ThrowIfNull(currentPose);
+        using var search = BeginPathToInteract(currentPose, targetLocation, targetTile, avoidTiles);
+        return search.Complete();
+    }
 
-        // Invariant: strictly same-map
-        if (!string.Equals(currentPose.LocationName, targetLocation, StringComparison.OrdinalIgnoreCase))
+    public NavigationSearch<PathResult> BeginPathToInteract(AuthoritativePose currentPose, string targetLocation,
+        TileCoordinate targetTile, IReadOnlyCollection<TileCoordinate>? avoidTiles = null) =>
+        new(search => SearchInteraction(search, currentPose, targetLocation, targetTile, avoidTiles));
+
+    private IEnumerable<NavigationSearch?> SearchInteraction(NavigationSearch<PathResult> search,
+        AuthoritativePose pose, string location, TileCoordinate target, IReadOnlyCollection<TileCoordinate>? avoid)
+    {
+        if (!string.Equals(pose.LocationName, location, StringComparison.OrdinalIgnoreCase))
         {
-            return PathResult.Failed(
-                $"Cross-map navigation forbidden: Actor is at '{currentPose.LocationName}' but target is at '{targetLocation}'.");
+            search.Result = PathResult.Failed($"Cross-map navigation forbidden: Actor is at '{pose.LocationName}' but target is at '{location}'.");
+            yield break;
         }
-
-        // Check if already standing adjacent and facing target
-        if (currentPose.Tile.IsAdjacentTo(targetTile))
+        if (pose.Tile.IsAdjacentTo(target) && FacingDirectionExtensions.DirectionToAdjacent(pose.Tile, target) is { } facing)
         {
-            var requiredFacing = FacingDirectionExtensions.DirectionToAdjacent(currentPose.Tile, targetTile);
-            if (requiredFacing.HasValue)
-            {
-                // Already at valid standing position
-                return PathResult.Completed(new[]
-                {
-                    new PathStep(currentPose.Tile, requiredFacing.Value)
-                });
-            }
+            search.Result = PathResult.Completed(new[] { new PathStep(pose.Tile, facing) });
+            yield break;
         }
-
-        // Identify candidate adjacent standing positions
-        var candidates = GetCandidateStandingPositions(targetLocation, targetTile, avoidTiles).ToList();
+        var candidates = GetCandidateStandingPositions(location, target, avoid).ToList();
         if (candidates.Count == 0)
         {
-            return PathResult.Failed($"Target tile {targetTile} has no passable adjacent standing positions.");
+            search.Result = PathResult.Failed($"Target tile {target} has no passable adjacent standing positions.");
+            yield break;
         }
-
-        // If currently standing on one of the candidate tiles, just rotate
-        var currentCandidate = candidates.FirstOrDefault(c => c.Tile == currentPose.Tile);
-        if (currentCandidate != default)
-        {
-            return PathResult.Completed(new[]
-            {
-                new PathStep(currentPose.Tile, currentCandidate.Facing)
-            });
-        }
-
-        // Search for shortest path among candidates using BFS
-        IReadOnlyList<PathStep>? bestSteps = null;
+        IReadOnlyList<PathStep>? best = null;
         foreach (var candidate in candidates)
         {
-            var path = FindPathInternal(currentPose.LocationName, currentPose.Tile, candidate.Tile, candidate.Facing, avoidTiles);
-            if (path is not null)
-            {
-                if (bestSteps is null || path.Count < bestSteps.Count)
-                {
-                    bestSteps = path;
-                }
-            }
+            var path = BeginPath(location, pose.Tile, candidate.Tile, candidate.Facing, avoid);
+            yield return path;
+            if (path.Result.Success && (best is null || path.Result.Steps.Count < best.Count)) best = path.Result.Steps;
         }
-
-        if (bestSteps is null)
-        {
-            return PathResult.Failed($"No passable path found from {currentPose.Tile} to target adjacent positions for {targetTile}.");
-        }
-
-        return PathResult.Completed(bestSteps);
+        search.Result = best is null
+            ? PathResult.Failed($"No passable path found from {pose.Tile} to target adjacent positions for {target}.")
+            : PathResult.Completed(best);
     }
 
-    /// <summary>
-    /// Finds a path between two passable tiles on the same map.
-    /// </summary>
-    public PathResult FindPath(
-        string locationName,
-        TileCoordinate startTile,
-        TileCoordinate destinationTile,
-        FacingDirection? finalFacing = null,
-        IReadOnlyCollection<TileCoordinate>? avoidTiles = null)
+    public PathResult FindPath(string locationName, TileCoordinate startTile, TileCoordinate destinationTile,
+        FacingDirection? finalFacing = null, IReadOnlyCollection<TileCoordinate>? avoidTiles = null)
     {
-        if (startTile == destinationTile)
-        {
-            var facing = finalFacing ?? FacingDirection.Down;
-            return PathResult.Completed(new[] { new PathStep(startTile, facing) });
-        }
-
-        var steps = FindPathInternal(locationName, startTile, destinationTile, finalFacing, avoidTiles);
-        if (steps is null)
-        {
-            return PathResult.Failed($"No passable path from {startTile} to {destinationTile} on map '{locationName}'.");
-        }
-
-        return PathResult.Completed(steps);
+        using var search = BeginPath(locationName, startTile, destinationTile, finalFacing, avoidTiles);
+        return search.Complete();
     }
 
-    private IReadOnlyList<PathStep>? FindPathInternal(
-        string locationName,
-        TileCoordinate start,
-        TileCoordinate goal,
-        FacingDirection? finalFacing,
-        IReadOnlyCollection<TileCoordinate>? avoidTiles = null)
-    {
-        if (!IsTileNavigable(locationName, goal, avoidTiles) && start != goal)
-        {
-            return null;
-        }
+    public NavigationSearch<PathResult> BeginPath(string locationName, TileCoordinate startTile, TileCoordinate destinationTile,
+        FacingDirection? finalFacing = null, IReadOnlyCollection<TileCoordinate>? avoidTiles = null) =>
+        new(search => SearchPath(search, locationName, startTile, destinationTile, finalFacing, avoidTiles));
 
+    private IEnumerable<NavigationSearch?> SearchPath(NavigationSearch<PathResult> search, string location,
+        TileCoordinate start, TileCoordinate goal, FacingDirection? finalFacing, IReadOnlyCollection<TileCoordinate>? avoid)
+    {
+        if (start == goal)
+        {
+            search.Result = PathResult.Completed(new[] { new PathStep(start, finalFacing ?? FacingDirection.Down) });
+            yield break;
+        }
+        search.Result = PathResult.Failed($"No passable path from {start} to {goal} on map '{location}'.");
+        if (!IsTileNavigable(location, goal, avoid)) yield break;
         var queue = new Queue<TileCoordinate>();
-        var parentMap = new Dictionary<TileCoordinate, TileCoordinate>();
-        var visited = new HashSet<TileCoordinate>();
-
+        var parents = new Dictionary<TileCoordinate, TileCoordinate>();
+        var visited = new HashSet<TileCoordinate> { start };
+        // Only memoize within this BFS. Physical walking still checks the live world.
+        var passable = new Dictionary<TileCoordinate, bool> { [goal] = true };
         queue.Enqueue(start);
-        visited.Add(start);
-
-        bool found = false;
         int explored = 0;
-
-        while (queue.Count > 0 && explored < MaxSearchDepth * 10)
+        bool found = false;
+        while (queue.Count > 0 && explored++ < MaxSearchDepth * 10)
         {
             var current = queue.Dequeue();
-            explored++;
-
-            if (current == goal)
-            {
-                found = true;
-                break;
-            }
-
+            if (current == goal) { found = true; break; }
             foreach (var neighbor in current.CardinalNeighbors())
             {
-                if (visited.Contains(neighbor))
-                    continue;
-
-                // Neighbor must be navigable (or the goal tile)
-                if ((neighbor == goal || IsTileNavigable(locationName, neighbor, avoidTiles))
-                    && _observer.CanWalkBetween(locationName, current, neighbor))
+                if (visited.Contains(neighbor)) continue;
+                if (!passable.TryGetValue(neighbor, out bool open))
+                    passable[neighbor] = open = IsTileNavigable(location, neighbor, avoid);
+                if (open && _observer.CanWalkBetween(location, current, neighbor))
                 {
                     visited.Add(neighbor);
-                    parentMap[neighbor] = current;
+                    parents[neighbor] = current;
                     queue.Enqueue(neighbor);
                 }
             }
+            yield return null;
         }
-
-        if (!found)
-            return null;
-
-        // Reconstruct path
-        var pathTiles = new List<TileCoordinate>();
-        var curr = goal;
-        while (curr != start)
-        {
-            pathTiles.Add(curr);
-            curr = parentMap[curr];
-        }
-        pathTiles.Reverse();
-
+        if (!found) yield break;
+        var tiles = new List<TileCoordinate>();
+        for (var tile = goal; tile != start; tile = parents[tile]) tiles.Add(tile);
+        tiles.Reverse();
         var steps = new List<PathStep>();
-        var prev = start;
-        for (int i = 0; i < pathTiles.Count; i++)
+        var previous = start;
+        foreach (var tile in tiles)
         {
-            var nextTile = pathTiles[i];
-            var dir = FacingDirectionExtensions.DirectionToAdjacent(prev, nextTile) ?? FacingDirection.Down;
-            steps.Add(new PathStep(nextTile, dir));
-            prev = nextTile;
+            steps.Add(new PathStep(tile, FacingDirectionExtensions.DirectionToAdjacent(previous, tile) ?? FacingDirection.Down));
+            previous = tile;
         }
-
-        // Apply final facing if specified
-        if (finalFacing.HasValue && steps.Count > 0)
-        {
-            var last = steps[^1];
-            steps[^1] = new PathStep(last.Tile, finalFacing.Value);
-        }
-
-        return steps;
+        if (finalFacing.HasValue && steps.Count > 0) steps[^1] = new PathStep(steps[^1].Tile, finalFacing.Value);
+        search.Result = PathResult.Completed(steps);
     }
 
     private IEnumerable<(TileCoordinate Tile, FacingDirection Facing)> GetCandidateStandingPositions(
@@ -266,53 +195,43 @@ public sealed class SameMapNavigator
     /// Used as fallback when the target destination tile itself is impassable (e.g. building footprint/door).
     /// </summary>
     public (TileCoordinate Tile, PathResult Path)? FindNearestPassableReachableTile(
-        string locationName,
-        TileCoordinate startTile,
-        TileCoordinate centerTile,
-        int maxRadius = 3,
+        string locationName, TileCoordinate startTile, TileCoordinate centerTile, int maxRadius = 3,
         Func<TileCoordinate, bool>? isTileExcluded = null)
     {
+        using var search = BeginNearest(locationName, startTile, centerTile, maxRadius, isTileExcluded);
+        return search.Complete();
+    }
+
+    public NavigationSearch<(TileCoordinate Tile, PathResult Path)?> BeginNearest(
+        string location, TileCoordinate start, TileCoordinate center, int radius = 3,
+        Func<TileCoordinate, bool>? excluded = null) =>
+        new(search => SearchNearest(search, location, start, center, radius, excluded));
+
+    private IEnumerable<NavigationSearch?> SearchNearest(NavigationSearch<(TileCoordinate Tile, PathResult Path)?> search,
+        string location, TileCoordinate start, TileCoordinate center, int radius, Func<TileCoordinate, bool>? excluded)
+    {
         var candidates = new List<(TileCoordinate Tile, float Distance)>();
-
-        for (int dx = -maxRadius; dx <= maxRadius; dx++)
+        for (int dx = -radius; dx <= radius; dx++)
+        for (int dy = -radius; dy <= radius; dy++)
         {
-            for (int dy = -maxRadius; dy <= maxRadius; dy++)
+            if (dx == 0 && dy == 0) continue;
+            float distance = MathF.Sqrt(dx * dx + dy * dy);
+            if (distance > radius + 0.5f) continue;
+            var tile = new TileCoordinate(center.X + dx, center.Y + dy);
+            if (tile.X >= 0 && tile.Y >= 0 && IsTileNavigable(location, tile, null) && excluded?.Invoke(tile) != true)
+                candidates.Add((tile, distance));
+            yield return null;
+        }
+        foreach (var candidate in candidates.OrderBy(c => c.Distance)
+                     .ThenBy(c => Math.Abs(c.Tile.X - start.X) + Math.Abs(c.Tile.Y - start.Y)))
+        {
+            var path = BeginPath(location, start, candidate.Tile);
+            yield return path;
+            if (path.Result.Success && path.Result.Steps.Count > 0)
             {
-                if (dx == 0 && dy == 0) continue;
-                float dist = MathF.Sqrt(dx * dx + dy * dy);
-                if (dist > maxRadius + 0.5f) continue;
-
-                var tile = new TileCoordinate(centerTile.X + dx, centerTile.Y + dy);
-                if (tile.X >= 0 && tile.Y >= 0 && IsTileNavigable(locationName, tile, null))
-                {
-                    if (isTileExcluded != null && isTileExcluded(tile))
-                        continue;
-                    candidates.Add((tile, dist));
-                }
+                search.Result = (candidate.Tile, path.Result);
+                yield break;
             }
         }
-
-        // Sort candidates: closest to centerTile first; tie-breaker: closest to startTile
-        var sortedCandidates = candidates
-            .OrderBy(c => c.Distance)
-            .ThenBy(c => Math.Abs(c.Tile.X - startTile.X) + Math.Abs(c.Tile.Y - startTile.Y))
-            .Select(c => c.Tile)
-            .ToList();
-
-        foreach (var candidate in sortedCandidates)
-        {
-            if (startTile == candidate)
-            {
-                return (candidate, PathResult.Completed(new[] { new PathStep(candidate, FacingDirection.Down) }));
-            }
-
-            var path = FindPath(locationName, startTile, candidate);
-            if (path.Success && path.Steps.Count > 0)
-            {
-                return (candidate, path);
-            }
-        }
-
-        return null;
     }
 }

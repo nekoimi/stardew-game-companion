@@ -5,6 +5,7 @@ using StardewValley.Objects;
 using StardewAI.Companion.Mod.Adapters;
 using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.Menus;
+using StardewAI.Companion.Mod.Navigation;
 
 namespace StardewAI.Companion.Mod.Execution;
 
@@ -15,6 +16,14 @@ public sealed class CompanionRestController
     private readonly NavigationStateMachine _navigation;
     private int _lastAttemptTime = -1;
     private int _lastPreviewTime = -1;
+    private NavigationSearch<Dictionary<string, object>>? _bedtimePreview;
+    private (int Day, int Bedtime, string Origin, TileCoordinate Tile, string House, TileCoordinate Bed, int Clock) _previewOrigin;
+
+    private void ClearBedtimePreview()
+    {
+        _bedtimePreview?.Dispose();
+        _bedtimePreview = null;
+    }
     private bool _cancelRequested;
     private readonly CompanionBedtimeRouteEstimate _routeEstimate = new();
     private string? _recoveryFailure;
@@ -76,6 +85,7 @@ public sealed class CompanionRestController
         _cancelRequested = false;
         _lastAttemptTime = -1;
         _lastPreviewTime = -1;
+        ClearBedtimePreview();
         _routeEstimate.Clear();
         _recoveryFailure = null;
         if (_actor.GameFarmer is { } farmer)
@@ -122,7 +132,8 @@ public sealed class CompanionRestController
 
     public void Update(GameTime? time, long tick, ISkillExecutionMachine? work)
     {
-        if (Paused || TaskPaused || Game1.paused || Game1.eventUp || CompanionMenuClock.HasBlockingMenu) return;
+        if (Paused || TaskPaused || Game1.paused || Game1.eventUp || CompanionMenuClock.HasBlockingMenu)
+        { ClearBedtimePreview(); return; }
         // The same native time boundary applies to movement and resource recovery.
         if (time is not null && !Game1.shouldTimePass()) return;
         int now = Game1.timeOfDay;
@@ -193,15 +204,31 @@ public sealed class CompanionRestController
             int day = Game1.Date.TotalDays;
             if (!_routeEstimate.TryGet(day, Bedtime, _actor.LocationName, _actor.Tile, house.NameOrUniqueName, target, now, out int travel))
             {
-                if (_lastPreviewTime == now) return;
-                _lastPreviewTime = now;
-                var route = _navigation.PreviewRoute(house.NameOrUniqueName, target);
-                travel = route.TryGetValue("estimatedGameMinutes", out var estimate) && estimate is int minutes ? minutes : 60;
-                _routeEstimate.Store(day, Bedtime, _actor.LocationName, _actor.Tile, house.NameOrUniqueName, target, now, travel);
+                if (_bedtimePreview is not null && (_previewOrigin.Day != day || _previewOrigin.Bedtime != Bedtime ||
+                    _previewOrigin.Origin != _actor.LocationName || _previewOrigin.House != house.NameOrUniqueName || _previewOrigin.Bed != target ||
+                    Math.Abs(_previewOrigin.Tile.X - _actor.Tile.X) + Math.Abs(_previewOrigin.Tile.Y - _actor.Tile.Y) > 12))
+                    ClearBedtimePreview();
+                if (_bedtimePreview is null && _lastPreviewTime != now)
+                {
+                    _previewOrigin = (day, Bedtime, _actor.LocationName, _actor.Tile, house.NameOrUniqueName, target, now);
+                    _bedtimePreview = _navigation.BeginPreviewRoute(house.NameOrUniqueName, target);
+                }
+                // Keep bedtime conservative while the estimate spans multiple frames.
+                travel = 60;
+                if (_bedtimePreview is not null && _bedtimePreview.Advance())
+                {
+                    var route = _bedtimePreview.Result;
+                    travel = route.TryGetValue("estimatedGameMinutes", out var estimate) && estimate is int minutes ? minutes : 60;
+                    _routeEstimate.Store(day, Bedtime, _previewOrigin.Origin, _previewOrigin.Tile,
+                        house.NameOrUniqueName, target, _previewOrigin.Clock, travel);
+                    _lastPreviewTime = now;
+                    ClearBedtimePreview();
+                }
             }
             if (!CompanionBedtime.ShouldWindDown(now, Bedtime, travel)) return;
             State = "winding-down";
         }
+        ClearBedtimePreview();
         if (work?.IsExecuting == true)
         {
             FinishWorkAtSafePoint(work);

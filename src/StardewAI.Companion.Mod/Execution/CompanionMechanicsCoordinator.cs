@@ -273,6 +273,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
     /// </summary>
     public void Update(GameTime? time, long tickCount)
     {
+        UpdateRouteObservation();
         extensionMachine?.Update(time, tickCount);
         if (_actor is PlayerActor binding && !binding.BindingValid) { _eatingMachine?.Update(time, tickCount); PlayerAuthority?.Release("actor-binding-lost"); return; }
         if (!ActorGuards.IsPlayerBound(_actor)) Rest.Update(time, tickCount, ActiveMachine);
@@ -885,12 +886,12 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             {
                 try
                 {
+                    if (skillId == "inspect-route")
+                        return BeginRouteObservation(payload, envelope, out rejectResult);
                     object space = skillId == "inspect-player-activities" ? InspectPlayerActivities() : skillId == "inspect-location"
                         ? _observer.InspectLocation(payload.Parameters.LocationId, payload.Parameters.Region is { } region ? new Rectangle(region.X, region.Y, region.Width, region.Height) : null)
                         : skillId == "inspect-livestock" ? InspectLivestock(payload.Parameters.LocationId)
                         : skillId == "inspect-shop" ? InspectShop(payload.Parameters.ShopId ?? throw new ArgumentException("Shop ID is required."))
-                        : skillId == "inspect-route" ? _navigationMachine.PreviewRoute(payload.Parameters.LocationId,
-                            payload.Parameters.Tile is { } routeTile ? new TileCoordinate(routeTile.X, routeTile.Y) : throw new ArgumentException("Route destination tile is required."))
                         : skillId == "inspect-planting" ? _observer.InspectPlanting(payload.Parameters.LocationId, _actor, payload.Parameters.Region is { } plot ? new Rectangle(plot.X, plot.Y, plot.Width, plot.Height) : null)
                         : skillId == "inspect-building-services" ? NormalNativeActionAdapter.InspectBuildingServices(payload.Parameters.LocationId)
                         : skillId == "inspect-machines" ? _observer.InspectMachines(payload.Parameters.LocationId)
@@ -1564,6 +1565,11 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             }
             var target = !string.IsNullOrEmpty(envelope?.CorrelationId)
                 ? envelope.CorrelationId : payload.CommandId;
+            if (_routeObservation is { } query && (target == query.Request.CommandId || target == query.Request.TaskId))
+            {
+                FinishRouteObservation("cancelled", code: "CANCELLED", message: payload.Reason);
+                return;
+            }
             if (_restRequest is { } rest && (target == rest.CommandId || target == rest.TaskId))
             {
                 CancelRestTask();
@@ -2201,6 +2207,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
     {
         lock (_taskLock)
         {
+            ClearRouteObservation();
             if (_restRequest != null) { Rest.Wake(); FinishRest("cancelled"); }
             ActiveMachine?.RequestCancel($"Transport disconnected: {reason}");
         }
