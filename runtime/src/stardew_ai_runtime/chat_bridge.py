@@ -38,15 +38,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-from stardew_ai_runtime.agent_backends import (
-    AgyBackend,
-    CodexBackend,
-    DshBackend,
-    KimiBackend,
-    McodeBackend,
-)
 from stardew_ai_runtime.agent_instructions import instructions_revision, load_instruction_bundle
-from stardew_ai_runtime.agy_process import run_agy_process, terminate_agy_process
+from stardew_ai_runtime.agy_process import run_agy_process
 from stardew_ai_runtime.autonomy import AutonomyController
 from stardew_ai_runtime.chat_backend_config import load_chat_backend_config, project_root
 from stardew_ai_runtime.codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
@@ -73,7 +66,7 @@ from stardew_ai_runtime.job_feedback import (
 from stardew_ai_runtime.kimi_wire_usage import read_usage_since, wire_offset
 from stardew_ai_runtime.life_chat import LifeChatService
 from stardew_ai_runtime.owner_process import OwnerProcessGuard
-from stardew_ai_runtime.pi_backend import PiBackend
+from stardew_ai_runtime.provider_registry import EXTERNAL_PROVIDER, PROVIDERS, ProviderOptions, cancel_provider
 from stardew_ai_runtime.plan_executor import (
     DispatchDeferred,
     PlanExecutor,
@@ -1114,6 +1107,7 @@ class ChatBridge:
         pi_cmd: str | None = None,
         codex_cmd: str | None = None,
         dsh_cmd: str | None = None,
+        backend_command: str | None = None,
         internal_plan_client: Any | None = None,
         enable_plan_worker: bool = True,
     ):
@@ -1126,8 +1120,9 @@ class ChatBridge:
         self._builtin_backend_name = self.backend_name
         self._external_binding_id = None
         self._connection_state_sent = None
-        self.model = backend_model or model or (configured["model"] if self.backend_name == configured["backend"] else ("kimi-code/k3" if self.backend_name == "kimi" else "" if self.backend_name in {"codex", "mcode", "pi"} else "deepseek-flash" if self.backend_name == "dsh" else "gemini-3.8-flash"))
-        self.effort = effort or configured.get("effort") or ("low" if self.backend_name in {"codex", "dsh"} else "default")
+        spec = PROVIDERS.get(self.backend_name, PROVIDERS["agy"])
+        self.model = backend_model or model or (configured["model"] if self.backend_name == configured["backend"] else spec.default_model)
+        self.effort = effort or (configured.get("effort") if self.backend_name == configured["backend"] else None) or spec.default_effort
         self._builtin_model, self._builtin_effort = self.model, self.effort
         if self.connection_source == "external":
             self.backend_name, self.model, self.effort = "mcode", "", "default"
@@ -1138,6 +1133,7 @@ class ChatBridge:
         self.pi_cmd = pi_cmd or "pi"
         self.codex_cmd = codex_cmd or "codex.exe"
         self.dsh_cmd = dsh_cmd or "dsh"
+        self._backend_command = backend_command
         # Game-only Kimi agent profile (new sessions only; resumed sessions keep theirs).
         self.agent = configured.get("agent")
         configured_agent_file = configured.get("agentFile")
@@ -1157,12 +1153,9 @@ class ChatBridge:
         self._commands_file = commands_file or self._default_commands_file()
         self._usage_display = UsageDisplay(self._commands_file, project_root() / "config" / "usage-prices.json",
                                            self._commands_file.parent / "data" / "model-usage.jsonl")
-        if self.backend_name == "dsh":
-            from stardew_ai_runtime.usage_meter import recover_dsh_receipts
-            recover_dsh_receipts(self._commands_file.parent, self._commands_file)
-        elif self.backend_name == "agy":
-            from stardew_ai_runtime.usage_meter import recover_agy_receipts
-            recover_agy_receipts(self._commands_file.parent)
+        provider = self._provider_spec()
+        if provider is not None and provider.recover_usage is not None:
+            provider.recover_usage(self._commands_file)
         self._sessions: dict[str, str] = self._load_sessions()
         self._autonomy: AutonomyController | None = None
         self._autonomy_requests: dict[str, str] = {}
@@ -1333,11 +1326,11 @@ class ChatBridge:
                 await self._plan_worker.stop()
             self._life_queue.clear()
             self._pending_life_preparation.clear()
+            await self._close_backend()
             self.connection_source = source
             self.backend_name = "mcode" if source == "external" else self._builtin_backend_name
             self.model = "" if source == "external" else self._builtin_model
             self.effort = "default" if source == "external" else self._builtin_effort
-            self._backend = None
             self._bind_companion_stores()
             self._external_binding_id = None
             self._external_status = "waiting"
@@ -1347,55 +1340,29 @@ class ChatBridge:
         finally:
             self._connection_switching = False
 
+    def _provider_spec(self):
+        return EXTERNAL_PROVIDER if self.connection_source == "external" else PROVIDERS.get(self.backend_name)
+
+    async def _close_backend(self) -> None:
+        backend, self._backend = self._backend, None
+        close = getattr(backend, "close", None)
+        if callable(close):
+            await asyncio.to_thread(close)
+
     def _get_backend(self):
         if self._backend is None:
-            if getattr(self, "connection_source", "builtin") == "external":
-                from .external_connection import ExternalSessionBackend
-                if self.run_dir is None:
-                    raise ValueError("External connection requires a game run directory")
-                self._backend = ExternalSessionBackend(self.run_dir,
-                    progress=getattr(self, "_backend_progress_callback", None))
-            elif self.backend_name == "agy":
-                self._backend = AgyBackend(self._execute_agy_turn)
-            elif self.backend_name == "kimi":
-                self._backend = KimiBackend(
-                    model=self.model or "kimi-code/k3", command=self.kimi_cmd,
-                    cwd=project_root(), auto=False,
-                    progress=getattr(self, "_backend_progress_callback", None),
-                    agent=self.agent, agent_file=self.agent_file,
-                )
-            elif self.backend_name == "dsh":
-                if self.run_dir is None:
-                    raise ValueError("dsh backend requires a game run directory")
-                self._backend = DshBackend(self.run_dir, model=self.model or "deepseek-flash", effort=self.effort,
-                    command=self.dsh_cmd,
-                    progress=getattr(self, "_backend_progress_callback", None))
-            elif self.backend_name == "codex":
-                if self.run_dir is None:
-                    raise ValueError("Codex backend requires a game run directory")
-                self._backend = CodexBackend(
-                    run_dir=self.run_dir, model=self.model or "",
-                    effort=self.effort, command=self.codex_cmd,
-                    http_provider=os.environ.get("STARDEW_CODEX_HTTP_PROVIDER") or load_chat_backend_config().get("httpProvider") or None,
-                    progress=getattr(self, "_backend_progress_callback", None),
-                )
-            elif self.backend_name == "pi":
-                if self.run_dir is None:
-                    raise ValueError("pi backend requires a game run directory")
-                self._backend = PiBackend(self.run_dir, model=self.model, command=self.pi_cmd,
-                    effort=self.effort, progress=getattr(self, "_backend_progress_callback", None),
-                    local_sessions_only=getattr(self, "_local_pi_sessions_only", False))
-            elif self.backend_name == "mcode":
-                if self.run_dir is None:
-                    raise ValueError("mcode backend requires a game run directory")
-                self._backend = McodeBackend(
-                    run_dir=self.run_dir, model=self.model or "",
-                    command=self.mcode_cmd,
-                    effort=self.effort,
-                    progress=getattr(self, "_backend_progress_callback", None),
-                )
-            else:
+            spec = self._provider_spec()
+            if spec is None:
                 raise ValueError(f"Unsupported chat backend: {self.backend_name}")
+            command = self._backend_command or getattr(self, f"{spec.id}_cmd", spec.executable)
+            self._backend = spec.factory(ProviderOptions(
+                self.run_dir, project_root(), self.model or spec.default_model, self.effort, command,
+                progress=getattr(self, "_backend_progress_callback", None),
+                settings={"agent": self.agent, "agentFile": self.agent_file,
+                          "httpProvider": os.environ.get("STARDEW_CODEX_HTTP_PROVIDER") or load_chat_backend_config().get("httpProvider")},
+                local_sessions_only=getattr(self, "_local_pi_sessions_only", False),
+                legacy_execute=self._execute_agy_turn,
+            ))
         return self._backend
 
     def _notify_backend_failure(self, code: str) -> None:
@@ -1683,20 +1650,11 @@ class ChatBridge:
         except Exception as ex:
             logger.warning("Failed to save chat sessions to %s: %s", self._sessions_file, ex)
 
-    @staticmethod
-    def _codex_turn_usage(result: dict[str, Any]) -> dict[str, Any] | None:
-        raw = result.get("usage")
-        latest = result.get("usage_latest_request_input_context")
-        measured = isinstance(latest, int) and not isinstance(latest, bool) and latest >= 0
-        if not isinstance(raw, dict) and not measured:
-            return None
-        context = {"latestRequestInputContext": latest} if measured else {}
-        return {**(raw if isinstance(raw, dict) else {}), **context,
-                "input_context_measured": measured,
-                "source": result.get("usage_source", "unknown"),
-                "status": result.get("usage_status", "unknown"),
-                "requestCount": result.get("usage_request_count"),
-                "limits": result.get("usage_limits")}
+    def _provider_usage(self, result: dict[str, Any], request_id: str, save_id: str | None):
+        spec = self._provider_spec()
+        if spec is None:
+            return result.get("usage"), "unknown", None
+        return spec.receipt(result, lambda: self._usage_display.turn_response_usage(request_id, save_id or "", self.backend_name))
 
     def _record_command(
         self,
@@ -1798,14 +1756,7 @@ class ChatBridge:
             proc = self._active_task.process
             if proc and proc.poll() is None:
                 try:
-                    backend = self._backend
-                    terminate = getattr(backend, "terminate", None)
-                    if self.backend_name == "agy":
-                        terminate_agy_process(proc)
-                    elif callable(terminate):
-                        terminate(proc)
-                    else:
-                        proc.kill()
+                    cancel_provider(self._backend, proc)
                     logger.info("Cancelled %s game turn (owned process pid=%s)", self.backend_name, getattr(proc, "pid", None))
                 except Exception as ex:
                     logger.debug("Error killing process: %s", ex)
@@ -1922,6 +1873,7 @@ class ChatBridge:
 
         if self._plan_worker is not None:
             await self._plan_worker.stop()
+        await self._close_backend()
 
     async def _prepare_game_load(self, save_id: str | None, session_id: str | None) -> None:
         from .game_reload import (
@@ -3672,13 +3624,7 @@ class ChatBridge:
         proc = active_task.process
         if proc is not None and proc.poll() is None:
             try:
-                terminate = getattr(self._backend, "terminate", None)
-                if self.backend_name == "agy":
-                    terminate_agy_process(proc)
-                elif callable(terminate):
-                    terminate(proc)
-                else:
-                    proc.kill()
+                cancel_provider(self._backend, proc)
             except Exception:
                 logger.warning("Could not stop interrupted provider", exc_info=True)
         while True:
@@ -3897,7 +3843,7 @@ class ChatBridge:
                     conversation_id=result.get("conversation_id") or (None if result.get("session_retried") else existing_cid),
                     prompt=text, status="completed" if success else "failed",
                     start_idx=-1, end_idx=-1,
-                    usage=self._codex_turn_usage(result) if self.backend_name == "codex" else result.get("usage"),
+                    usage=self._provider_usage(result, request_id, save_id)[0],
                     error=result.get("error"), duration=time.monotonic() - active_task.start_time,
                 )
                 active_task.recorded = True
@@ -3983,7 +3929,7 @@ class ChatBridge:
             player_cancelled = bool(active_task and (active_task.abort_reason or "").startswith("Cancel requested:"))
             if active_task is not None and not active_task.recorded:
                 interrupted = active_task.interrupted_result or {}
-                usage = self._codex_turn_usage(interrupted) if self.backend_name == "codex" else interrupted.get("usage")
+                usage = self._provider_usage(interrupted, request_id, save_id)[0]
                 self._record_command(
                     request_id=request_id, save_id=save_id,
                     conversation_id=active_task.provider_conversation_id or interrupted.get("conversation_id") or existing_cid,
@@ -4329,7 +4275,7 @@ class ChatBridge:
                     request_id=active_task.request_id, save_id=save_id, conversation_id=cid,
                     prompt=f"[主动关怀:{kind}] {game_date}",
                     status="completed" if result.get("success") else "failed", start_idx=-1, end_idx=-1,
-                    usage=self._codex_turn_usage(result) if self.backend_name == "codex" else result.get("usage"),
+                    usage=self._provider_usage(result, active_task.request_id, save_id)[0],
                     error=result.get("error"), duration=time.monotonic() - active_task.start_time)
         except Exception:
             logger.warning("Care text generation raised", exc_info=True)
@@ -4932,12 +4878,13 @@ class ChatBridge:
                 usage_delta = read_usage_since(
                     cid, task.wire_start_offset, cwd=project_root()
                 )
-            elif self.backend_name in {"codex", "mcode", "pi"}:
-                end_idx = -1
-            else:
+            elif self.backend_name == "agy":
                 end_idx = get_max_gen_idx(cid) if cid else -1
                 if cid and end_idx > start_idx:
                     usage_delta = get_command_usage_delta(cid, start_idx)
+            else:
+                end_idx = -1
+                usage_delta = self._provider_usage(task.interrupted_result or {}, active_req, active_save)[0]
 
             missing_reason = None
             if not usage_delta:
@@ -4947,7 +4894,7 @@ class ChatBridge:
                     else "cancelled_before_conversation_established"
                 )
 
-            if self.backend_name not in {"codex", "mcode", "pi"} and not task.recorded:
+            if (self.backend_name in {"agy", "kimi"} or usage_delta) and not task.recorded:
                 self._record_command(
                     request_id=active_req,
                     save_id=active_save,
@@ -5418,8 +5365,7 @@ class ChatBridge:
                         duration = time.monotonic() - getattr(active_task, "start_time", time.monotonic())
                         cid = active_task.provider_conversation_id or result.get("conversation_id") or self.get_conversation_id(save_id)
                         interrupted_usage = (get_command_usage_delta(cid, active_task.start_max_idx) if self.backend_name == "agy"
-                            else self._codex_turn_usage(result) if self.backend_name == "codex"
-                            else result.get("usage") if self.backend_name in {"mcode", "pi"} else None)
+                            else self._provider_usage(result, request_id, save_id)[0])
                         self._record_command(
                             request_id=request_id,
                             save_id=save_id,
@@ -5434,8 +5380,8 @@ class ChatBridge:
                             duration=duration,
                         )
                         active_task.recorded = True
-                        if self.backend_name in {"codex", "mcode", "pi"} and self._autonomy and save_id:
-                            self._autonomy.record_usage(save_id, self._current_game_day_key or "unknown", result.get("usage"))
+                        if interrupted_usage and self._autonomy and save_id:
+                            self._autonomy.record_usage(save_id, self._current_game_day_key or "unknown", interrupted_usage)
                     return
 
                 # 5. Handle output & token usage
@@ -5520,30 +5466,8 @@ class ChatBridge:
                         usage_source = usage.get("source", "kimi_wire_usage_record")
                         if usage.get("unknown"):
                             missing_reason = "kimi_wire_usage_partial_unknown"
-                elif self.backend_name == "codex":
-                    usage = self._codex_turn_usage(result)
-                    usage_source = result.get("usage_source", "unknown")
-                    if usage is None:
-                        missing_reason = result.get("usage_limits") or "codex_usage_unavailable"
-                elif self.backend_name == "dsh":
-                    # SDK assistant/message counters are already scoped to this
-                    # turn, including resumed sessions and interrupted jobs.
-                    usage = result.get("usage") or self._usage_display.turn_response_usage(request_id, save_id)
-                    usage_source = "dsh_assistant_message" if usage else "unknown"
-                    if usage is None:
-                        missing_reason = "dsh_response_usage_unavailable"
-                elif self.backend_name == "pi":
-                    usage = result.get("usage")
-                    usage_source = result.get("usage_source", "unknown")
-                    if usage is None:
-                        missing_reason = "pi_response_usage_unavailable"
-                elif self.backend_name == "mcode":
-                    # One exec result is already scoped to exactly this turn,
-                    # resumed session or not.
-                    usage = result.get("usage")
-                    usage_source = "mcode_exec_result" if usage else "unknown"
-                    if usage is None:
-                        missing_reason = "mcode_exec_usage_unavailable"
+                elif self.backend_name != "agy" and self._provider_spec() is not None:
+                    usage, usage_source, missing_reason = self._provider_usage(result, request_id, save_id)
                 else:
                     # Authoritative agy delta from the conversation DB (agy only).
                     usage_delta = get_command_usage_delta(usage_cid, usage_start_idx) if usage_cid else None
@@ -5788,7 +5712,8 @@ class ChatBridge:
                 if not getattr(active_task, "recorded", False):
                     duration = time.monotonic() - getattr(active_task, "start_time", time.monotonic())
                     cid = active_task.provider_conversation_id or self.get_conversation_id(save_id)
-                    interrupted_usage = get_command_usage_delta(cid, active_task.start_max_idx) if self.backend_name == "agy" else None
+                    interrupted_usage = (get_command_usage_delta(cid, active_task.start_max_idx) if self.backend_name == "agy"
+                        else self._provider_usage(active_task.interrupted_result or {}, request_id, save_id)[0])
                     self._record_command(
                         request_id=request_id,
                         save_id=save_id,
@@ -6964,7 +6889,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Windows game process owning this automatic launch; exit when it ends",
     )
     parser.add_argument(
-        "--backend", type=str, choices=["agy", "kimi", "codex", "dsh", "mcode", "pi"], default=None,
+        "--backend", type=str, choices=PROVIDERS, default=None,
         help="Chat provider (overrides config/chat-backend.json)",
     )
     parser.add_argument(

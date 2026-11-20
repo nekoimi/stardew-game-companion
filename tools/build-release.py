@@ -203,6 +203,9 @@ def build(args) -> Path:
         smoke += ";import stardew_ai_runtime.desktop_service,stardew_ai_runtime.desktop_import"
     clean_env = {key: value for key, value in os.environ.items() if not key.startswith(("PYTHON", "STARDEW_"))}
     run([str(python), "-B", "-c", smoke], env=clean_env, cwd=str(output))
+    if desktop:
+        providers = run([str(python), "-B", "-m", "stardew_ai_runtime.provider_registry"], env=clean_env, cwd=str(output))
+        (package / "desktop-providers.json").write_text(providers + "\n", encoding="utf-8")
     # All bytecode is disposable, may encode build paths, and must not be shipped.
     for path in package.rglob("*.pyc"):
         path.unlink()

@@ -12,7 +12,7 @@ using Microsoft.Win32;
 
 namespace StardewAI.Companion.Desktop;
 
-internal sealed record ClientPreferences(string Model = "", string Path = "");
+internal sealed record ClientPreferences(string Model = "", string Path = "", string Effort = "");
 internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "companion", string Model = "", string PiPath = "",
     string Backend = "pi", string ConnectionSource = "builtin", Dictionary<string, ClientPreferences>? Clients = null,
     string OriginalWorkspace = "", string OriginalDataDirectory = "", string OriginalClient = "", string OriginalName = "");
@@ -73,7 +73,7 @@ internal sealed class DesktopSession
         var client = settings.Clients?.GetValueOrDefault(settings.Backend) ?? new(settings.Model, settings.PiPath);
         foreach (string argument in new[] { "-B", "-m", "stardew_ai_runtime.desktop_service", "--run-dir", _mod,
             "--owner-pid", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--backend", settings.Backend, "--model", client.Model, "--client", client.Path })
+            "--backend", settings.Backend, "--model", client.Model, "--client", client.Path, "--effort", client.Effort })
             runtimeStart.ArgumentList.Add(argument);
         runtimeStart.Environment["STARDEW_DESKTOP_TOKEN"] = credential;
         runtimeStart.Environment["STARDEW_BRIDGE_STOP_FILE"] = _stopFile;

@@ -21,21 +21,17 @@ def config_path() -> Path:
 
 
 def load_chat_backend_config(path: Path | None = None) -> dict[str, str]:
+    from .provider_registry import PROVIDERS
+
     target = path or config_path()
     try:
         raw: Any = json.loads(target.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and raw.get("backend") in {"agy", "kimi", "codex", "dsh", "mcode", "pi"}:
-            defaults = {"kimi": DEFAULT_MODEL, "agy": "gemini-3.8-flash", "codex": "", "dsh": "deepseek-flash",
-                        "mcode": "", "pi": ""}
-            config = {"backend": str(raw["backend"]), "model": str(raw.get("model") or defaults[raw["backend"]])}
-            if raw["backend"] in {"codex", "dsh", "mcode"}:
-                config["effort"] = "default" if raw["backend"] == "mcode" else "low"
-            allowed_efforts = ({"default", "off", "minimal", "low", "medium", "high", "xhigh", "max"} if raw["backend"] == "pi"
-                               else {"default", "off", "low", "high", "max"} if raw["backend"] == "dsh"
-                               else {"default", "low", "medium", "high", "xhigh", "max"} if raw["backend"] == "mcode"
-                               else {"default", "low", "medium", "high", "xhigh"} if raw["backend"] == "codex"
-                               else {"default", "low", "medium", "high"})
-            if raw.get("effort") in allowed_efforts:
+        if isinstance(raw, dict) and isinstance(raw.get("backend"), str) and raw["backend"] in PROVIDERS:
+            spec = PROVIDERS[raw["backend"]]
+            config = {"backend": spec.id, "model": str(raw.get("model") or spec.default_model)}
+            if spec.default_effort != "default" or spec.id == "mcode":
+                config["effort"] = spec.default_effort
+            if raw.get("effort") in spec.efforts:
                 config["effort"] = str(raw["effort"])
             if raw["backend"] == "codex" and isinstance(raw.get("httpProvider"), str):
                 config["httpProvider"] = raw["httpProvider"]

@@ -60,6 +60,12 @@ public partial class MainWindow : Window
     private async void LaunchClicked(object sender, RoutedEventArgs e)
     {
         if (_session is not null || _closing || _importing) return;
+        if (SelectedSource == "builtin" && BackendPicker.SelectedItem is null)
+        {
+            Pages.SelectedItem = SettingsPage;
+            ActivityText.Text = "请选择一个可用的模型客户端。";
+            return;
+        }
         var settings = Settings();
         if (!DesktopSession.IsGameDirectory(settings.GameDirectory))
         {

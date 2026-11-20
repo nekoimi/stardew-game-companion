@@ -23,6 +23,7 @@ from stardew_ai_runtime.chat_bridge import (
     main,
     remove_chat_bridge_file_logging,
 )
+from stardew_ai_runtime.codex_usage import codex_turn_usage
 from stardew_ai_runtime.decision_policy import decision_policy
 from stardew_ai_runtime.protocol import (
     ChatCancelPayload,
@@ -1484,7 +1485,7 @@ def test_codex_explicit_context_is_diagnostic_without_session_budget_gate(tmp_pa
     # Billing can span many requests and includes cached input; never infer
     # context or trigger the unmeasured request-count fallback from it.
     for latest in (None, True, -1, "100000"):
-        usage = bridge._codex_turn_usage({
+        usage = codex_turn_usage({
             "usage": {"input_tokens": 700000, "cache_read_input_tokens": 690000},
             "usage_request_count": 1, "usage_latest_request_input_context": latest,
         })
@@ -1493,14 +1494,14 @@ def test_codex_explicit_context_is_diagnostic_without_session_budget_gate(tmp_pa
     # Two explicit sub-budget readings stay below the budget, regardless of
     # accumulated billing or request count.
     for _ in range(2):
-        usage = bridge._codex_turn_usage({
+        usage = codex_turn_usage({
             "usage": {"input_tokens": 700000},
             "usage_latest_request_input_context": 99999,
         })
         assert usage["latestRequestInputContext"] == 99999
         assert bridge._note_session_context("save-1", usage) is None
     # A real request measurement is usable even if turn billing is unknown.
-    usage = bridge._codex_turn_usage({
+    usage = codex_turn_usage({
         "usage": None, "usage_status": "unknown",
         "usage_latest_request_input_context": 100000,
     })
@@ -1508,7 +1509,7 @@ def test_codex_explicit_context_is_diagnostic_without_session_budget_gate(tmp_pa
     assert reason is None
     assert bridge._session_context_state["save-1"]["latestInputContext"] == 100000
     assert bridge.get_conversation_id("save-1") == "codex-1"
-    assert bridge._codex_turn_usage({"usage": None}) is None
+    assert codex_turn_usage({"usage": None}) is None
 
 
 def test_context_diagnostic_records_latest_request_without_rotation(tmp_path: Path) -> None:

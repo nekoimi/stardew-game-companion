@@ -5,8 +5,10 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from stardew_ai_runtime.agent_backends import CodexBackend, DshBackend, McodeBackend
-from stardew_ai_runtime.desktop_service import DesktopBridge, DesktopError, check_client, create_app
+from stardew_ai_runtime.chat_bridge import ActiveChatTask
+from stardew_ai_runtime.desktop_service import DesktopBridge, DesktopError, create_app
 from stardew_ai_runtime.external_connection import write_binding
+from stardew_ai_runtime.provider_registry import PROVIDERS, ProviderSpec, desktop_catalogue
 
 
 class DesktopHarness(DesktopBridge):
@@ -352,6 +354,40 @@ def test_backend_selection_keeps_provider_specific_session_and_client(tmp_path, 
     assert codex.get_conversation_id("farm") == "codex-original"
 
 
+def test_registered_provider_runs_a_game_turn_without_bridge_dispatch_changes(tmp_path, monkeypatch):
+    monkeypatch.setenv("STARDEW_CONNECTION_SOURCE", "builtin")
+    monkeypatch.setattr("stardew_ai_runtime.compatibility.assert_native_compatible", lambda _: None)
+    calls = []
+
+    class Provider:
+        def run(self, task, session_id, prompt):
+            calls.append((task.request_id, session_id, prompt))
+            task.provider_input_delivered = True
+            return {"success": True, "conversation_id": session_id, "response": "已观察农场。",
+                    "usage": {"input_tokens": 20, "output_tokens": 8}}
+
+        def close(self):
+            calls.append("closed")
+
+    def factory(options):
+        assert options.command == "configured.exe" and options.effort == "high"
+        return Provider()
+
+    spec = ProviderSpec("fixture", "Fixture", "fixture.exe", factory, default_model="game-test",
+                        desktop=True, usage_source="fixture_receipt")
+    monkeypatch.setitem(PROVIDERS, spec.id, spec)
+    assert next(row for row in desktop_catalogue() if row["id"] == spec.id)["defaultModel"] == "game-test"
+    bridge = DesktopBridge(tmp_path, "", "configured.exe", backend=spec.id, effort="high")
+    task = ActiveChatTask("turn", "Farm_1")
+    result = bridge._execute_turn(task, "existing", "玩家说：看看农场")
+
+    assert bridge.model == "game-test" and result["response"] == "已观察农场。"
+    assert bridge._provider_usage(result, "turn", "Farm_1") == (result["usage"], "fixture_receipt", None)
+    assert calls[0][:2] == ("turn", "existing")
+    asyncio.run(bridge._close_backend())
+    assert calls[-1] == "closed"
+
+
 def test_dsh_desktop_installation_is_version_checked_without_cmd_shell(tmp_path, monkeypatch):
     base = tmp_path / "DeepSeek Harness"
     shim = base / "resources/runtime/cli/bin/dsh.cmd"
@@ -361,9 +397,9 @@ def test_dsh_desktop_installation_is_version_checked_without_cmd_shell(tmp_path,
     host.touch()
     (base / "resources/app.asar").touch()
     calls = []
-    monkeypatch.setattr("stardew_ai_runtime.desktop_service.subprocess.run", lambda command, **kw: calls.append((command, kw)))
+    monkeypatch.setattr("stardew_ai_runtime.provider_registry.subprocess.run", lambda command, **kw: calls.append((command, kw)))
 
-    assert check_client(tmp_path, "dsh", str(shim)) == str(shim)
+    assert PROVIDERS["dsh"].check_client(tmp_path, str(shim)) == str(shim)
     command, options = calls[0]
     assert command[0] == str(host) and command[-1] == "--version"
     assert options["env"]["ELECTRON_RUN_AS_NODE"] == "1" and not options.get("shell")

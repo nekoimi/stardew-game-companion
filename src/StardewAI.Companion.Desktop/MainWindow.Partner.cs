@@ -7,6 +7,8 @@ using Microsoft.Win32;
 namespace StardewAI.Companion.Desktop;
 
 public sealed record OriginalSessionOption(string Id, string Label);
+public sealed record DesktopProvider(string Id, string Name, string DefaultModel, bool AllowCmd,
+    string DefaultEffort, string[] Efforts);
 
 public partial class MainWindow
 {
@@ -24,8 +26,18 @@ public partial class MainWindow
         if (settings.Clients is not null)
             foreach (var (backend, preferences) in settings.Clients) _clients[backend] = preferences;
         _clients.TryAdd("pi", new(settings.Model, settings.PiPath));
+        try
+        {
+            string path = Path.Combine(DesktopSession.ModDirectory(_root), "desktop-providers.json");
+            BackendPicker.ItemsSource = JsonSerializer.Deserialize<DesktopProvider[]>(File.ReadAllText(path), JsonSerializerOptions.Web);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            Log($"读取模型客户端列表失败：{ex.Message}");
+            ModelHint.Text = "模型客户端列表不可用，请完整解压发行包。";
+        }
+        _backend = settings.Backend;
         BackendPicker.SelectedValue = settings.Backend;
-        if (BackendPicker.SelectedItem is null) BackendPicker.SelectedValue = "pi";
         PartnerSource.SelectedValue = settings.ConnectionSource == "external" ? "external" : "builtin";
         OriginalWorkspace.Text = settings.OriginalWorkspace;
         OriginalData.Text = settings.OriginalDataDirectory;
@@ -35,23 +47,23 @@ public partial class MainWindow
 
     private Dictionary<string, ClientPreferences> ReadClientPreferences()
     {
-        _clients[_backend] = new(Model.Text.Trim(), ClientPath.Text.Trim());
+        if (BackendPicker.SelectedItem is not null)
+            _clients[_backend] = new(Model.Text.Trim(), ClientPath.Text.Trim(), ReasoningEffort.SelectedItem as string ?? "");
         return new(_clients, StringComparer.Ordinal);
     }
 
     private void BackendSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (ClientPath is null || BackendPicker.SelectedValue is not string backend) return;
+        if (ClientPath is null || BackendPicker.SelectedItem is not DesktopProvider provider) return;
         if (e.RemovedItems.Count > 0) ReadClientPreferences();
-        _backend = backend;
-        var settings = _clients.GetValueOrDefault(backend) ?? new();
+        _backend = provider.Id;
+        var settings = _clients.GetValueOrDefault(provider.Id) ?? new();
         Model.Text = settings.Model;
         ClientPath.Text = settings.Path;
-        ModelHint.Text = backend switch
-        {
-            "dsh" => "留空使用 deepseek-flash。",
-            _ => "留空使用客户端当前配置的模型。"
-        };
+        ReasoningEffort.ItemsSource = provider.Efforts;
+        ReasoningEffort.SelectedItem = provider.Efforts.Contains(settings.Effort) ? settings.Effort : provider.DefaultEffort;
+        ModelHint.Text = provider.DefaultModel.Length == 0 ? "留空使用客户端当前配置的模型。"
+            : $"留空使用 {provider.DefaultModel}。";
     }
 
     private void PartnerSourceSelected(object sender, SelectionChangedEventArgs e)
@@ -59,7 +71,10 @@ public partial class MainWindow
         if (OriginalFields is not null) RefreshPartnerControls();
     }
 
-    private void BrowseClient(object sender, RoutedEventArgs e) => PickClient(ClientPath, _backend is "pi" or "dsh" or "mcode");
+    private void BrowseClient(object sender, RoutedEventArgs e)
+    {
+        if (BackendPicker.SelectedItem is DesktopProvider provider) PickClient(ClientPath, provider.AllowCmd);
+    }
 
     private void BrowseOriginalClient(object sender, RoutedEventArgs e) => PickClient(OriginalClient, true);
 

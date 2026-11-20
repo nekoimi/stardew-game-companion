@@ -2,7 +2,7 @@
 
 解压 Windows x64 绿色包到可写目录，双击 **星露谷游戏伴侣.exe**。在「设置」选择已安装的星露谷与 SMAPI，以及伙伴来源。桌面 .NET 与 Python 随包提供，模型客户端需在本机安装并登录。
 
-选择「启动本机模型客户端」时，可用 Pi、DeepSeek（dsh）、Codex 或 MiniMax Code，客户端路径留空会自动查找。DeepSeek 模型留空使用 `deepseek-flash`，可沿用本机已保存的凭据或 `DEEPSEEK_API_KEY`，其他三种留空使用客户端配置。旧版 Kimi、Antigravity 仍通过原 Mod 启动。
+选择「启动本机模型客户端」时，可用 Pi、DeepSeek（dsh）、Codex 或 MiniMax Code，各自保存模型、路径和推理档位。客户端路径留空会自动查找，DeepSeek 模型留空使用 `deepseek-flash`，可沿用本机已保存的凭据或 `DEEPSEEK_API_KEY`。旧版 Kimi、Antigravity 仍通过原 Mod 启动。
 
 选择「接续原 MiniMax Code 会话」后启动游戏，在设置中选择原工作目录并列出会话，确认原聊天窗口保持闲置，再接续所选会话。身份校验支持 MiniMax Code 0.6.2，连接失败时保留绑定，仍可接管游戏和查看存档；更换为另一会话前先保存并回到游戏标题。退出桌面或点击「断开桌面连接」会停止桌面创建的适配器，原客户端可继续打开原会话。
 
@@ -28,6 +28,8 @@
 
 构建需要 .NET 10 SDK、能编译现有 Mod 的本机游戏/SMAPI 引用和 uv。先用 `dotnet publish src/StardewAI.Companion.Desktop -c Release -o artifacts/desktop/win-x64` 生成桌面，再用 `tools/build-release.py` 的 `--desktop-source` 和 `--mod-source` 指向桌面发布目录与配套 Mod 输出。
 
+模型适配器在 `provider_registry.py` 注册，绿色包从注册表生成桌面配置清单。适配器处理客户端、回合和用量回执，游戏运行时负责存档、任务和控制权；`desktop_api.py` 负责本地 HTTP，`desktop_runtime.py` 承接桌面指令。
+
 2026-11-20 使用隔离单人存档验证工作管理、历史分页、伙伴设置、记忆编辑与旧数据导入。移开原安装目录后，使用模拟 Pi 成功打开导入的原会话并取得原生导航回执。真实模型长时游玩、执行中的农活改派和三组固定伙伴实机回归尚未验收。
 
 本机 dsh 和 Codex 已验证随桌面启动并连接隔离存档，未发起模型请求。模拟 MiniMax Code 已验证列出会话、核对并接续所选会话、收发消息、断开及玩家接管；真实 MiniMax Code 会话与在线模型仍待验收。
@@ -35,3 +37,5 @@
 本批用隔离存档和模拟 Pi 验证计划采纳、暂缓、事项关闭与恢复，以及实时提醒、分页和已读持久化。真实模型下的节日准备和跨日节点核实尚未实机验收。
 
 用量页已用隔离存档和测试回执验证三个统计范围、回执去重、缺失数据、费用标签和刷新。真实账号账单尚未核对。
+
+后端重构已用临时适配器验证注册、回合执行、用量和退出清理。绿色包在隔离存档验证了 dsh、Codex 启动、模拟 Pi 改派与导航回执、模拟 MiniMax Code 接续及接管，以及用量展示。在线模型调用、执行中的农活改派和三组伙伴实机回归尚待验收。

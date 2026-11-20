@@ -1,6 +1,6 @@
 # 星露谷 AI 伙伴
 
-开发版提供 **星露谷游戏伴侣** Windows 绿色桌面程序。解压后双击 EXE，可选择 Pi、DeepSeek（dsh）、Codex 或 MiniMax Code，也可以接续已有 MiniMax Code 会话。桌面支持下令、改派、管理工作、计划和记忆，可回看伙伴提醒、查看模型用量，并导入旧数据接续原 Pi 会话。[绿色版使用说明](docs/desktop-portable.md)
+开发版提供 **星露谷游戏伴侣** Windows 绿色桌面程序。解压后双击 EXE，可配置 Pi、DeepSeek（dsh）、Codex 或 MiniMax Code 的模型和推理档位，也可接续已有 MiniMax Code 会话。桌面支持下令、改派、管理工作和记忆、查看用量和伙伴提醒，以及导入旧数据。[绿色版使用说明](docs/desktop-portable.md)
 
 开发分支新增 Pi 游戏内接入与持续目标委托：交代“农场交给你，先发展种植”后，伙伴按现场接续，支持条件等待、暂停和 F9 接管。Pi 需自行安装登录，接入要求和首版验证边界见[持续自主 Agent](docs/pi-autonomous-agent.md)。
 

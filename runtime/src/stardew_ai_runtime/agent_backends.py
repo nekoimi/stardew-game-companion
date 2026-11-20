@@ -80,6 +80,12 @@ class AgyBackend:
     def run(self, active_task: ActiveTaskLike, session_id: str | None, prompt: str) -> dict[str, Any]:
         return self._execute(active_task, session_id, prompt)
 
+    @staticmethod
+    def terminate(proc: Any) -> None:
+        from .agy_process import terminate_agy_process
+
+        terminate_agy_process(proc)
+
 
 class CodexBackend:
     """Use the locally authenticated Codex CLI and bind MCP to this game run."""

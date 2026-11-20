@@ -22,6 +22,19 @@ def normalize_usage(raw: Any) -> dict[str, int] | None:
     return result or None
 
 
+def codex_turn_usage(result: dict[str, Any]) -> dict[str, Any] | None:
+    raw = result.get("usage")
+    latest = result.get("usage_latest_request_input_context")
+    measured = type(latest) is int and latest >= 0
+    if not isinstance(raw, dict) and not measured:
+        return None
+    context = {"latestRequestInputContext": latest} if measured else {}
+    return {**(raw if isinstance(raw, dict) else {}), **context,
+            "input_context_measured": measured, "source": result.get("usage_source", "unknown"),
+            "status": result.get("usage_status", "unknown"), "requestCount": result.get("usage_request_count"),
+            "limits": result.get("usage_limits")}
+
+
 class CodexUsageMeter:
     def __init__(self, session_id: str | None, *, home: Path | None = None):
         self.home = home or Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
