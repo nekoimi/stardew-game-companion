@@ -23,9 +23,9 @@ uv run --project apps/runtime python packaging/windows/build-release.py --versio
 
 ## 代码结构
 
-- `apps/desktop/src`：WPF 桌面界面、游戏和运行时启动、设置与存档数据导入。
-- `apps/game-mod/src`：游戏状态观察、原生寻路与动作执行、控制权和本地通信。
-- `apps/runtime/src/stardew_ai_runtime`：MCP 工具、模型后端、计划执行、工作记忆与用量统计。
+- `apps/desktop/src`：WPF 桌面界面。`DesktopSession` 协调设置、启动和重连，进程、HTTP 事件及旧数据导入各由对应服务负责。
+- `apps/game-mod/src`：SMAPI 启停、读档和控制权接线。伙伴与自玩共用 `Execution/`、`Observation/` 和 `Navigation/`。
+- `apps/runtime/src/stardew_ai_runtime`：`application/` 负责共享回合、任务派发和会话恢复，`adapters/` 存放桌面 HTTP、游戏连接、MCP 客户端、模型及持久化实现。
 - `contracts/`：桌面 HTTP、游戏 WebSocket 契约和样例。
 - `resources/agent/`：提示词、领域指导和技能。
 - `packaging/windows/`：绿色包生成和发包校验。
@@ -35,7 +35,7 @@ uv run --project apps/runtime python packaging/windows/build-release.py --versio
 
 伙伴与自玩共用运行时，通过桌面选择模式。Mod 中的 `PlayerMode` 负责接管逻辑，原生设置入口供源码调试和隔离验收使用。项目约定见 `AGENTS.md`。
 
-下一阶段的目标目录、迁移边界和任务顺序见[架构重构实施方案](docs/development/architecture-refactor.md)与[重构 TODO](docs/development/architecture-refactor-todo.md)。本页构建命令对应当前源码。
+部署入口和旧数据兼容边界见[架构重构实施方案](docs/development/architecture-refactor.md)与[重构 TODO](docs/development/architecture-refactor-todo.md)。
 
 ## 发布
 
@@ -54,7 +54,7 @@ uv run --project apps/runtime --locked ruff check apps/runtime tests/contracts
 uv run --project apps/runtime --locked python packaging/windows/check_release_boundaries.py
 ```
 
-C# 测试需要本机游戏程序集和 .NET SDK。将 `STARDEW_GAME_PATH` 设置为游戏目录，再分别运行以下项目。若要在 Python 测试中验证原生扩展编译，在完成 Mod 构建后将 `STAR_DOTNET_PATH` 指向隔离的 .NET 6 SDK 中的 `dotnet.exe`，再运行 `pytest`。
+C# 测试需要本机游戏程序集和 .NET SDK。设置 `STARDEW_GAME_PATH` 为游戏目录，将 `STAR_DOTNET_PATH` 指向独立 .NET 6 SDK 的 `dotnet.exe`，供原生扩展编译子进程使用。运行 `pytest` 的进程也可将 `DOTNET_ROOT` 设为该 SDK 所在目录，以发现并执行需要真实编译器的测试。
 
 ```powershell
 dotnet test apps/game-mod/tests/StardewAI.Companion.Mod.Tests

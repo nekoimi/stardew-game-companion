@@ -49,7 +49,7 @@ $dotnetPath = if ($env:STAR_DOTNET_PATH -and (Test-Path -LiteralPath $env:STAR_D
     $localDotnet = Join-Path $repoRoot '.local\dotnet\dotnet.exe'
     if (Test-Path -LiteralPath $localDotnet) { $localDotnet } else { $null }
 }
-$sdkList = if ($dotnetPath) { (& $dotnetPath --list-sdks) -join '; ' } else { 'run tools/bootstrap-dotnet.ps1' }
+$sdkList = if ($dotnetPath) { (& $dotnetPath --list-sdks) -join '; ' } else { 'run tools/dev/bootstrap-dotnet.ps1' }
 Add-Check '.NET SDK' $true ([bool]$dotnetPath) $sdkList
 
 $gamePath = $env:STARDEW_GAME_PATH

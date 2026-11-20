@@ -8,8 +8,10 @@ import pytest
 
 from stardew_ai_runtime.adapters.desktop_api.http import create_app
 from stardew_ai_runtime.adapters.desktop_api.runtime import DesktopBridge, DesktopError
+from stardew_ai_runtime.adapters.providers.codex import CodexBackend
+from stardew_ai_runtime.adapters.providers.dsh import DshBackend
+from stardew_ai_runtime.adapters.providers.mcode import McodeBackend
 from stardew_ai_runtime.adapters.providers.mcode_external import write_binding
-from stardew_ai_runtime.agent_backends import CodexBackend, DshBackend, McodeBackend
 from stardew_ai_runtime.chat_bridge import ActiveChatTask
 from stardew_ai_runtime.provider_registry import PROVIDERS, ProviderSpec, desktop_catalogue
 

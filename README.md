@@ -38,7 +38,7 @@
 
 [参与开发](CONTRIBUTING.md) · [文档索引](docs/README.md) · [通信协议](contracts/game-bridge/README.md) · [隔离实机回归](docs/repeatable-companion-acceptance.md)
 
-源码目录、组件边界和分阶段验收见[架构重构实施方案](docs/development/architecture-refactor.md)与[重构 TODO](docs/development/architecture-refactor-todo.md)。
+`apps/` 分别存放 Windows 桌面程序、共享 Python 运行时和 SMAPI Mod。协议位于 `contracts/`，游戏提示词与技能位于 `resources/agent/`。[架构实施方案](docs/development/architecture-refactor.md) · [重构 TODO](docs/development/architecture-refactor-todo.md)
 
 ## 许可与致谢
 

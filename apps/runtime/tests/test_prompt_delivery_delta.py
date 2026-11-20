@@ -53,7 +53,7 @@ def test_failure_reset_and_player_text_are_safe(tmp_path):
 
 
 def test_array_updates_and_external_compaction_reset(tmp_path, monkeypatch):
-    from stardew_ai_runtime.agent_backends import McodeBackend
+    from stardew_ai_runtime.adapters.providers.mcode import McodeBackend
     delivery = PromptDelivery(tmp_path/'prompt-delivery.json')
     state = {'goals': [{'text': '长目标' * 500, 'done': False}], 'other': '不变' * 500}
     _, pending = delivery.prepare('save', None, prompt(state), 'rules')

@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from stardew_ai_runtime.agent_backends import CodexBackend, KimiBackend, McodeBackend
+from stardew_ai_runtime.adapters.providers.codex import CodexBackend
+from stardew_ai_runtime.adapters.providers.kimi import KimiBackend
+from stardew_ai_runtime.adapters.providers.mcode import McodeBackend
 from stardew_ai_runtime.agent_instructions import runtime_instructions
 from stardew_ai_runtime.chat_backend_config import load_chat_backend_config
 
@@ -265,7 +267,7 @@ def _mcode_proc(lines: list[dict], returncode: int = 0, stderr: str = "") -> Mag
 
 
 def _run_mcode(backend: McodeBackend, proc: MagicMock, session_id=None, prompt="只读观察"):
-    with patch("stardew_ai_runtime.agent_backends.McodeBackend._executable",
+    with patch("stardew_ai_runtime.adapters.providers.mcode.McodeBackend._executable",
                return_value="mcode.exe"), \
          patch("subprocess.Popen", return_value=proc) as popen:
         return backend.run(_task(), session_id, prompt), popen
@@ -468,7 +470,7 @@ def test_mcode_session_unavailable_passthrough_without_retry(tmp_path: Path) -> 
     recovery cannot silently replace the partner.
     """
     failed = _mcode_proc([], returncode=4, stderr="mcode exec failed: session not found\n")
-    with patch("stardew_ai_runtime.agent_backends.McodeBackend._executable", return_value="mcode.exe"), \
+    with patch("stardew_ai_runtime.adapters.providers.mcode.McodeBackend._executable", return_value="mcode.exe"), \
          patch("subprocess.Popen", return_value=failed) as popen:
         result = McodeBackend(tmp_path).run(_task(), "gone-1", "继续")
     assert result["success"] is False
@@ -508,7 +510,7 @@ def test_mcode_missing_default_model_reports_configuration_fix_without_retry(tmp
 
 
 def test_mcode_missing_cli_reports_install_hint_without_starting_process(tmp_path: Path) -> None:
-    with patch("stardew_ai_runtime.agent_backends.McodeBackend._executable",
+    with patch("stardew_ai_runtime.adapters.providers.mcode.McodeBackend._executable",
                side_effect=FileNotFoundError("Install MiniMax Code CLI (mcode) first")), \
          patch("subprocess.Popen") as popen:
         result = McodeBackend(tmp_path).run(_task(), None, "只读观察")

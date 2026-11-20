@@ -1777,7 +1777,7 @@ def test_provider_default_effort_omits_unsupported_cli_option(conversation_id):
 
 
 def test_work_narration_goes_to_status_and_final_reply_stays_in_chat(tmp_path):
-    from stardew_ai_runtime.agent_backends import BackendProgress
+    from stardew_ai_runtime.application.provider_types import BackendProgress
     async def run():
         bridge = ChatBridge(run_dir=tmp_path, enable_plan_worker=False)
         socket = AsyncMock()
@@ -1839,7 +1839,7 @@ def test_recalled_memory_uses_current_message_scene_and_original_session(tmp_pat
 
 
 def test_session_discovery_is_persisted_before_tools_without_replacing_binding(tmp_path):
-    from stardew_ai_runtime.agent_backends import BackendProgress
+    from stardew_ai_runtime.application.provider_types import BackendProgress
 
     with patch("asyncio.get_running_loop", return_value=MagicMock()):
         bridge = ChatBridge(sessions_file=tmp_path / "sessions.json")

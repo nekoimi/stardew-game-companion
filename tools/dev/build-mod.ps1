@@ -24,7 +24,7 @@ $dotnetPath = if ($env:STAR_DOTNET_PATH -and (Test-Path -LiteralPath $env:STAR_D
     $null
 }
 if (-not $dotnetPath) {
-    throw '.NET SDK is not installed. Run tools/bootstrap-dotnet.ps1, then rerun tools/preflight.ps1 -Strict.'
+    throw '.NET SDK is not installed. Run tools/dev/bootstrap-dotnet.ps1, then rerun tools/dev/preflight.ps1 -Strict.'
 }
 if (-not $env:STARDEW_GAME_PATH) {
     throw 'STARDEW_GAME_PATH is not set in .env.local.'

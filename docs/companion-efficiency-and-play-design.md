@@ -62,7 +62,7 @@
 | 已有偏好、约定、事件和增量上下文 | 长期存储与当轮展示预算绑定较紧 | 重要记忆归档保留，按当前场景召回 |
 | mcode 已有原会话压缩实现 | 后端维护与游戏侧记忆缺少统一策略 | 统一恢复、记忆整理与压缩后基线重建 |
 
-依据主要是 [game_tools.py](../apps/runtime/src/stardew_ai_runtime/game_tools.py)、[chat_bridge.py](../apps/runtime/src/stardew_ai_runtime/chat_bridge.py)、[game_reload.py](../apps/runtime/src/stardew_ai_runtime/game_reload.py)、[companion_memory.py](../apps/runtime/src/stardew_ai_runtime/companion_memory.py) 和 [mcode_compaction.py](../apps/runtime/src/stardew_ai_runtime/mcode_compaction.py)。后续继续复用这些模块，不恢复旧版的只读聊天回合、二次派工准备或持久化动作队列。
+依据主要是 [game_tools.py](../apps/runtime/src/stardew_ai_runtime/game_tools.py)、[chat_bridge.py](../apps/runtime/src/stardew_ai_runtime/chat_bridge.py)、[game_reload.py](../apps/runtime/src/stardew_ai_runtime/game_reload.py)、[companion_memory.py](../apps/runtime/src/stardew_ai_runtime/companion_memory.py) 和 [mcode_compaction.py](../apps/runtime/src/stardew_ai_runtime/adapters/providers/mcode_compaction.py)。后续继续复用这些模块，不恢复旧版的只读聊天回合、二次派工准备或持久化动作队列。
 
 ## 3 四条相互连接的体验循环
 
@@ -481,8 +481,8 @@ flowchart TD
 | `apps/runtime/src/stardew_ai_runtime/chat_bridge.py` | 将游戏消息协调与模型调用分开，接入原客户端和内置后端两种驱动；维护当前伙伴绑定与投递确认 |
 | `apps/runtime/src/stardew_ai_runtime/mcp_server.py` 与客户端连接适配层 | 共用八入口，发现游戏服务，绑定原会话，桥接消息、事件与取消；客户端适配层为新增模块 |
 | `apps/runtime/src/stardew_ai_runtime/game_reload.py` | 保留存档核对与旧结果归档，正常读档改为保留会话并重建世界上下文 |
-| `apps/runtime/src/stardew_ai_runtime/agent_backends.py` | 承担游戏内启动路径的恢复与维护；原客户端直连不再通过这里另起模型代答 |
-| `apps/runtime/src/stardew_ai_runtime/mcode_compaction.py` | 复用现有原会话压缩 |
+| `apps/runtime/src/stardew_ai_runtime/adapters/providers` | 承担游戏内启动路径的恢复与维护；原客户端直连不再通过这里另起模型代答 |
+| `apps/runtime/src/stardew_ai_runtime/adapters/providers/mcode_compaction.py` | 复用现有原会话压缩 |
 | `apps/runtime/src/stardew_ai_runtime/prompt_delivery.py` | 记忆和能力变化纳入确认送达，读档与压缩后重建基线 |
 | `apps/runtime/src/stardew_ai_runtime/companion_memory.py` | 分离长期保存与展示，增加相关召回和修订撤销投递 |
 | `apps/runtime/src/stardew_ai_runtime/game_tools.py` | 保留八入口，增加学习管理与扩展查询、动作的固定内部操作 |
@@ -580,7 +580,7 @@ flowchart TD
 - [可重复伙伴实机验收](repeatable-companion-acceptance.md)：三组场景与隔离验证方法。
 - [桌面使用指南](desktop-portable.md)和[自主生活与农场改造](farm-projects.md)涵盖当前入口、持续经营与能力范围。
 - [游戏工具](../apps/runtime/src/stardew_ai_runtime/game_tools.py)、[读档核对](../apps/runtime/src/stardew_ai_runtime/game_reload.py)、[增量送达](../apps/runtime/src/stardew_ai_runtime/prompt_delivery.py)：固定入口、即时执行与状态一致性。
-- [伙伴记忆](../apps/runtime/src/stardew_ai_runtime/companion_memory.py)、[后端适配](../apps/runtime/src/stardew_ai_runtime/agent_backends.py)、[mcode 原生压缩](../apps/runtime/src/stardew_ai_runtime/mcode_compaction.py)：会话和记忆可复用基础。
+- [伙伴记忆](../apps/runtime/src/stardew_ai_runtime/companion_memory.py)、[后端适配](../apps/runtime/src/stardew_ai_runtime/adapters/providers)、[mcode 原生压缩](../apps/runtime/src/stardew_ai_runtime/adapters/providers/mcode_compaction.py)：会话和记忆可复用基础。
 
 ### 外部项目与接口
 

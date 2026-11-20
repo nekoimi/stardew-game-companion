@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from stardew_ai_runtime.agent_backends import DshBackend
+from stardew_ai_runtime.adapters.providers.dsh import DshBackend
 from stardew_ai_runtime.chat_bridge import ChatBridge
 from stardew_ai_runtime.life_chat import LifeChatService
 from stardew_ai_runtime.protocol import LifeChatSubmitPayload, ProtocolError
@@ -38,7 +38,7 @@ def test_notice_delete_restore_is_persistent_and_never_calls_model(tmp_path):
 
 
 def test_mcode_aggregate_usage_does_not_rotate_as_one_request():
-    from stardew_ai_runtime.agent_backends import McodeBackend
+    from stardew_ai_runtime.adapters.providers.mcode import McodeBackend
     usage = McodeBackend._usage({"inputTokens": 120000, "outputTokens": 300, "cacheReadTokens": 0})
     assert usage["input_tokens"] == 120000
     assert ChatBridge._request_input_context(usage) is None

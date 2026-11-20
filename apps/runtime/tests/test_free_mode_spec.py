@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from stardew_ai_runtime.agent_backends import BackendProgress
+from stardew_ai_runtime.application.provider_types import BackendProgress
 from stardew_ai_runtime.autonomy import AutonomyController
 from stardew_ai_runtime.chat_bridge import ActiveChatTask, ChatBridge
 from stardew_ai_runtime.mcp_server import create_mcp_server

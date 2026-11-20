@@ -87,7 +87,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             return;
         }
 
-        Monitor.Log("Stardew AI Companion initializing Stage 0 mechanics and transport.", LogLevel.Info);
+        Monitor.Log("Stardew Game Companion initializing game events and transport.", LogLevel.Info);
 
         _config = Helper.ReadConfig<ModConfig>();
         _connectionState.Initialize(_config.ConnectionSource);

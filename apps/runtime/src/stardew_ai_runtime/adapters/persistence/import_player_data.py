@@ -177,7 +177,3 @@ def main():
         return 1
     print(json.dumps(result))
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

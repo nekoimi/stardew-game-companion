@@ -592,7 +592,3 @@ def main(argv=None):
         if current and current.get("bindingId") == binding["bindingId"]:
             write_binding(args.run_dir, {**binding, "enabled": False})
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from stardew_ai_runtime.agent_backends import DshBackend
+from stardew_ai_runtime.adapters.providers.dsh import DshBackend
 
 
 def event(kind, data=None, session="root"):

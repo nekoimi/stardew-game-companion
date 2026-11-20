@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from stardew_ai_runtime.agent_backends import McodeBackend
+from stardew_ai_runtime.adapters.providers.mcode import McodeBackend
 from stardew_ai_runtime.chat_bridge import ChatBridge
 from stardew_ai_runtime.companion_profile import CompanionProfileStore
 from stardew_ai_runtime.plan_executor import StepExecution
