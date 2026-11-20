@@ -13,7 +13,7 @@ stardew-game-companion/
 │   ├── runtime/
 │   │   ├── pyproject.toml          Python 项目和依赖声明
 │   │   ├── uv.lock
-│   │   ├── src/companion_runtime/
+│   │   ├── src/stardew_ai_runtime/
 │   │   │   ├── application/        回合、会话、任务和执行协调
 │   │   │   ├── domain/             任务状态、回执和存档规则
 │   │   │   ├── adapters/
@@ -47,6 +47,8 @@ stardew-game-companion/
 
 组件内的测试留在所属组件。涉及两种语言共同读取的样本放在 `contracts/` 对应协议下，由跨语言测试共用。仓库根目录继续提供构建公共属性、贡献说明、许可证和版权声明。
 
+Python 保留 `stardew_ai_runtime` 包名。目录重构集中在包内职责，所有实际使用的 `python -m stardew_ai_runtime.*` 入口继续由包根模块承接，内部实现可以迁入各适配器。`bootstrap.py` 负责组装入口所需的依赖。
+
 ## 迁移起点
 
 下表用于定位现有实现。每批迁移在 TODO 里补充实际调用方与验证结果。
@@ -73,6 +75,10 @@ stardew-game-companion/
 Python 的 `domain/` 持有任务和回执规则，`application/` 按这些规则协调回合与工作，并定义它需要的后端、游戏连接和存储接口。具体 HTTP、WebSocket、MCP、模型客户端、文件存储由 `adapters/` 实现。宿主启动时组装这些依赖。
 
 桌面配置由 WPF 管理，伙伴的工作、偏好、记忆和会话绑定沿用现有持久化规则，游戏存档与游戏中已经发生的结果由游戏持有。原伙伴的角色配置和记忆继续由所选会话提供。
+
+桌面和游戏内对话共用指令提交、回合执行和结果投递。暂停、接管和改派也进入同一运行时。改派取消旧回合并确认旧原生动作终态，终态未知时保持派工阻塞，直到查询动作和世界状态后才能继续。回执按指令、动作和当前游戏会话关联。
+
+直播平台接入由外部程序负责。未来外部指令入口接入时复用同一个提交服务、回合取消和控制权规则。当前重构范围内沿用桌面的本机鉴权和既有 `/v1` 契约。
 
 ## 核心迁移
 
@@ -108,3 +114,17 @@ Python 的 `domain/` 持有任务和回执规则，`application/` 按这些规�
 | 正式伙伴实机回归 | 使用正式 mcode 和隔离存档执行 `care-guidance`、`harvest-logistics`、`rest-forestry`。按原生结果、收集物、背包、移动碰撞和动画核验，单独注明真实模型的验收范围。[固定实机用例](../repeatable-companion-acceptance.md) |
 
 每批提交附验证命令、结果和未执行项。当前构建与测试入口见[参与开发](../../CONTRIBUTING.md)，迁移后的入口在对应任务完成时同步更新。
+
+### 最终验收记录
+
+SGC-12 与 SGC-14 各用干净克隆构建，在记录中写明源码提交、游戏及 SDK 版本、ZIP SHA256、实际执行的命令与测试计数。核对候选包清单的 `sourceCommit` 与 `sourceDirty`，解压到独立目录后用包内 Python 再做一次完整性检查。以下 `$zip` 指刚构建的 ZIP，`$releaseDir` 指解压后的绿色包根目录。
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath $zip
+$modDir = Join-Path $releaseDir 'Mods/StardewAI.Companion.Mod'
+& (Join-Path $modDir 'runtime/python/python.exe') -B -m stardew_ai_runtime.release_package --verify $modDir
+```
+
+模拟联调按用例记录包哈希、指令、动作终态和界面回执。会话与数据兼容按用例记录导入前后配置、工作、记忆、会话绑定和存档的核对结果。回退验证使用经过校验的旧包和隔离数据副本，确认旧包能重新启动、读档并访问原绑定会话，真实模型会话无法访问时记录具体原因。
+
+SGC-13 在同一候选包上单独记录正式 mcode 三组报告。若 SGC-14 重建改变运行代码、协议或生产提示词，正式三组用例按最终包重新验收。正式客户端未就绪时保留待办并注明三组的实际状态。 [伙伴实机回归](../repeatable-companion-acceptance.md)

@@ -38,6 +38,8 @@
 
 [参与开发](CONTRIBUTING.md) · [文档索引](docs/README.md) · [通信协议](contracts/game-bridge/README.md) · [隔离实机回归](docs/repeatable-companion-acceptance.md)
 
+源码目录、组件边界和分阶段验收见[架构重构实施方案](docs/development/architecture-refactor.md)与[重构 TODO](docs/development/architecture-refactor-todo.md)。
+
 ## 许可与致谢
 
 项目采用 [Apache License 2.0](LICENSE)。感谢原作者 **CSXizhang** 及原项目贡献者，源码来源和本项目的版权声明见 [NOTICE](NOTICE)。绿色包随附第三方依赖的许可文件。

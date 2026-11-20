@@ -49,13 +49,18 @@ uv run --project apps/runtime python packaging/windows/build-release.py --versio
 
 ```powershell
 uv sync --project apps/runtime --locked
-uv run --project apps/runtime ruff check runtime
-uv run --project apps/runtime pytest apps/runtime/tests tests
-uv run --project apps/runtime python packaging/windows/check_release_boundaries.py
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/dev/build-mod.ps1 -Configuration Release
+uv run --project apps/runtime --locked ruff check apps/runtime tests/contracts
+uv run --project apps/runtime --locked python packaging/windows/check_release_boundaries.py
 ```
 
-C# 测试需要本机游戏程序集和 .NET SDK。可以使用 `dotnet test` 分别运行 `src` 下的测试项目，并通过 `StardewGamePath` 构建参数指定游戏目录。验证原生扩展编译时，将 `STAR_DOTNET_PATH` 指向可运行 .NET 6 SDK 的 `dotnet.exe`，并在环境中设置 `STARDEW_GAME_PATH`。
+C# 测试需要本机游戏程序集和 .NET SDK。将 `STARDEW_GAME_PATH` 设置为游戏目录，再分别运行以下项目。若要在 Python 测试中验证原生扩展编译，在完成 Mod 构建后将 `STAR_DOTNET_PATH` 指向隔离的 .NET 6 SDK 中的 `dotnet.exe`，再运行 `pytest`。
+
+```powershell
+dotnet test apps/game-mod/tests/StardewAI.Companion.Mod.Tests
+dotnet test apps/game-mod/tests/StardewAI.Companion.Transport.Tests
+uv run --project apps/runtime --locked pytest
+```
 
 CI 检查 Python、协议和生产边界。C# 构建与依赖游戏的测试在本地运行，提交时注明已验证与尚未验证的范围。
 
