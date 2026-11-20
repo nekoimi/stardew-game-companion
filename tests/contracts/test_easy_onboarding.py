@@ -118,10 +118,11 @@ def test_setup_companion_isolated_install(tmp_path: Path) -> None:
     res = _run_powershell(cmd)
     assert res.returncode == 0, f"AutoInstall failed: {res.stderr}\n{res.stdout}"
 
-    # Verify 4 production files were copied
+    # Release builds intentionally omit debug symbols.
     assert (iso_mod_dir / "manifest.json").is_file()
     assert (iso_mod_dir / "StardewAI.Companion.Mod.dll").is_file()
-    assert (iso_mod_dir / "StardewAI.Companion.Mod.pdb").is_file()
+    pdb = "StardewAI.Companion.Mod.pdb"
+    assert (iso_mod_dir / pdb).is_file() == (REPO_ROOT / "artifacts/dist/StardewAI.Companion.Mod" / pdb).is_file()
     assert (iso_mod_dir / "StardewAI.Companion.Mod.deps.json").is_file()
 
     # Verify TestDriver is strictly NOT present
