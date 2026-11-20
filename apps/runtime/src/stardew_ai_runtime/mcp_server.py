@@ -31,6 +31,14 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import TextContent, ToolAnnotations
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
+from stardew_ai_runtime.adapters.persistence.state_paths import (
+    AUTONOMY_STATE,
+    COMPANION_MEMORY,
+    COMPANION_MILESTONES,
+    COMPANION_PROFILE,
+    WORK_STATE,
+    data_path,
+)
 from stardew_ai_runtime.agent_instructions import read_guidance as load_guidance
 from stardew_ai_runtime.autonomy import AutonomyController
 from stardew_ai_runtime.capability_consent import learning_provenance
@@ -1049,7 +1057,7 @@ def create_mcp_server(
 
     def autonomy_for_run() -> AutonomyController:
         actual_run_dir = getattr(sched, "run_dir", None) or run_dir
-        return AutonomyController(Path(actual_run_dir or ".") / "data" / "autonomy-state.json")
+        return AutonomyController(data_path(actual_run_dir or ".", AUTONOMY_STATE))
 
     def wiki_for_run() -> WikiLookup:
         actual_run_dir = getattr(sched, "run_dir", None) or run_dir
@@ -1057,18 +1065,19 @@ def create_mcp_server(
 
     def work_for_run() -> WorkStore:
         actual_run_dir = getattr(sched, "run_dir", None) or run_dir
-        return WorkStore(Path(actual_run_dir or ".") / "data" / "work-state.json")
+        return WorkStore(data_path(actual_run_dir or ".", WORK_STATE))
 
     def milestones_for_run() -> CompanionMilestoneStore:
         actual_run_dir = getattr(sched, "run_dir", None) or run_dir
-        return CompanionMilestoneStore(Path(actual_run_dir or ".") / "data" / "companion-milestones.json")
+        return CompanionMilestoneStore(data_path(actual_run_dir or ".", COMPANION_MILESTONES))
 
     def profile_for_run() -> CompanionProfileStore:
         actual_run_dir = getattr(sched, "run_dir", None) or run_dir
-        return CompanionProfileStore(Path(actual_run_dir or ".") / "data" / "companion-profile.json")
+        return CompanionProfileStore(data_path(actual_run_dir or ".", COMPANION_PROFILE))
 
     def memory_for_run() -> CompanionMemoryStore:
-        return CompanionMemoryStore(Path(getattr(sched, "run_dir", None) or run_dir or ".") / "data" / "companion-memory.json")
+        actual_run_dir = getattr(sched, "run_dir", None) or run_dir
+        return CompanionMemoryStore(data_path(actual_run_dir or ".", COMPANION_MEMORY))
 
     capability_store = None
 

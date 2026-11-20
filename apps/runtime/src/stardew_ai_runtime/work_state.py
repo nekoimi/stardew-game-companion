@@ -18,7 +18,6 @@ cannot mark an unexecuted task succeeded.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import threading
@@ -29,6 +28,8 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from .adapters.persistence.json_file import lock_json, read_json, replace_json
 
 GOAL_SOURCES = frozenset({"user", "agent"})
 GOAL_STATUSES = frozenset({"active", "paused", "completed", "cancelled"})
@@ -575,7 +576,7 @@ class WorkStore:
     # ------------------------------------------------------------------ IO
     def _load(self) -> None:
         try:
-            raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+            raw = read_json(self.state_path)
         except (FileNotFoundError, OSError, ValueError, TypeError):
             self._states = {}
             return
@@ -642,30 +643,7 @@ class WorkStore:
         with self._thread_lock:
             self._load()
 
-    @staticmethod
-    def _lock(lock: Any) -> None:
-        if os.name == "nt":
-            import msvcrt
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-
-    @staticmethod
-    def _unlock(lock: Any) -> None:
-        with contextlib.suppress(Exception):
-            if os.name == "nt":
-                import msvcrt
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-
     def _write_unlocked(self) -> None:
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
         payload: dict[str, Any] = {}
         for save_id, state in self._states.items():
             payload[save_id] = {
@@ -685,15 +663,7 @@ class WorkStore:
                 "requests": state.requests,
                 "outbox": _bounded_outbox(state.outbox),
             }
-        temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        for attempt in range(4):
-            try:
-                temp.replace(self.state_path)
-                break
-            except PermissionError:
-                if attempt == 3:
-                    raise
-                _time.sleep(0.05 * (attempt + 1))
+        replace_json(self.state_path, payload, permission_retries=3)
 
     def _mutate(self, save_id: str, mutate: Callable[[SaveWorkState], Any]) -> Any:
         # Reads reload this instance's state map. Protect it while another thread
@@ -705,10 +675,7 @@ class WorkStore:
     def _mutate_locked(self, save_id: str, mutate: Callable[[SaveWorkState], Any]) -> Any:
         if not save_id:
             raise WorkStateError("save_id is required")
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = self.state_path.with_suffix(self.state_path.suffix + ".lock")
-        with open(lock_path, "a+b") as lock:
-            self._lock(lock)
+        with lock_json(self.state_path):
             try:
                 self._load()
                 state = self._states.setdefault(save_id, SaveWorkState())
@@ -722,8 +689,6 @@ class WorkStore:
                 # work. Discard its prepared in-memory goals/todos as well.
                 self._load()
                 raise
-            finally:
-                self._unlock(lock)
 
     def state(self, save_id: str) -> SaveWorkState:
         if not save_id:

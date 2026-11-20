@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .adapters.persistence.json_file import replace_json
 from .adapters.providers.codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
 from .agent_instructions import instructions_revision
 from .decision_policy import decision_policy
@@ -295,21 +296,13 @@ class LifeChatService:
     # ---------------------------------------------------------------- persistence
     def _save_sessions(self) -> None:
         try:
-            self._sessions_file.parent.mkdir(parents=True, exist_ok=True)
-            self._sessions_file.write_text(
-                json.dumps(self._sessions, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            replace_json(self._sessions_file, self._sessions)
         except Exception as ex:
             logger.warning("Failed to save life chat sessions: %s", ex)
 
     def _save_fingerprints(self) -> None:
         try:
-            self._fingerprints_file.parent.mkdir(parents=True, exist_ok=True)
-            self._fingerprints_file.write_text(
-                json.dumps(self._fingerprints, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            replace_json(self._fingerprints_file, self._fingerprints)
         except Exception as ex:
             logger.warning("Failed to save life chat fingerprints: %s", ex)
 

@@ -15,15 +15,17 @@ terminal state. op=add does NOT accept kind=event.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-import os
 import re
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from .adapters.persistence.json_file import lock_json, read_json, replace_json
+from .adapters.persistence.state_paths import SESSION_BINDINGS
 
 KIND_VALUES = frozenset({"preference", "agreement", "event"})
 SOURCE_VALUES = frozenset({"player", "companion", "system"})
@@ -45,7 +47,7 @@ def resolve_companion_id(run_dir: Path | str, save_id: str, *, provider: str = "
     """
     def read(path: Path) -> dict:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = read_json(path)
             return value if isinstance(value, dict) else {}
         except (OSError, ValueError):
             return {}
@@ -60,7 +62,7 @@ def resolve_companion_id(run_dir: Path | str, save_id: str, *, provider: str = "
     elif not session_id:
         if not provider:
             return ""
-        sessions = read(root / "chat_sessions.json")
+        sessions = read(root / SESSION_BINDINGS)
         session_id = sessions.get(f"{provider}:{save_id}") or sessions.get(f"life:{provider}:{save_id}")
         if not session_id and provider == "agy":
             session_id = sessions.get(save_id)
@@ -91,69 +93,37 @@ class CompanionMemoryStore:
     def __init__(self, state_path: Path | str) -> None:
         self.state_path = Path(state_path)
         self._data: dict[str, dict[str, Any]] = {}
+        self._thread_lock = threading.RLock()
         self._load()
 
     # ------------------------------------------------------------------ I/O
     def _load(self) -> None:
-        try:
-            raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                self._data = {}
-                for k, v in raw.items():
-                    if isinstance(v, dict):
-                        self._data[str(k)] = {
+        with self._thread_lock:
+            try:
+                raw = read_json(self.state_path)
+                if isinstance(raw, dict):
+                    self._data = {
+                        str(k): {
                             **v,
                             "memoryRevision": int(v.get("memoryRevision", 0)),
                             "instructionRevision": int(v.get("instructionRevision", v.get("memoryRevision", 0))),
                             "entries": [self._migrate_entry(dict(e)) for e in v.get("entries", []) if isinstance(e, dict)] if isinstance(v.get("entries"), list) else [],
                             "notes": [dict(n) for n in v.get("notes", []) if isinstance(n, dict)] if isinstance(v.get("notes"), list) else [],
                         }
-        except (FileNotFoundError, OSError, ValueError, TypeError):
-            self._data = {}
-
-    @staticmethod
-    def _lock(lock: Any) -> None:
-        if os.name == "nt":
-            import msvcrt
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-
-    @staticmethod
-    def _unlock(lock: Any) -> None:
-        with contextlib.suppress(Exception):
-            if os.name == "nt":
-                import msvcrt
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-
-    def _write_unlocked(self) -> None:
-        temp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
-        temp.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        temp.replace(self.state_path)
+                        for k, v in raw.items() if isinstance(v, dict)
+                    }
+            except (OSError, ValueError, TypeError):
+                self._data = {}
 
     def _mutate(self, save_id: str, fn: Any) -> dict[str, Any]:
         if not save_id:
             raise ValueError("save_id is required")
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = self.state_path.with_suffix(self.state_path.suffix + ".lock")
-        with open(lock_path, "a+b") as lock:
-            self._lock(lock)
-            try:
-                self._load()
-                record = self._data.setdefault(save_id, {"memoryRevision": 0, "instructionRevision": 0, "entries": []})
-                fn(record)
-                self._write_unlocked()
-                return dict(record)
-            finally:
-                self._unlock(lock)
+        with self._thread_lock, lock_json(self.state_path):
+            self._load()
+            record = self._data.setdefault(save_id, {"memoryRevision": 0, "instructionRevision": 0, "entries": []})
+            fn(record)
+            replace_json(self.state_path, self._data)
+            return dict(record)
 
     # ---------------------------------------------------------------- helpers
     @staticmethod

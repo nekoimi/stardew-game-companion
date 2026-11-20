@@ -37,6 +37,16 @@ from typing import Any
 
 from stardew_ai_runtime.adapters.mcp.plan_client import InternalMcpPlanClient
 from stardew_ai_runtime.adapters.persistence.provider_sessions import ProviderSessionStore
+from stardew_ai_runtime.adapters.persistence.state_paths import (
+    AUTONOMY_STATE,
+    COMPANION_CARE,
+    COMPANION_MEMORY,
+    COMPANION_MILESTONES,
+    COMPANION_PROFILE,
+    SESSION_BINDINGS,
+    WORK_STATE,
+    data_path,
+)
 from stardew_ai_runtime.adapters.providers.agy_database import (
     get_command_usage_delta,
     get_max_gen_idx,
@@ -607,7 +617,7 @@ class ChatBridge:
     def _bind_autonomy_store(self) -> None:
         """Use the same run-dir state file as MCP, including after auto-discovery."""
         if self.run_dir is not None:
-            self._autonomy = AutonomyController(self.run_dir / "data" / "autonomy-state.json")
+            self._autonomy = AutonomyController(data_path(self.run_dir, AUTONOMY_STATE))
 
     def _bind_companion_stores(self) -> None:
         """Bind companion profile/memory/care/milestone stores and the life-chat service.
@@ -618,11 +628,10 @@ class ChatBridge:
         """
         if self.run_dir is None:
             return
-        data_dir = self.run_dir / "data"
-        self._profile_store = CompanionProfileStore(data_dir / "companion-profile.json")
-        self._memory_store = CompanionMemoryStore(data_dir / "companion-memory.json")
-        self._care_service = CompanionCareService(data_dir / "companion-care.json")
-        self._milestone_store = CompanionMilestoneStore(data_dir / "companion-milestones.json")
+        self._profile_store = CompanionProfileStore(data_path(self.run_dir, COMPANION_PROFILE))
+        self._memory_store = CompanionMemoryStore(data_path(self.run_dir, COMPANION_MEMORY))
+        self._care_service = CompanionCareService(data_path(self.run_dir, COMPANION_CARE))
+        self._milestone_store = CompanionMilestoneStore(data_path(self.run_dir, COMPANION_MILESTONES))
         self._life_fingerprints = self._load_life_fingerprints()
         self._life_chat = LifeChatService(
             backend_name=("external:mcode" if getattr(self, "connection_source", "builtin") == "external" else self.backend_name),
@@ -661,7 +670,7 @@ class ChatBridge:
         """
         if self.run_dir is None:
             return
-        store = WorkStore(self.run_dir / "data" / "work-state.json")
+        store = WorkStore(data_path(self.run_dir, WORK_STATE))
         self._work_store = store
         if not self._enable_plan_worker:
             return
@@ -805,7 +814,7 @@ class ChatBridge:
             if self.run_dir
             else Path.home() / ".gemini" / "antigravity-cli"
         )
-        return base / "chat_sessions.json"
+        return base / SESSION_BINDINGS
 
     def _default_commands_file(self) -> Path:
         base = (

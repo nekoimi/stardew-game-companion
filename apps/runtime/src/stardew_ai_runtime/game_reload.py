@@ -4,33 +4,23 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import uuid
 from pathlib import Path
 from typing import Any
 
+from .adapters.persistence.json_file import lock_json, read_json
+from .adapters.persistence.json_file import replace_json as _write
+from .adapters.persistence.state_paths import COMPANION_MEMORY, RUNTIME_FILES, WORK_STATE, data_path
 from .work_state import WorkStore
-
-RUNTIME_FILES = (
-    "work-state.json", "autonomy-state.json", "companion-profile.json",
-    "companion-memory.json", "companion-care.json", "companion-milestones.json",
-)
 
 
 def _read(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        value = read_json(path, encoding="utf-8-sig")
     except FileNotFoundError:
         return {}
     if not isinstance(value, dict):
         raise ValueError(f"Invalid game-owned state: {path.name}")
     return value
-
-
-def _write(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
 
 
 def pending_game_load(run_dir: Path, save_id: str, session_id: str | None) -> dict[str, Any] | None:
@@ -130,18 +120,13 @@ def restore_game_load(run_dir: Path, request: dict[str, Any]) -> None:
     # An interrupted restore reuses its original before-image.
     backup = _read(backup_path)["priorRuntimePartitions"]
     for name in RUNTIME_FILES:
-        path = run_dir / "data" / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.with_suffix(path.suffix + ".lock").open("a+b") as lock:
-            WorkStore._lock(lock)
-            try:
-                document = _read(path)
-                raw = partitions.get(name) if partitions else None
-                committed = json.loads(raw) if raw is not None else {}
-                document[save_id] = _reconcile(name, backup.get(name) or {}, committed, request["gameDate"])
-                _write(path, document)
-            finally:
-                WorkStore._unlock(lock)
+        path = data_path(run_dir, name)
+        with lock_json(path):
+            document = _read(path)
+            raw = partitions.get(name) if partitions else None
+            committed = json.loads(raw) if raw is not None else {}
+            document[save_id] = _reconcile(name, backup.get(name) or {}, committed, request["gameDate"])
+            _write(path, document)
     summaries = _read(run_dir / "data/reload-context.json")
     summaries[save_id] = {**(request.get("reloadSummary") or {}),
                          "gameSessionId": session_id, "loadedGameDate": request["gameDate"],
@@ -198,8 +183,8 @@ def reload_context(run_dir: Path | None, save_id: str | None) -> dict[str, Any] 
         return None
     summary = _read(run_dir / "data/reload-context.json").get(save_id)
     if summary:
-        work = _read(run_dir / "data/work-state.json").get(save_id, {})
-        memory = _read(run_dir / "data/companion-memory.json").get(save_id, {})
+        work = _read(data_path(run_dir, WORK_STATE)).get(save_id, {})
+        memory = _read(data_path(run_dir, COMPANION_MEMORY)).get(save_id, {})
         # Read live intent, never resurrect an agreement removed after reload.
         summary = {**summary, "goals": work.get("goals", []),
                    "agreementsAndPreferences": [e for e in memory.get("entries", []) if e.get("kind") != "event"],
@@ -231,7 +216,7 @@ def recover_recorded_choices(run_dir: Path, save_id: str) -> int:
     archive = _read(path)
     if archive.get("SaveId") != save_id:
         return 0
-    store = WorkStore(run_dir / "data/work-state.json")
+    store = WorkStore(data_path(run_dir, WORK_STATE))
     pending = {n["id"]: n for n in store.unresolved_player_notices(save_id)}
     entries = archive.get("Entries", [])
     questions = {e.get("DecisionId"): e for e in entries if e.get("DecisionId")}

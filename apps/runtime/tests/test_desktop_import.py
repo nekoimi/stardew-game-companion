@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from stardew_ai_runtime.adapters.persistence.import_player_data import MOD_ID, PENDING, import_data
 from stardew_ai_runtime.adapters.providers.pi import PiBackend, resolve_pi_session
 from stardew_ai_runtime.chat_bridge import ActiveChatTask
 from stardew_ai_runtime.companion_memory import resolve_companion_id
-from stardew_ai_runtime.desktop_import import MOD_ID, PENDING, import_data
 
 FAKE_PI = Path(__file__).parent / "support/fake_pi.py"
 
