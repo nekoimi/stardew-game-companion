@@ -192,8 +192,13 @@ function Assert-ReleaseAiCli([string]$Binary, [string]$Backend, [string]$LogRoot
     $start.Arguments = '--version'
     if ($Backend -in @('dsh', 'mcode', 'pi') -and [IO.Path]::GetExtension($Binary) -eq '.cmd') {
         $nodeBinary = Find-ReleaseNpmNode $Binary $Backend
+        $shimDirectory = Split-Path -Parent $Binary
         $entryPath = if ($Backend -eq 'mcode') { 'node_modules/@minimax-ai/code/cli.js' } elseif ($Backend -eq 'pi') { 'node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js' } else { 'node_modules/@deepseek-ai/dsh/lib/bin.js' }
-        $entry = Join-Path (Split-Path -Parent $Binary) $entryPath
+        $entry = if ($Backend -eq 'mcode' -and (Split-Path -Leaf $shimDirectory) -eq '.bin') {
+            Join-Path (Split-Path -Parent $shimDirectory) '@minimax-ai/code/cli.js'
+        } else {
+            Join-Path $shimDirectory $entryPath
+        }
         if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
             throw "AI CLI $Backend entry point is missing. Repair the $Backend installation and reopen the game."
         }

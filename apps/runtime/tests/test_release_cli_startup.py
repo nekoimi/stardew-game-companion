@@ -227,14 +227,16 @@ def test_dsh_lookup_records_only_paths_and_probe_results(tmp_path):
     assert "never-log-this" not in raw and "DEEPSEEK_API_KEY" not in raw
 
 
-def test_mcode_version_check_runs_node_entry_with_spaces_and_only_version_argument(tmp_path):
+@pytest.mark.parametrize("shim_path", ["mcode.cmd", "node_modules/.bin/mcode.cmd"])
+def test_mcode_version_check_runs_node_entry_with_spaces_and_only_version_argument(tmp_path, shim_path):
     node = shutil.which("node.exe")
     if not node:
         pytest.skip("Node required for offline CLI fixture")
     prefix = tmp_path / "MiniMax & npm prefix"
     entry = prefix / "node_modules/@minimax-ai/code/cli.js"
     entry.parent.mkdir(parents=True)
-    shim = prefix / "mcode.cmd"
+    shim = prefix / shim_path
+    shim.parent.mkdir(parents=True, exist_ok=True)
     shim.write_text("@exit /b 93\n")  # The startup check must bypass this shim.
     marker = tmp_path / "version-arguments.json"
     entry.write_text(
