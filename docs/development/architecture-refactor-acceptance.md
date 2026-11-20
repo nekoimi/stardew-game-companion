@@ -39,12 +39,26 @@ Mod 731 项、传输 64 项通过，TestDriver 构建成功。Python 全量测�
 | 改派和回执超时 | 桌面回归覆盖先等待旧动作终态再提交新指令，原生结果未知时保持阻塞。传输与调度回归覆盖查询并恢复已有终态，缺失回执保持未知且不重发。 |
 | 导入与回退 | 候选包从已校验的基线包导入 8 个伴侣数据文件和 1 个 Pi 会话。首次指令从新目录接续本地会话文件。返回旧包后再次启动并接续原会话，旧包设置、记忆和隔离存档保留。自动化覆盖旧 Mod 数据、配置冲突和中断后重试。 |
 
+## 清理后复验
+
+干净克隆提交 `8c924c468211fa2a9072597fb2558c56c2664bc1`。Windows ZIP SHA256 为 `05c3adfe732d2cafebb85f6300d09020bcbad5c02f8259a3f44a313df3d8ff51`。Python 与 PowerShell 完整校验通过，共 1796 个 Mod 文件。根目录包含启动器、使用说明、`Mods/` 和 `docs/`，检查通过的发行边界涵盖许可、TestDriver 和本地玩家数据。包内实际加载的提示词指纹 `cb514d1354f6fc10` 与基线一致。
+
+按上方命令验证最终构建提交，Python 共 1628 项通过。全量运行通过 1626 项，两项安装检查在隔离游戏运行期间按设计拒绝安装，游戏退出后以 `pytest --lf` 补跑通过。Mod 731 项、传输 64 项通过，TestDriver 成功构建。Windows 上程序集枚举测试曾在清理临时 DLL 时失败，已将相关测试组串行化并等待卸载，随后完整 C# 测试通过。
+
+以校验通过的旧包和本次复验包重复隔离联调。桌面重连保留同一游戏进程、存档与 Pi 会话。候选包再次导入 8 个数据文件和 1 个 Pi 会话，旧包回退启动后保留设置、记忆、存档和原会话。游戏内调试入口使用隔离 Mod 副本和模拟 Pi 自动启动服务，接收一条自然语言指令并取得原生移动成功回执。
+
 ## 正式伙伴实机回归
 
-已在隔离工具目录安装官方 `@minimax-ai/code@0.6.2`，伴侣的客户端探测通过。正式 CLI 执行提示 `Sign in to MiniMax to use Agent features`。三组均待账号登录后执行并登记原生回执。 [固定实机用例](../repeatable-companion-acceptance.md)
+已在隔离工具目录安装官方 `@minimax-ai/code@0.6.2`。桌面 Python 和游戏内 PowerShell 均通过真实客户端版本探测，本地 npm 的 `.bin` 路径已有对应启动回归。两次正式 CLI 执行均提示 `Sign in to MiniMax to use Agent features`。三组均待账号登录后执行并登记原生回执。 [固定实机用例](../repeatable-companion-acceptance.md)
 
 | 场景 | 结果 |
 | --- | --- |
 | `care-guidance` | 待正式 mcode 登录。 |
 | `harvest-logistics` | 待正式 mcode 登录。 |
 | `rest-forestry` | 待正式 mcode 登录。 |
+
+登录后，在可调用 `mcode` 的 PowerShell 中运行下列命令。`$releaseDir` 指当前验证版本的新解压目录，`$isolatedSave` 指准备好的单人春季验收存档。
+
+```powershell
+& tests/acceptance/run-companion-presets.ps1 -ReleaseDir $releaseDir -SavePath $isolatedSave
+```
