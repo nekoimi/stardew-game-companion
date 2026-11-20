@@ -50,7 +50,7 @@
 ["run", "--project", "C:\\项目目录\\runtime", "python", "-m", "stardew_ai_runtime.mcp_server", "--run-dir", "C:\\你的游戏目录\\Mods\\StardewAI.Companion.Mod", "--surface", "light"]
 ```
 
-也可用 `tools/register-mcp.ps1` 为 kimi、agy、claude、codex、dsh、mcode 打印配置。非 Codex 的外部手动接入需补上上述 `env`，并保留 `--surface light`。
+也可用 `tools/dev/register-mcp.ps1` 为 kimi、agy、claude、codex、dsh、mcode 打印配置。非 Codex 的外部手动接入需补上上述 `env`，并保留 `--surface light`。
 
 Codex 可以直接安装项目级配置与技能，`-ProjectDir` 指向原对话使用的工作目录：
 
@@ -63,7 +63,7 @@ $mod = "C:\你的游戏目录\Mods\StardewAI.Companion.Mod"
 
 ### 3. 邀请伙伴一起玩
 
-让客户端按其技能加载方式读取 [stardew-companion 技能](../agent-skills/stardew-companion/SKILL.md)。Codex 的上述安装脚本已复制该技能，可在原对话输入：
+让客户端按其技能加载方式读取 [stardew-companion 技能](../resources/agent/skills/stardew-companion/SKILL.md)。Codex 的上述安装脚本已复制该技能，可在原对话输入：
 
 ```text
 $stardew-companion 来陪我玩星露谷吧。
@@ -97,7 +97,7 @@ $python = Join-Path $mod "runtime\python\python.exe"
 & $python -B -m stardew_ai_runtime.external_connection --run-dir $mod --cwd $originalWorkspace --session "原会话编号" --name "我的伙伴" --original-client-idle
 ```
 
-在 F8 选择等待已有伙伴，连接成功后直接在游戏聊天栏交流。`--name` 只是游戏显示名，人格仍来自原会话；使用自定义 `MINIMAX_DATA_DIR` 时沿用原环境，或增加 `--data-dir "原数据目录"`。源码运行可用 `uv run --project runtime python` 替代 `$python -B`。
+在 F8 选择等待已有伙伴，连接成功后直接在游戏聊天栏交流。`--name` 只是游戏显示名，人格仍来自原会话；使用自定义 `MINIMAX_DATA_DIR` 时沿用原环境，或增加 `--data-dir "原数据目录"`。源码运行可用 `uv run --project apps/runtime python` 替代 `$python -B`。
 
 结束游玩后，按适配器窗口的 Ctrl+C，或在另一终端运行：
 

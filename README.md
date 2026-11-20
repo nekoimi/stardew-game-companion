@@ -36,7 +36,7 @@
 
 桌面使用 C# / WPF，模型适配、会话和任务管理由 Python 运行时处理，SMAPI Mod 负责读取游戏状态和执行原生动作。欢迎提交可复现的问题报告、修复和验证结果。
 
-[参与开发](CONTRIBUTING.md) · [文档索引](docs/README.md) · [通信协议](protocol/README.md) · [隔离实机回归](docs/repeatable-companion-acceptance.md)
+[参与开发](CONTRIBUTING.md) · [文档索引](docs/README.md) · [通信协议](contracts/game-bridge/README.md) · [隔离实机回归](docs/repeatable-companion-acceptance.md)
 
 ## 许可与致谢
 

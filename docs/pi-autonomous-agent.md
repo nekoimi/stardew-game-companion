@@ -10,7 +10,7 @@
 {"backend":"pi","model":""}
 ```
 
-源码环境可启动 `uv run --project runtime python -m stardew_ai_runtime.chat_bridge --run-dir "实际 Mod 目录" --backend pi`；自定义可执行入口用 `--pi-cmd`。游戏仍需加载匹配的 Mod 与运行时；更改设置后重启伙伴服务，游戏模式更改重启游戏生效。
+源码环境可启动 `uv run --project apps/runtime python -m stardew_ai_runtime.chat_bridge --run-dir "实际 Mod 目录" --backend pi`；自定义可执行入口用 `--pi-cmd`。游戏仍需加载匹配的 Mod 与运行时；更改设置后重启伙伴服务，游戏模式更改重启游戏生效。
 
 通过 fnm 安装 Node/Pi 时，游戏启动器支持查找 fnm 的默认别名及相邻 Node；请在 `fnm default` 对应的版本下安装 Pi。只在某个终端临时切换的 Node 环境安装、默认版本未安装 Pi 时，启动器不会猜测其他版本；PATH 中明确配置的 Pi 优先。
 

@@ -25,7 +25,7 @@ $python = Join-Path $mod "runtime\python\python.exe"
 & $python -B -m stardew_ai_runtime.external_connection --run-dir $mod --cwd $originalWorkspace --session "原会话编号" --name "我的伙伴" --original-client-idle
 ```
 
-命令保持运行，游戏设置会显示连接状态。`--name` 设置游戏显示名，切回游戏内伙伴会恢复其原名字。源码环境将 `$python -B` 换成 `uv run --project runtime python`。使用自定义 `MINIMAX_DATA_DIR` 时沿用原环境，或加 `--data-dir "原数据目录"`。
+命令保持运行，游戏设置会显示连接状态。`--name` 设置游戏显示名，切回游戏内伙伴会恢复其原名字。源码环境将 `$python -B` 换成 `uv run --project apps/runtime python`。使用自定义 `MINIMAX_DATA_DIR` 时沿用原环境，或加 `--data-dir "原数据目录"`。
 
 首版需要让原聊天窗口在连接期间保持闲置，在游戏聊天栏继续对话；当前没有跨客户端并发锁，不能同时在原窗口发起另一轮推理。适配器沿用原会话与工作目录，不覆写人格、模型或全局工具配置；原角色定义缺失、发生变化或会话无法恢复时停止连接，不退回默认人格。当前仅支持 MiniMax Code 0.6.2 及已核验的会话数据结构；其他版本需要适配后再连接。
 
@@ -50,7 +50,7 @@ $python = Join-Path $mod "runtime\python\python.exe"
 从源码安装 Mod 后，在仓库根目录运行脚本；`-ProjectDir` 指向你准备在 Codex 打开的已有文件夹：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/register-mcp.ps1 -RunDir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" -Agent codex -ProjectDir "C:\我的农场对话" -Install
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/dev/register-mcp.ps1 -RunDir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" -Agent codex -ProjectDir "C:\我的农场对话" -Install
 ```
 
 脚本写入该项目的 `.codex/config.toml` 和 `.agents/skills/stardew-companion/SKILL.md`，保留其他配置。遇到同名自定义配置或不同的技能内容时会停止。省略 `-ProjectDir` 时使用仓库根目录。
@@ -63,16 +63,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/register-mcp.ps1 -
 
 ## 源码开发接入
 
-源码开发者先按[参与开发](../CONTRIBUTING.md#从源码构建)构建 Mod，再运行 `tools/setup-companion.ps1 -AutoInstall` 安装到开发用游戏。通过 SMAPI 启动并进入存档后，Mod 在自己的 `data` 目录下生成 `transport-discovery.json`。
+源码开发者先按[参与开发](../CONTRIBUTING.md#从源码构建)构建 Mod，再运行 `tools/dev/setup-companion.ps1 -AutoInstall` 安装到开发用游戏。通过 SMAPI 启动并进入存档后，Mod 在自己的 `data` 目录下生成 `transport-discovery.json`。
 
-当前动作执行依赖 Mod DLL 与本地配对清单一致：干净克隆可从源码编译后运行 `tools/setup-companion.ps1` 生成 `local-dev` 绑定完成安装；缺少清单时返回 `COMPATIBILITY_UNKNOWN`，DLL 与清单不一致时返回 `MOD_RUNTIME_MISMATCH`（重新运行设置向导同步）。
+当前动作执行依赖 Mod DLL 与本地配对清单一致：干净克隆可从源码编译后运行 `tools/dev/setup-companion.ps1` 生成 `local-dev` 绑定完成安装；缺少清单时返回 `COMPATIBILITY_UNKNOWN`，DLL 与清单不一致时返回 `MOD_RUNTIME_MISMATCH`（重新运行设置向导同步）。
 
 ## 注册 MCP
 
 在仓库根目录运行，将路径替换为实际 Mod 安装目录：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/register-mcp.ps1 -RunDir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" -Agent kimi -Install
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/dev/register-mcp.ps1 -RunDir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" -Agent kimi -Install
 ```
 
 首次使用 Kimi 时，在仓库根目录交互运行 `kimi`，核对项目信任提示中的 MCP 启动命令和 Mod 路径后确认信任。输入 `/mcp`，确认 `stardew-companion` 已连接，再启动下文的聊天服务；已打开的 Kimi 会话需重新启动才能加载新注册的工具。
@@ -103,14 +103,14 @@ MiniMax Code 的 MCP 服务保存在数据目录的 `mcp.json`（`MINIMAX_DATA_D
 
 用于外部手动操作时，还需给该 MCP 服务设置环境变量 `STARDEW_EXTERNAL_CODEX=1`；完整 JSON 示例见[自行接入指南](agent-self-integration.md#2-给原客户端添加-mcp)。
 
-也可以使用仓库虚拟环境中的 Python（通常位于 `runtime/.venv/Scripts/python.exe`），效果相同。请使用绝对路径，工作目录设为仓库根目录。
+也可以使用仓库虚拟环境中的 Python（通常位于 `apps/runtime/.venv/Scripts/python.exe`），效果相同。请使用绝对路径，工作目录设为仓库根目录。
 
 ## 游戏内聊天
 
 复制 `config/chat-backend.example.json` 为 `config/chat-backend.json`，设置 `backend` 和 `model`。当前聊天后端支持 `kimi`、`agy`、`codex`、`dsh` 和 `mcode`。使用本机已登录的 Codex CLI 时，设置 `"backend": "codex"`；省略 `model` 会沿用本机 Codex 配置的模型。每次调用只临时绑定当前游戏的 MCP，不修改全局配置。
 
 ```powershell
-uv run --project runtime python -m stardew_ai_runtime.chat_bridge --run-dir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" --backend kimi
+uv run --project apps/runtime python -m stardew_ai_runtime.chat_bridge --run-dir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" --backend kimi
 ```
 
 保持服务运行，在游戏中按 `F8` 打开对话。发送指令后窗口会关闭，让游戏动作继续；再次按 `F8` 可查看同一条指令的后续进度和完整回复。打开菜单会暂停农活动作的推进，关闭菜单后才会继续执行。

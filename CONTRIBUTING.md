@@ -8,30 +8,34 @@
 
 ```powershell
 Copy-Item .env.example .env.local
-uv sync --project runtime --locked
+uv sync --project apps/runtime --locked
 ```
 
 编辑 `.env.local` 填写游戏与 SMAPI 路径，再构建 Mod 和桌面绿色包。将示例版本号改为 Mod 清单中的版本：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-mod.ps1 -Configuration Release
-dotnet publish src/StardewAI.Companion.Desktop -c Release -o artifacts/desktop/win-x64-single-file
-uv run --project runtime python tools/build-release.py --version 0.3.22 --desktop-source artifacts/desktop/win-x64-single-file
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/dev/build-mod.ps1 -Configuration Release
+dotnet publish apps/desktop/src -c Release -o artifacts/desktop/win-x64-single-file
+uv run --project apps/runtime python packaging/windows/build-release.py --version 0.3.22 --desktop-source artifacts/desktop/win-x64-single-file
 ```
 
 桌面项目默认发布为自包含单文件。请使用新的发布目录，避免上次构建的散装 DLL 混在里面。解压后运行 `星露谷游戏伴侣.exe`。需要调试 Mod 内的原生界面或手动 MCP 接入时，源码开发脚本可同步 DLL 与本地配对清单，见[接入指南](docs/mcp.md#源码开发接入)。
 
 ## 代码结构
 
-- `src/StardewAI.Companion.Desktop`：WPF 桌面界面、游戏和运行时启动、设置与存档数据导入。
-- `src/StardewAI.Companion.Mod`：游戏状态观察、原生寻路与动作执行、控制权和本地通信。
-- `runtime/src/stardew_ai_runtime`：MCP 工具、模型后端、计划执行、工作记忆与用量统计。
-- `protocol`：消息结构和协议样例；协议仍可能调整。
-- `src/*Tests`、`runtime/tests`、`tests`：单元测试与接入测试。
+- `apps/desktop/src`：WPF 桌面界面、游戏和运行时启动、设置与存档数据导入。
+- `apps/game-mod/src`：游戏状态观察、原生寻路与动作执行、控制权和本地通信。
+- `apps/runtime/src/stardew_ai_runtime`：MCP 工具、模型后端、计划执行、工作记忆与用量统计。
+- `contracts/`：桌面 HTTP、游戏 WebSocket 契约和样例。
+- `resources/agent/`：提示词、领域指导和技能。
+- `packaging/windows/`：绿色包生成和发包校验。
+- `apps/game-mod/tests/`、`apps/runtime/tests/`、`tests/`：组件测试、跨语言契约与隔离验收。
 
 游戏对象的读写在游戏主线程执行。模型发出任务意图，具体动作由 Mod 执行；修改动作逻辑时需要同时检查前置条件、物品消耗和最终结果。
 
-伙伴与自玩共用运行时，通过桌面选择模式。Mod 中的 `PlayerMode` 负责接管逻辑，原生设置入口供源码调试和隔离验收使用。项目约定见 `AGENTS.md`，实际加载的提示词由核心指令、领域指导和 `agent-skills/stardew-companion` 提供。
+伙伴与自玩共用运行时，通过桌面选择模式。Mod 中的 `PlayerMode` 负责接管逻辑，原生设置入口供源码调试和隔离验收使用。项目约定见 `AGENTS.md`。
+
+下一阶段的目标目录、迁移边界和任务顺序见[架构重构实施方案](docs/development/architecture-refactor.md)与[重构 TODO](docs/development/architecture-refactor-todo.md)。本页构建命令对应当前源码。
 
 ## 发布
 
@@ -44,11 +48,11 @@ uv run --project runtime python tools/build-release.py --version 0.3.22 --deskto
 在仓库根目录运行：
 
 ```powershell
-uv sync --project runtime --locked
-uv run --project runtime ruff check runtime
-uv run --project runtime pytest runtime/tests tests
-uv run --project runtime python tools/check_release_boundaries.py
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-mod.ps1 -Configuration Release
+uv sync --project apps/runtime --locked
+uv run --project apps/runtime ruff check runtime
+uv run --project apps/runtime pytest apps/runtime/tests tests
+uv run --project apps/runtime python packaging/windows/check_release_boundaries.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/dev/build-mod.ps1 -Configuration Release
 ```
 
 C# 测试需要本机游戏程序集和 .NET SDK。可以使用 `dotnet test` 分别运行 `src` 下的测试项目，并通过 `StardewGamePath` 构建参数指定游戏目录。验证原生扩展编译时，将 `STAR_DOTNET_PATH` 指向可运行 .NET 6 SDK 的 `dotnet.exe`，并在环境中设置 `STARDEW_GAME_PATH`。

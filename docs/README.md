@@ -13,9 +13,13 @@
 - [源码构建、发布和贡献](../CONTRIBUTING.md)
 - [源码调试与 MCP 接入](mcp.md)
 - [原客户端的手动接入](agent-self-integration.md)
-- [通信协议](../protocol/README.md)
+- [游戏通信协议](../contracts/game-bridge/README.md)
+- [桌面 HTTP 接口](../contracts/desktop-api/README.md)
 - [固定的隔离实机回归](repeatable-companion-acceptance.md)
-- [核心提示词](agent-core-instructions-draft.md)与[领域指导](agent-domain-guidance-draft.md)
+- [核心提示词](../resources/agent/prompts/agent-core-instructions-draft.md)与[领域指导](../resources/agent/prompts/agent-domain-guidance-draft.md)
+- [架构重构实施方案](development/architecture-refactor.md)
+- [架构重构 TODO](development/architecture-refactor-todo.md)
+- [架构重构基线与路径清单](development/architecture-refactor-baseline.md)
 
 ## 设计与验证记录
 
