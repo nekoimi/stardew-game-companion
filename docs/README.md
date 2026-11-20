@@ -20,6 +20,7 @@
 - [架构重构实施方案](development/architecture-refactor.md)
 - [架构重构 TODO](development/architecture-refactor-todo.md)
 - [架构重构基线与路径清单](development/architecture-refactor-baseline.md)
+- [架构重构验收记录](development/architecture-refactor-acceptance.md)
 
 ## 设计与验证记录
 
