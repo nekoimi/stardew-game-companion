@@ -156,6 +156,7 @@ class PiBackend:
             send("get_state")
             deadline = time.monotonic() + self.timeout_seconds
             prompted = False
+            actual_file: Path | None = None
             run_error = False
             seen_messages = set()
             while True:
@@ -184,8 +185,13 @@ class PiBackend:
                             raise RuntimeError("PI_SESSION_CHANGED")
                         if not session_id and not Path(actual).resolve().is_relative_to(workspace / "sessions"):
                             raise RuntimeError("PI_SESSION_CHANGED")
-                        cid = str(Path(actual).resolve())
-                        active_task.provider_conversation_id = cid
+                        # A fresh RPC session can allocate a path before its
+                        # first input is written. Never bind an absent file
+                        # if the provider exits before saving that input.
+                        actual_file = Path(actual).resolve()
+                        if session_id or actual_file.is_file():
+                            cid = str(actual_file)
+                            active_task.provider_conversation_id = cid
                         send("prompt", message=prompt)
                         prompted = True
                     continue
@@ -197,6 +203,9 @@ class PiBackend:
                             part.get("text", "") for part in content if part.get("type") == "text")
                         if text == prompt:
                             active_task.provider_input_delivered = True
+                            if actual_file is not None and actual_file.is_file():
+                                cid = str(actual_file)
+                                active_task.provider_conversation_id = cid
                     if msg.get("role") == "assistant":
                         reply = "".join(p.get("text", "") for p in msg.get("content", []) if p.get("type") == "text")
                         run_error = msg.get("stopReason") in {"error", "aborted"}

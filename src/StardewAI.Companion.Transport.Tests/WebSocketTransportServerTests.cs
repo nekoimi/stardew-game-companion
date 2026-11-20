@@ -13,6 +13,35 @@ namespace StardewAI.Companion.Mod.Transport.Tests;
 public class WebSocketTransportServerTests
 {
     [Fact]
+    public async Task DesktopControlIsAcceptedOnlyForEnabledChatAndCurrentSaveSession()
+    {
+        using var server = new WebSocketTransportServer(0, "test-token", new TestTransportHandler(), "save", "session");
+        var accepted = new ConcurrentQueue<string>();
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.OnDesktopControl += payload =>
+        {
+            accepted.Enqueue(payload["requestId"]!.GetValue<string>());
+            received.TrySetResult();
+        };
+        server.Start();
+        using var client = new ClientWebSocket();
+        client.Options.SetRequestHeader("Authorization", "Bearer test-token");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/chat"), timeout.Token);
+        while (!server.IsChatConnected) await Task.Delay(15, timeout.Token);
+        Task Send(string requestId, string saveId, string gameSessionId) => SendRawJsonAsync(client,
+            JsonSerializer.Serialize(new {
+                messageType = "desktop.control", saveId, gameSessionId, payload = new { requestId, action = "takeover" },
+            }));
+        server.DesktopClientEnabled = true;
+        await Send("stale-session", "save", "old");
+        await Send("wrong-save", "other", "session");
+        await Send("current", "save", "session");
+        await received.Task.WaitAsync(timeout.Token);
+        Assert.Equal("current", Assert.Single(accepted));
+    }
+
+    [Fact]
     public void LateCancelAndSubsequentQueryReplayConfirmedResultThroughIncomingQueue()
     {
         var handler = new TestTransportHandler();

@@ -91,8 +91,8 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         _config = Helper.ReadConfig<ModConfig>();
         _connectionState.Initialize(_config.ConnectionSource);
         _config.ConnectionSource = _connectionState.Source;
-        InitializeUpdates();
-        if (!PlayerModeEnabled) CompanionMenuClock.Install();
+        if (!_desktopMode) InitializeUpdates();
+        if (!_desktopMode && !PlayerModeEnabled) CompanionMenuClock.Install();
         _discoveryService = new DiscoveryService(helper.DirectoryPath, Monitor);
         _conversationStore = new CompanionConversationStore(Path.Combine(helper.DirectoryPath, "data", "conversations"));
         _lifeMenuUiState.ConversationChanged += PersistConversation;
@@ -104,10 +104,10 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         helper.Events.GameLoop.DayStarted += OnDayStarted;
         helper.Events.GameLoop.DayEnding += OnDayEnding;
         helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
-        helper.Events.GameLoop.UpdateTicking += (_, _) => TickNativeChatInput();
+        if (!_desktopMode) helper.Events.GameLoop.UpdateTicking += (_, _) => TickNativeChatInput();
         helper.Events.GameLoop.TimeChanged += OnTimeChanged;
         CompanionWorldDraw.Install(() => PlayerModeEnabled ? null : _avatar);
-        helper.Events.Display.RenderedHud += OnRenderedHud;
+        if (!_desktopMode) helper.Events.Display.RenderedHud += OnRenderedHud;
         helper.Events.Display.MenuChanged += (_, e) => {
             if (PlayerModeEnabled && Context.IsWorldReady && e.NewMenu is StardewValley.Menus.ItemGrabMenu menu && menu.context is StardewValley.Objects.Chest chest)
                 _knowledge?.NoteChestObserved(Game1.currentLocation.NameOrUniqueName,(int)chest.TileLocation.X,(int)chest.TileLocation.Y);
@@ -116,7 +116,8 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
         AppDomain.CurrentDomain.ProcessExit += OnGameProcessExit;
         helper.Events.Input.ButtonPressed += OnButtonPressed;
-        InstallNativeChat();
+        if (!_desktopMode) InstallNativeChat();
+        else EnableDesktopFocusPolicy();
 
         helper.ConsoleCommands.Add("ai_water",
             "Waters tilled unwatered tiles centered at <x> <y> with optional [radius] (0-2, default 0) on the Farm.\nUsage: ai_water <x> <y> [radius]",
@@ -149,11 +150,11 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     private void InitializeLoadedWorld()
     {
         _dayTransition = false;
-        ChineseUiLocale.Apply(Monitor.Log);
+        if (!_desktopMode) ChineseUiLocale.Apply(Monitor.Log);
         if (PlayerModeEnabled)
         {
             InitializePlayerMode();
-            Game1.addHUDMessage(new HUDMessage($"AI 自己玩：聊天栏随时指导，{_config.TakeoverKey} 开始托管 / 接管。", HUDMessage.newQuest_type));
+            ShowCompanionHud(new HUDMessage($"AI 自己玩：聊天栏随时指导，{_config.TakeoverKey} 开始托管 / 接管。", HUDMessage.newQuest_type));
         }
         else InitializeCompanion();
     }
@@ -293,7 +294,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             );
 
             _coordinator.SetTransportServer(_transportServer);
-            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching;
+            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching && (!_desktopMode || (!_desktopPaused && !_desktopInterrupting));
             var sessionServer = _transportServer;
             void InSession(Action action) => _mainThreadActions.Enqueue(() =>
             {
@@ -342,6 +343,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         var previousPlayerConversation=_conversationStore?.LoadHistory(saveId) ?? new List<CompanionConversationEntry>();
         _lifeMenuUiState.RestoreConversation(CompanionSaveCheckpoint.RestoreWithReloadHistory(nativeCheckpoint?.Conversation ?? new(),previousPlayerConversation));
         CompanionSaveCheckpoint.PublishLoad(Helper.DirectoryPath,saveId,gameSessionId,GetCurrentGameDate(),nativeCheckpoint,previousPlayerConversation,null);
+            AttachDesktopControls(_transportServer);
             _transportServer.Start();
             _lifeControls.Supersede();
             CompanionCommandMenu.TaskState.Reset();
@@ -604,7 +606,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             );
 
             _coordinator.SetTransportServer(_transportServer);
-            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching;
+            _coordinator.ConnectionActionsAllowed = () => !_connectionState.IsSwitching && (!_desktopMode || (!_desktopPaused && !_desktopInterrupting));
             var sessionServer = _transportServer;
             void InSession(Action action) => _mainThreadActions.Enqueue(() =>
             {
@@ -645,6 +647,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 Monitor.Log($"Could not establish reload state; companion connection remains stopped: {ex.Message}", LogLevel.Error);
                 throw;
             }
+            AttachDesktopControls(_transportServer);
             _transportServer.Start();
             _lifeControls.Supersede();
             CompanionCommandMenu.TaskState.Reset();
@@ -690,10 +693,11 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
         while (_mainThreadActions.TryDequeue(out var action)) action();
-        ShowPendingUpdate();
+        if (!_desktopMode) ShowPendingUpdate();
         _thinking?.Tick();
         TickUnattendedPassoutGuard();
         if (PlayerModeEnabled && e.IsMultipleOf(30) && _coordinator != null && _transportServer != null) { _ = _transportServer.SendSnapshotAsync(_coordinator.CaptureCurrentSnapshot(_observer!.WorldRevision),_observer.WorldRevision); }
+        if (_desktopMode && e.IsMultipleOf(30)) PublishDesktopControlState();
         if (PlayerModeEnabled && _actor != null) _knowledge?.NoteLocationVisited(_actor.LocationName);
         if (_decisionEdits.Count > 0 && DateTime.UtcNow - _decisionEditSentAt > TimeSpan.FromSeconds(30))
         {
@@ -701,7 +705,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 foreach (var entry in previous) _lifeMenuUiState.SetDecisionStatus(entry.Key, entry.Value);
             _decisionEdits.Clear();
             DispatchLifeProfileRefresh();
-            Game1.addHUDMessage(new HUDMessage("删除尚未确认，正在重新核对。", HUDMessage.error_type));
+            ShowCompanionHud(new HUDMessage("删除尚未确认，正在重新核对。", HUDMessage.error_type));
         }
         if (Context.IsWorldReady) _companionDialogue?.Update();
         if (_watchedChatRequest != _chatUiState.CommandId)
@@ -737,7 +741,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 if (Game1.activeClickableMenu is CompanionConversationMenu or CompanionCommandMenu or CompanionDashboardMenu or CompanionLifeMenu) Game1.activeClickableMenu.exitThisMenu();
             } else _thinking?.ResumeAfterAction();
         }
-        UpdateConnectionSelection();
+        if (!_desktopMode) UpdateConnectionSelection();
         UpdateBridgeStartup();
         // A mid-session bridge death must not orphan the run: poll the launcher
         // while disconnected; ReleaseBridgeStartupState.CanStart throttles retries.
@@ -755,7 +759,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         }
 
         // 2. Only advance game action if not cancelled or paused
-        if (_coordinator != null) _coordinator.Rest.Paused = _chatUiState.ShouldPauseNative;
+        if (_coordinator != null) _coordinator.Rest.Paused = _chatUiState.ShouldPauseNative || (_desktopMode && (_desktopPaused || _desktopInterrupting));
         _coordinator?.Update(Game1.currentGameTime, e.Ticks);
         if (_coordinator != null && _lastRestState != _coordinator.Rest.State)
         {
@@ -817,12 +821,12 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             AbortLifeStart("等待确认超时。");
 
         // 2d. Drain deferred care hints once nothing blocks the HUD.
-        PumpNativeChat();
+        if (!_desktopMode) PumpNativeChat();
         if (Game1.activeClickableMenu == null && !Game1.eventUp)
         {
             foreach (var hint in _careHintController.TryDrainDeferred())
                 if (_lifeMenuUiState.Conversation.Any(e => e.Id == "care:" + hint.EventKey && e.Unread))
-                    Game1.addHUDMessage(new HUDMessage($"{_lifeMenuUiState.CompanionName}有新消息 · 请看聊天栏"));
+                    ShowCompanionHud(new HUDMessage($"{_lifeMenuUiState.CompanionName}有新消息 · 请看聊天栏"));
         }
 
         if (Game1.activeClickableMenu is CompanionCommandMenu && !_chatUiState.HasActiveCommand && !_chatUiState.HasPendingControl && _coordinator != null && _coordinator.GetActivityStatus() != "idle")
@@ -975,7 +979,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     {
         if (Context.IsWorldReady)
         {
-            Game1.addHUDMessage(new HUDMessage(message));
+            ShowCompanionHud(new HUDMessage(message));
         }
     }
 
@@ -1146,7 +1150,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
     {
-        if (Context.IsWorldReady && !Context.IsMultiplayer && e.Button == SButton.T
+        if (!_desktopMode && Context.IsWorldReady && !Context.IsMultiplayer && e.Button == SButton.T
             && Game1.activeClickableMenu == null && !Game1.eventUp && Game1.chatBox?.isActive() == false)
         {
             Game1.chatBox.activate();
@@ -1154,7 +1158,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             return;
         }
 
-        if (Context.IsWorldReady && (PlayerModeEnabled || (_actor != null && _coordinator != null))
+        if (!_desktopMode && Context.IsWorldReady && (PlayerModeEnabled || (_actor != null && _coordinator != null))
             && Game1.activeClickableMenu == null && !Game1.eventUp && Game1.displayHUD
             && e.Button == SButton.MouseLeft
             && _companionHudBounds.Contains(Game1.getMouseX(true), Game1.getMouseY(true)))
@@ -1168,13 +1172,13 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             if (_authority?.AgentOwns == true)
             {
                 ReleasePlayerControl("human-takeover");
-                Game1.addHUDMessage(new HUDMessage($"已接管玩家：AI 行动已停止；再按 {_config.TakeoverKey} 交还 AI。", HUDMessage.newQuest_type));
+                ShowCompanionHud(new HUDMessage($"已接管玩家：AI 行动已停止；再按 {_config.TakeoverKey} 交还 AI。", HUDMessage.newQuest_type));
             }
-            else if (_authority != null)
+            else if (!_desktopMode && _authority != null)
             {
                 _playerControlApproved = true;
                 _authority.RequestAgent("human-explicit-handoff");
-                Game1.addHUDMessage(new HUDMessage("已交还控制权给 AI：在聊天栏告诉它今天要做什么。", HUDMessage.newQuest_type));
+                ShowCompanionHud(new HUDMessage("已交还控制权给 AI：在聊天栏告诉它今天要做什么。", HUDMessage.newQuest_type));
             }
             Helper.Input.Suppress(e.Button); return;
         }
@@ -1187,6 +1191,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             Helper.Input.Suppress(e.Button);
             return;
         }
+        if (_desktopMode) return;
         if (Context.IsWorldReady && e.Button.IsActionButton())
             Monitor.Log($"[CompanionInteraction] button={e.Button} playerMap={Game1.currentLocation?.NameOrUniqueName} playerPos={Game1.player.Position} playerTile={Game1.player.Tile} actorMap={_actor?.LocationName} actorTile={_actor?.Tile} cursor={Game1.currentCursorTile} free={Game1.activeClickableMenu == null}", LogLevel.Trace);
         if (e.Button == SButton.Escape && Context.IsWorldReady && _companionDialogue?.HandleEscape() == true)
@@ -1260,13 +1265,13 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 case InGameCommandType.Water:
                     if (DispatchWaterZone(parsed.X, parsed.Y, parsed.Radius, "menu", out string waterMsg))
                     {
-                        Game1.addHUDMessage(new HUDMessage(waterMsg));
+                        ShowCompanionHud(new HUDMessage(waterMsg));
                         Monitor.Log(waterMsg, LogLevel.Info);
                         CompanionCommandMenu.ChatHistory.Add(new ChatMessage("伙伴", waterMsg, Microsoft.Xna.Framework.Color.DarkGreen));
                     }
                     else
                     {
-                        Game1.addHUDMessage(new HUDMessage(waterMsg));
+                        ShowCompanionHud(new HUDMessage(waterMsg));
                         Monitor.Log(waterMsg, LogLevel.Warn);
                         CompanionCommandMenu.ChatHistory.Add(new ChatMessage("系统", waterMsg, Microsoft.Xna.Framework.Color.Red));
                     }
@@ -1288,7 +1293,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
                 case InGameCommandType.Status:
                     string summary = GetStatusSummary();
-                    Game1.addHUDMessage(new HUDMessage(summary));
+                    ShowCompanionHud(new HUDMessage(summary));
                     CompanionCommandMenu.ChatHistory.Add(new ChatMessage("系统", summary, Microsoft.Xna.Framework.Color.Teal));
                     CompanionCommandMenu.IsProcessing = false;
                     CompanionCommandMenu.CurrentStatusText = "就绪";
@@ -1416,7 +1421,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         {
             if (Context.IsWorldReady && _lifeMenuUiState.TryAddDecisionNotice(currentSave, reply.SaveId,
                 reply.RequestId, GetCurrentGameDate(), CompanionDialogueInbox.PlainText(reply.ReplyText)))
-                Game1.addHUDMessage(new HUDMessage("伙伴有件重要的事想和你商量，和伙伴对话查看消息。"));
+                ShowCompanionHud(new HUDMessage("伙伴有件重要的事想和你商量，和伙伴对话查看消息。"));
             return;
         }
         if (reply.Status == "processing" && !_chatUiState.HasActiveCommand &&
@@ -1458,7 +1463,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         {
             CompanionCommandMenu.CurrentActionText = reply.Status == "selected" ? "短作业等待原生执行" : null;
             CompanionCommandMenu.ChatHistory.Add(new ChatMessage("伙伴", reply.ReplyText, Color.DarkGreen, BuildUsageLine(reply, "本轮用量")));
-            if (reply.CommandComplete == true) Game1.addHUDMessage(new HUDMessage("AI 伙伴已回复，请看聊天栏。"));
+            if (reply.CommandComplete == true) ShowCompanionHud(new HUDMessage("AI 伙伴已回复，请看聊天栏。"));
             return;
         }
         if (reply.Status == "processing")
@@ -1474,18 +1479,18 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         if (reply.Status == "cancelled")
         {
             CompanionCommandMenu.ChatHistory.Add(new ChatMessage("伙伴", reply.ReplyText, Color.DarkGoldenrod, tokenInfo));
-            Game1.addHUDMessage(new HUDMessage("AI 伙伴任务已取消，请看聊天栏。"));
+            ShowCompanionHud(new HUDMessage("AI 伙伴任务已取消，请看聊天栏。"));
         }
         else if (reply.Status == "completed")
         {
             CompanionCommandMenu.ChatHistory.Add(new ChatMessage("伙伴", reply.ReplyText, Color.DarkGreen, tokenInfo));
-            if (reply.CommandComplete != false) Game1.addHUDMessage(new HUDMessage("AI 伙伴已回复，请看聊天栏。"));
+            if (reply.CommandComplete != false) ShowCompanionHud(new HUDMessage("AI 伙伴已回复，请看聊天栏。"));
         }
         else
         {
             string err = !string.IsNullOrEmpty(reply.Error) ? reply.Error : reply.ReplyText;
             CompanionCommandMenu.ChatHistory.Add(new ChatMessage("系统", $"任务未完成: {err}", Color.Red, tokenInfo));
-            Game1.addHUDMessage(new HUDMessage("AI 伙伴任务未完成，请看聊天栏。", HUDMessage.error_type));
+            ShowCompanionHud(new HUDMessage("AI 伙伴任务未完成，请看聊天栏。", HUDMessage.error_type));
         }
     }
 
@@ -1743,6 +1748,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
     private void TryAutoStartChatBridge()
     {
+        if (_desktopMode) return;
         // Isolated acceptance and manually managed developer sessions own their bridge.
         if (Environment.GetEnvironmentVariable("STARDEW_AI_MANUAL_BRIDGE") == "1") return;
         if (!_config.ConnectionSourceChosen) return;
@@ -1781,7 +1787,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         {
             string message = "伙伴服务启动失败：" + failure;
             Monitor.Log(message, LogLevel.Error);
-            Game1.addHUDMessage(new HUDMessage(message, HUDMessage.error_type));
+            ShowCompanionHud(new HUDMessage(message, HUDMessage.error_type));
             CompanionCommandMenu.ChatHistory.Add(new ChatMessage("系统", message, Color.Red));
         }
         string? problem = GetBridgeConnectionProblem();
@@ -2239,7 +2245,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             CompanionCommandMenu.DraftText = text;
             CompanionCommandMenu.CurrentStatusText = reason;
             CompanionCommandMenu.ChatHistory.Add(new ChatMessage("系统", reason, Color.Red));
-            Game1.addHUDMessage(new HUDMessage(reason, HUDMessage.error_type));
+            ShowCompanionHud(new HUDMessage(reason, HUDMessage.error_type));
             Monitor.Log($"Player message not sent: {reason}", LogLevel.Warn);
             return false;
         }
@@ -2263,7 +2269,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         _lifeMenuUiState.RecordConversation(reqId + ":player", "你", text, GetCurrentGameDate(), isPlayer: true, replyToDecisionId: replyToNoticeId);
         _lifeControls.Begin(reqId);
         CompanionCommandMenu.CurrentStatusText = "消息已发送，等待伙伴接收";
-        Game1.addHUDMessage(new HUDMessage("消息已发送，回复会保留在历史记录里。"));
+        ShowCompanionHud(new HUDMessage("消息已发送，回复会保留在历史记录里。"));
         Monitor.Log($"Player message sent through life chat: requestId={reqId} mode={mode}", LogLevel.Info);
 
         var payload = new LifeChatSubmitPayload(reqId, saveId, mode, text, AcceptedNodeId: acceptedNodeId, ReplyToNoticeId: replyToNoticeId, ResolveNotice: resolveNotice);
@@ -2454,7 +2460,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 SendLifeStartControl(result, new JsonObject { ["mode"] = "free" }, "主动帮忙开启");
                 return;
             case LifeStartAdvance.Complete:
-                Game1.addHUDMessage(new HUDMessage($"和{_lifeStartSequence.CompanionName}一起生活开始了！"));
+                ShowCompanionHud(new HUDMessage($"和{_lifeStartSequence.CompanionName}一起生活开始了！"));
                 // The control ack is authoritative, but the setup/life menus read
                 // their mode and plan from life.profile.state. Refresh that view now.
                 DispatchLifeProfileRefresh();
@@ -2493,7 +2499,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     {
         if (_lifeStartSequence.Step == LifeStartStep.Idle) return;
         _lifeStartSequence.Abort();
-        Game1.addHUDMessage(new HUDMessage($"开始一起生活未完成：{reason} 游戏内状态保持真实结果，可在「伙伴设置」中重试。", HUDMessage.error_type));
+        ShowCompanionHud(new HUDMessage($"开始一起生活未完成：{reason} 游戏内状态保持真实结果，可在「伙伴设置」中重试。", HUDMessage.error_type));
     }
 
     // -----------------------------------------------------------------------
@@ -2510,7 +2516,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 if (reply.Status != "completed")
                 {
                     foreach (var entry in previous) _lifeMenuUiState.SetDecisionStatus(entry.Key, entry.Value);
-                    Game1.addHUDMessage(new HUDMessage(reply.ReplyText ?? "删除未确认，已恢复显示。", HUDMessage.error_type));
+                    ShowCompanionHud(new HUDMessage(reply.ReplyText ?? "删除未确认，已恢复显示。", HUDMessage.error_type));
                 }
                 DispatchLifeProfileRefresh();
                 return;
@@ -2529,7 +2535,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             {
                 _companionDialogue?.Receive(reply.RequestId, reply.Status, reply.ReplyText, reply.ProposalReady, reply.ProposalNodeId);
                 if (reply.Status == "queued")
-                    Game1.addHUDMessage(new HUDMessage("伙伴已收到消息，正在排队处理；不用重复发送。"));
+                    ShowCompanionHud(new HUDMessage("伙伴已收到消息，正在排队处理；不用重复发送。"));
                 if (reply.Status is "completed" or "failed")
                 {
                     bool visible = Game1.activeClickableMenu is CompanionConversationMenu or CompanionLifeMenu { IsChatVisible: true };
@@ -2540,10 +2546,10 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                     if (_lifeMenuUiState.RecordCompanionReply(reply.RequestId,
                         CompanionDialogueInbox.PlainText(text), GetCurrentGameDate()))
                     {
-                        if (!visible)
+                        if (!_desktopMode && !visible)
                         {
                             Game1.playSound("newArtifact");
-                            Game1.addHUDMessage(new HUDMessage($"{_lifeMenuUiState.CompanionName}回复了你 · 请看聊天栏", HUDMessage.newQuest_type));
+                            ShowCompanionHud(new HUDMessage($"{_lifeMenuUiState.CompanionName}回复了你 · 请看聊天栏", HUDMessage.newQuest_type));
                         }
                     }
                     DispatchLifeProfileRefresh();
@@ -2624,7 +2630,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 if (!state.Profile.Onboarded && !state.Profile.Skipped && !_lifeOnboardingHudShown)
                 {
                     _lifeOnboardingHudShown = true;
-                    Game1.addHUDMessage(new HUDMessage("新伙伴想认识你，走近按互动键聊聊吧。"));
+                    ShowCompanionHud(new HUDMessage("新伙伴想认识你，走近按互动键聊聊吧。"));
                 }
             }
             else
@@ -2633,7 +2639,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 if (!_lifeOnboardingHudShown)
                 {
                     _lifeOnboardingHudShown = true;
-                    Game1.addHUDMessage(new HUDMessage("新伙伴想认识你，走近按互动键聊聊吧。"));
+                    ShowCompanionHud(new HUDMessage("新伙伴想认识你，走近按互动键聊聊吧。"));
                 }
             }
 
@@ -2656,7 +2662,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                     : state.Reason == "STALE_REVISION"
                         ? "伙伴设置已变化，请重新打开设置后重试。"
                         : "伙伴设置未保存，请重试。";
-                Game1.addHUDMessage(new HUDMessage(message,
+                ShowCompanionHud(new HUDMessage(message,
                     state.Status == "confirmed" ? HUDMessage.newQuest_type : HUDMessage.error_type));
             }
 
@@ -2679,7 +2685,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 state.RequestId, state.Status, state.Reason);
             _companionDialogue?.ReceiveMemory(state.RequestId, state.Status);
             if (isEditReply && _lifeMenuUiState.MemoryEditFeedback != null)
-                Game1.addHUDMessage(new HUDMessage(_lifeMenuUiState.MemoryEditFeedback,
+                ShowCompanionHud(new HUDMessage(_lifeMenuUiState.MemoryEditFeedback,
                     state.Status == "confirmed" ? HUDMessage.newQuest_type : HUDMessage.error_type));
 
             Monitor.Log($"life.memory.state received: revision={state.MemoryRevision} count={state.Entries.Count}", LogLevel.Debug);
@@ -2742,7 +2748,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 _lifeMenuUiState.AddUnreadCareHint(hint);
                 // Show low-intrusion HUD message
                 if (_lifeMenuUiState.Conversation.Any(e => e.Id == "care:" + hint.EventKey && e.Unread))
-                    Game1.addHUDMessage(new HUDMessage($"{_lifeMenuUiState.CompanionName}有新消息 · 请看聊天栏"));
+                    ShowCompanionHud(new HUDMessage($"{_lifeMenuUiState.CompanionName}有新消息 · 请看聊天栏"));
             }
             else if (blocked && _careHintController.PendingHints.Any(h => h.EventKey == care.EventKey))
             {

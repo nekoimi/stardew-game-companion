@@ -97,6 +97,17 @@ def test_missing_or_changed_session_never_prompts_a_substitute(tmp_path, monkeyp
     assert not any(f["type"] == "prompt" for f in frames)
 
 
+def test_fresh_provider_exit_does_not_bind_uncreated_session_file(tmp_path, monkeypatch):
+    task = ActiveChatTask("first", "S")
+    instance = backend(tmp_path, monkeypatch, "exit_before_first_save")
+    result = instance.run(task, None, "开始")
+    assert result["error"] == "PI_RUNTIME_EXITED"
+    assert result["conversation_id"] is None
+    assert task.provider_conversation_id is None
+    monkeypatch.setenv("FAKE_PI_MODE", "normal")
+    assert instance.run(ActiveChatTask("retry", "S"), None, "再试一次")["success"]
+
+
 def test_cancel_requests_rpc_abort_and_releases_owned_process(tmp_path, monkeypatch):
     task = ActiveChatTask("R", "S")
     instance = backend(tmp_path, monkeypatch, "cancel")

@@ -30,6 +30,8 @@ for line in sys.stdin:
         emit({"type": "response", "id": frame["id"], "success": True,
               "data": {"sessionId": "original", "sessionFile": str(session)}})
     elif kind == "prompt":
+        if mode == "exit_before_first_save":
+            break
         session.write_text('{"type":"session","id":"original"}\n', encoding="utf-8")
         emit({"type": "response", "id": frame["id"], "success": True,
               "data": {"disposition": "started"}})

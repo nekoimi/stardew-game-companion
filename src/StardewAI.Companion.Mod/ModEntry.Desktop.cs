@@ -1,0 +1,212 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using StardewAI.Companion.Mod.PlayerMode;
+using StardewAI.Companion.Mod.Transport;
+using StardewModdingAPI;
+using StardewValley;
+
+namespace StardewAI.Companion.Mod;
+
+public sealed partial class ModEntry
+{
+    private readonly bool _desktopMode = Environment.GetEnvironmentVariable("STARDEW_DESKTOP_MODE") == "1";
+    private bool _desktopPaused;
+    private bool _desktopInterrupting;
+    private string? _desktopInterruptedCommandId;
+    private long _desktopSnapshotGeneration;
+
+    private void EnableDesktopFocusPolicy()
+    {
+        try
+        {
+            DesktopFocusPolicy.Install(() => Context.IsWorldReady && !Context.IsMultiplayer
+                && _transportServer?.IsChatConnected == true && (!PlayerModeEnabled || _authority?.AgentOwns == true));
+        }
+        catch (Exception ex)
+        {
+            Monitor.Log($"Desktop background play could not be enabled. Adjust the native out-of-focus pause option if needed: {ex.Message}", LogLevel.Warn);
+        }
+    }
+
+    private void ShowCompanionHud(HUDMessage message)
+    {
+        if (!_desktopMode) Game1.addHUDMessage(message);
+    }
+
+    private void AttachDesktopControls(WebSocketTransportServer server)
+    {
+        if (!_desktopMode) return;
+        _desktopPaused = _desktopInterrupting = false;
+        _desktopInterruptedCommandId = null;
+        _desktopSnapshotGeneration = -1;
+        server.DesktopClientEnabled = true;
+        server.OnDesktopControl += payload =>
+        {
+            long generation = server.ChatGeneration;
+            _mainThreadActions.Enqueue(() =>
+            {
+                if (ReferenceEquals(_transportServer, server) && server.IsChatConnected && generation == server.ChatGeneration)
+                    HandleDesktopControl(server, payload);
+            });
+        };
+        server.OnPlayerMessage += (type, _) =>
+        {
+            if (type != "disconnected") return;
+            _mainThreadActions.Enqueue(() =>
+            {
+                if (!ReferenceEquals(_transportServer, server) || server.IsChatConnected) return;
+                _desktopPaused = true;
+                CancelDesktopAction();
+            });
+        };
+    }
+
+    private void PublishDesktopControlState()
+    {
+        if (_transportServer is not { IsChatConnected: true } server || _coordinator is not { } coordinator) return;
+        if (_desktopSnapshotGeneration != server.ChatGeneration && _observer is not null)
+        {
+            _desktopSnapshotGeneration = server.ChatGeneration;
+            if (!PlayerModeEnabled)
+                _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
+        }
+        _ = server.SendDesktopStateAsync("desktop.control.result", new JsonObject
+        {
+            ["paused"] = _desktopPaused,
+            ["interrupting"] = _desktopInterrupting,
+            ["interruptedCommandId"] = _desktopInterruptedCommandId,
+            ["activeCommandId"] = server.ActiveCommandId,
+            ["activity"] = coordinator.GetActivityStatus(),
+            ["progress"] = coordinator.GetActivityLabel()
+        });
+    }
+
+    private void CancelDesktopAction()
+    {
+        if (_coordinator?.CancelRestTask() != true)
+            _coordinator?.ActiveMachine?.RequestCancel("Desktop control");
+    }
+
+    private void HandleDesktopControl(WebSocketTransportServer server, JsonObject payload)
+    {
+        if (!Context.IsWorldReady || _coordinator is not { } coordinator || _observer is null
+            || payload["requestId"] is not JsonValue key || !key.TryGetValue<string>(out var requestId))
+            return;
+
+        if (payload["action"]?.GetValue<string>() == "history")
+        {
+            int? before = payload["before"] is JsonValue cursor && cursor.TryGetValue<int>(out int index) ? index : null;
+            _ = SendDesktopHistoryAsync(server, requestId, before);
+            return;
+        }
+
+        string? error = null;
+        switch (payload["action"]?.GetValue<string>())
+        {
+            case "status": break;
+            case "interrupt":
+                _desktopInterruptedCommandId ??= server.ActiveCommandId;
+                _desktopInterrupting = true;
+                CancelDesktopAction();
+                break;
+            case "unhold":
+                if (server.ActiveCommandId is null && coordinator.ActiveMachine is null && !coordinator.HasRestTask)
+                {
+                    _desktopInterrupting = false;
+                    _desktopInterruptedCommandId = null;
+                }
+                else error = "ACTION_STILL_RUNNING";
+                break;
+            case "pause":
+                _desktopPaused = true;
+                if (coordinator.HasRestTask) coordinator.PauseRestTask();
+                else coordinator.ActiveMachine?.RequestPause();
+                break;
+            case "resume":
+                if (_desktopInterrupting)
+                    error = "ACTION_STILL_SETTLING";
+                else
+                {
+                    _desktopPaused = false;
+                    if (coordinator.HasRestTask) coordinator.ResumeRestTask();
+                    else coordinator.ActiveMachine?.Resume();
+                }
+                break;
+            case "takeover" when PlayerModeEnabled:
+                ReleasePlayerControl("human-takeover");
+                break;
+            case "handoff" when PlayerModeEnabled && _authority is not null:
+                if (_desktopInterrupting || coordinator.ActiveMachine is not null || coordinator.HasRestTask)
+                    error = "ACTION_STILL_SETTLING";
+                else
+                {
+                    _playerControlApproved = true;
+                    _authority.RequestAgent("human-explicit-handoff");
+                }
+                break;
+            case "record" when payload["text"]?.GetValue<string>() is { Length: > 0 and <= 500 } message:
+                if (!_lifeMenuUiState.BeginChat(requestId, "chat")) error = "CHAT_BUSY";
+                else
+                    _lifeMenuUiState.RecordConversation(requestId + ":player", "你", message, GetCurrentGameDate(),
+                        isPlayer: true, replyToDecisionId: payload["decisionId"]?.GetValue<string>());
+                break;
+            default: error = "CONTROL_UNAVAILABLE"; break;
+        }
+
+        SkillResultPayload? receipt = null;
+        if (payload["commandId"]?.GetValue<string>() is { Length: > 0 } commandId)
+        {
+            server.Idempotency.TryGetCompletedResult(commandId, out receipt);
+            if (receipt is null && coordinator.LastSkillResultPayload is { } last && last.CommandId == commandId)
+                receipt = last;
+        }
+        var reply = new JsonObject
+        {
+            ["requestId"] = requestId,
+            ["error"] = error,
+            ["activeCommandId"] = server.ActiveCommandId,
+            ["activity"] = coordinator.GetActivityStatus(),
+            ["progress"] = coordinator.GetActivityLabel(),
+            ["interruptedCommandId"] = _desktopInterruptedCommandId,
+            ["active"] = server.ActiveCommandId is not null || coordinator.ActiveMachine is not null || coordinator.HasRestTask,
+            ["paused"] = _desktopPaused,
+            ["interrupting"] = _desktopInterrupting,
+            ["controlOwner"] = PlayerModeEnabled ? _authority?.AgentOwns == true ? "agent" : "human" : null,
+            ["result"] = receipt is null ? null : JsonSerializer.SerializeToNode(receipt, WebSocketTransportServer.JsonOptions)
+        };
+        if (payload["action"]?.GetValue<string>() != "status")
+            _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
+        _ = server.SendDesktopStateAsync("desktop.control.result", reply);
+    }
+
+    private async Task SendDesktopHistoryAsync(WebSocketTransportServer server, string requestId, int? before)
+    {
+        var store = _conversationStore;
+        var saveId = _conversationSaveId;
+        long generation = server.ChatGeneration;
+        var reply = new JsonObject { ["requestId"] = requestId };
+        try
+        {
+            if (store is null || saveId is null) throw new InvalidOperationException("No conversation store for this save");
+            var page = await Task.Run(() =>
+            {
+                var history = store.LoadHistory(saveId);
+                int end = Math.Clamp(before ?? history.Count, 0, history.Count);
+                int start = Math.Max(0, end - 30);
+                return new
+                {
+                    entries = history.Skip(start).Take(end - start).Reverse().ToArray(),
+                    nextBefore = start > 0 ? (int?)start : null
+                };
+            }).ConfigureAwait(false);
+            reply["history"] = JsonSerializer.SerializeToNode(page, WebSocketTransportServer.JsonOptions);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            Monitor.Log($"Desktop history unavailable: {ex.Message}", LogLevel.Warn);
+            reply["error"] = "HISTORY_UNAVAILABLE";
+        }
+        if (server.ChatGeneration == generation && server.IsChatConnected)
+            await server.SendDesktopStateAsync("desktop.control.result", reply).ConfigureAwait(false);
+    }
+}

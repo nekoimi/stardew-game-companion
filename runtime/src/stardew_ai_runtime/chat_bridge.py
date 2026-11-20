@@ -32,6 +32,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -2023,6 +2024,10 @@ class ChatBridge:
                     continue
 
                 msg_type = data.get("messageType")
+                desktop_message = getattr(self, "desktop_message", None)
+                if msg_type in {"desktop.control.result", "desktop.result"} and desktop_message is not None:
+                    desktop_message(data, active_save_id)
+                    continue
                 await self._refresh_external_connection(ws)
                 if msg_type == "connection.source.set":
                     await self._set_connection_source(ws, data.get("payload") or {}, active_save_id)
@@ -2204,6 +2209,8 @@ class ChatBridge:
         *, force: bool = False
     ) -> None:
         """Evaluate the latest native snapshot through the chat channel only."""
+        if getattr(self, "_desktop_control_pending", False):
+            return
         if not self._connection_ready():
             return
         if not save_id or self._autonomy is None or envelope.message_type != "world.snapshot":
@@ -3138,26 +3145,7 @@ class ChatBridge:
                 ))
                 await self._push_usage_state(ws, save_id)
             elif msg_type == "life.profile.set":
-                payload = LifeProfileSetPayload.from_mapping(payload_data)
-                save_id = payload.save_id or str(active_save_id or "")
-                status, result = ("rejected", {"reason": "NO_PROFILE_STORE"})
-                if self._profile_store is not None:
-                    status, result = self._profile_store.set(
-                        save_id, dict(payload.patch), payload.expected_revision
-                    )
-                profile_res = (
-                    self._profile_store.get(save_id)
-                    if self._profile_store is not None
-                    else {"profile": None, "profileRevision": 0}
-                )
-                await self._send_reply(ws, Envelope.create_life_profile_state(
-                    self.instance_id, payload.request_id, save_id,
-                    profile_res.get("profile"),
-                    int(profile_res.get("profileRevision") or 0),
-                    status=status,
-                    reason=result.get("reason") if isinstance(result, dict) else None,
-                    work=self._life_work_projection(save_id),
-                ))
+                await self._send_reply(ws, self._set_life_profile(LifeProfileSetPayload.from_mapping(payload_data)))
             elif msg_type == "life.memory.list":
                 payload = LifeMemoryListPayload.from_mapping(payload_data)
                 save_id = payload.save_id or str(active_save_id or "")
@@ -3193,6 +3181,19 @@ class ChatBridge:
         except Exception as ex:
             logger.error("Error handling %s: %s", msg_type, ex, exc_info=True)
             await self._send_life_error(ws, msg_type, data, active_save_id, f"LIFE_HANDLER_ERROR: {ex}")
+
+    def _set_life_profile(self, payload: LifeProfileSetPayload) -> Envelope:
+        save_id = payload.save_id
+        status, result = ("rejected", {"reason": "NO_PROFILE_STORE"})
+        profile = {"profile": None, "profileRevision": 0}
+        if self._profile_store is not None:
+            status, result = self._profile_store.set(save_id, dict(payload.patch), payload.expected_revision)
+            profile = self._profile_store.get(save_id)
+        return Envelope.create_life_profile_state(
+            self.instance_id, payload.request_id, save_id, profile.get("profile"),
+            profile["profileRevision"], status=status, reason=result.get("reason"),
+            work=self._life_work_projection(save_id),
+        )
 
     async def _send_life_error(
         self,
@@ -3536,12 +3537,12 @@ class ChatBridge:
 
     async def _drain_life_queue(self, ws: WebSocketClient | None) -> None:
         """Process queued life submits FIFO once the model slot is free."""
-        if self._life_draining or not self._connection_ready():
+        if self._life_draining or not self._connection_ready() or getattr(self, "_desktop_control_pending", False):
             return
         self._life_draining = True
         try:
             while self._life_queue or self._pending_life_preparation:
-                if not self._connection_ready():
+                if not self._connection_ready() or getattr(self, "_desktop_control_pending", False):
                     return
                 if self._busy_lock.locked() or (
                     self._active_task and not self._active_task.cancelled
@@ -4719,6 +4720,7 @@ class ChatBridge:
     async def _handle_autonomy_control(
         self, ws: WebSocketClient | None, envelope: Envelope, active_save_id: str | None,
         *, preserve_life_request_id: str | None = None,
+        before_current_cancel: Callable[[], Awaitable[None]] | None = None,
     ) -> bool:
         """Apply controls synchronously and acknowledge only the active save."""
         save_id = str(envelope.payload.get("saveId") or envelope.save_id or "")
@@ -4785,6 +4787,8 @@ class ChatBridge:
                     self._withdraw_work_goals(save_id, {target_goal_id})
                     unrelated_cancel = True
                 else:
+                    if before_current_cancel is not None:
+                        await before_current_cancel()
                     native_ok = await self.handle_chat_cancel(ws, None, "F8 cancel", save_id, command_id=command_id or None,
                         all_arrangements=bool(params.get("allArrangements")), target_goal_id=target_goal_id or None,
                         pending_request_id=pending_request_id)

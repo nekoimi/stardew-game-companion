@@ -1,0 +1,225 @@
+<Window x:Class="StardewAI.Companion.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:StardewAI.Companion.Desktop"
+        Title="星露谷游戏伴侣" Width="960" Height="690" MinWidth="760" MinHeight="575"
+        WindowStartupLocation="CenterScreen" Background="#F6F4EB" Foreground="#23352B"
+        FontFamily="Microsoft YaHei UI" FontSize="14">
+    <Window.Resources>
+        <DataTemplate DataType="{x:Type local:TimelineEntry}">
+            <Border Background="#FAFCF8" BorderBrush="#E3EBE0" BorderThickness="1"
+                    CornerRadius="5" Padding="12,8" Margin="0,0,0,7">
+                <StackPanel>
+                    <TextBlock Text="{Binding Label}" Foreground="#3C6251" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid Margin="24,19">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid Margin="0,0,0,15">
+            <StackPanel>
+                <TextBlock Text="星露谷游戏伴侣" FontSize="29" FontWeight="SemiBold" />
+                <TextBlock x:Name="ConnectionText" Text="等待启动游戏" Foreground="#537261" Margin="0,4,0,0" />
+            </StackPanel>
+            <Button x:Name="LaunchHeader" Content="启动游戏" Click="LaunchClicked"
+                    HorizontalAlignment="Right" VerticalAlignment="Center" Background="#336450" Foreground="White"
+                    BorderBrush="#336450" Margin="0" Padding="20,9" />
+        </Grid>
+        <Border Grid.Row="1" Background="#E7EEE4" CornerRadius="5" Padding="12,7" Margin="0,0,0,13" MinHeight="34">
+            <TextBlock x:Name="ActivityText" Text="启动后，请在游戏中选择单人存档。" TextWrapping="Wrap" />
+        </Border>
+        <TabControl x:Name="Pages" Grid.Row="2" Background="#FFFFFF" BorderBrush="#C8D5C8" Padding="13"
+                    SelectionChanged="SaveViewSelected">
+            <TabItem x:Name="CommandPage" Header="指令">
+                <Grid Margin="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <WrapPanel Margin="0,0,0,10">
+                        <Button x:Name="PauseButton" Tag="pause" Click="ControlClicked" Content="暂停" />
+                        <Button x:Name="ResumeButton" Tag="resume" Click="ControlClicked" Content="继续" />
+                        <Button x:Name="CancelButton" Tag="cancel" Click="ControlClicked" Content="取消当前工作" />
+                        <Button x:Name="AuthorityButton" Click="AuthorityClicked" Content="交给 AI" />
+                    </WrapPanel>
+                    <TabControl x:Name="CommandViews" Grid.Row="1" Padding="8" SelectionChanged="SaveViewSelected">
+                        <TabItem Header="对话">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <ScrollViewer x:Name="TimelineScroll" VerticalScrollBarVisibility="Auto" Focusable="False">
+                                    <ItemsControl x:Name="Timeline" />
+                                </ScrollViewer>
+                                <Border x:Name="DecisionPanel" Grid.Row="1" Background="#F1F5E6" Padding="10" Margin="0,6,0,8" Visibility="Collapsed">
+                                    <StackPanel>
+                                        <ComboBox x:Name="DecisionPicker" DisplayMemberPath="Title" SelectedValuePath="Id"
+                                                  AutomationProperties.Name="待确认事项" SelectionChanged="DecisionSelected" Margin="0,0,0,6" />
+                                        <TextBlock x:Name="DecisionText" TextWrapping="Wrap" Margin="0,0,0,6" />
+                                        <WrapPanel x:Name="DecisionChoices" />
+                                        <DockPanel LastChildFill="True" Margin="0,5,0,0">
+                                            <Button x:Name="DecisionReplyButton" Content="回复此事项" DockPanel.Dock="Right"
+                                                    Click="DecisionReplyClicked" Margin="8,0,0,0" />
+                                            <TextBox x:Name="DecisionInput" MaxLength="500" AutomationProperties.Name="自定义回复" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Grid Grid.Row="2" Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="Input" AutomationProperties.Name="发送给伴侣的指令"
+                                             MaxLength="500" MinHeight="46" MaxHeight="110" TextWrapping="Wrap"
+                                             AcceptsReturn="True" VerticalScrollBarVisibility="Auto" PreviewKeyDown="InputKeyDown" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="9,0,0,0">
+                                        <Button x:Name="SendButton" Content="发送" Click="SendClicked" />
+                                        <Button x:Name="InterruptButton" Content="打断并执行" Click="InterruptClicked" Margin="0" />
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="工作" x:Name="WorkPage">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="3*" />
+                                </Grid.ColumnDefinitions>
+                                <DockPanel Margin="0,0,14,0">
+                                    <TextBlock DockPanel.Dock="Top" Text="进行中的目标" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <Button DockPanel.Dock="Bottom" x:Name="WithdrawGoalButton" Content="撤回所选目标" Margin="0,8,0,0"
+                                            HorizontalAlignment="Left" IsEnabled="False" Click="WithdrawGoalClicked" />
+                                    <ListBox x:Name="GoalPicker" AutomationProperties.Name="进行中的目标" SelectionChanged="GoalSelected"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="3,4">
+                                                    <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Details}" TextWrapping="Wrap" Foreground="#537261" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                                <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0,0,7,0">
+                                    <StackPanel>
+                                        <TextBlock x:Name="WorkStatus" TextWrapping="Wrap" Margin="0,0,0,9" />
+                                        <TextBlock x:Name="WorkFeedback" TextWrapping="Wrap" Foreground="#537261" />
+                                        <ItemsControl x:Name="WorkDetails" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="历史" x:Name="HistoryPage">
+                            <DockPanel>
+                                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                    <Button x:Name="HistoryRefreshButton" Content="读取最新" Click="RefreshHistoryClicked" />
+                                    <Button x:Name="HistoryOlderButton" Content="查看更早记录" Click="OlderHistoryClicked" />
+                                </WrapPanel>
+                                <TextBlock x:Name="HistoryStatus" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <ScrollViewer x:Name="HistoryScroll" VerticalScrollBarVisibility="Auto" Focusable="False">
+                                    <ItemsControl x:Name="HistoryEntries" />
+                                </ScrollViewer>
+                            </DockPanel>
+                        </TabItem>
+                    </TabControl>
+                </Grid>
+            </TabItem>
+            <TabItem x:Name="SettingsPage" Header="设置">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="8" MaxWidth="670">
+                        <StackPanel x:Name="SettingsFields">
+                            <TextBlock Text="游戏目录" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <DockPanel Margin="0,0,0,15">
+                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseGame" Margin="8,0,0,0" />
+                                <TextBox x:Name="GameFolder" AutomationProperties.Name="游戏目录" />
+                            </DockPanel>
+                            <TextBlock Text="游玩方式" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <ComboBox x:Name="Mode" Width="220" HorizontalAlignment="Left" Margin="0,0,0,15">
+                                <ComboBoxItem Content="伙伴模式" Tag="companion" />
+                                <ComboBoxItem Content="AI 自己玩（单人）" Tag="player" />
+                            </ComboBox>
+                            <TextBlock Text="Pi 模型" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <TextBox x:Name="Model" AutomationProperties.Name="Pi 模型" />
+                            <TextBlock Text="留空使用 Pi 当前配置的模型。" Foreground="#537261" Margin="0,3,0,15" />
+                            <TextBlock Text="Pi 客户端路径" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowsePi" Margin="8,0,0,0" />
+                                <TextBox x:Name="PiPath" AutomationProperties.Name="Pi 客户端路径" />
+                            </DockPanel>
+                            <TextBlock Text="留空自动检测。请先完成 Pi 登录。" Foreground="#537261" Margin="0,3,0,16" />
+                            <Button Content="保存启动设置" Click="SaveClicked" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <Separator Margin="0,13" />
+                        <TextBlock Text="当前存档的伙伴设置" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
+                        <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
+                        <Button x:Name="ReadProfileButton" Content="重新读取伙伴设置" HorizontalAlignment="Left" Click="ReadProfileClicked" />
+                        <StackPanel x:Name="ProfileFields" Margin="0,8,0,0">
+                            <UniformGrid Columns="2">
+                                <StackPanel Margin="0,0,12,10">
+                                    <TextBlock Text="伙伴名字" Margin="0,0,0,4" />
+                                    <TextBox x:Name="CompanionName" MaxLength="12" AutomationProperties.Name="伙伴名字" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,0,10">
+                                    <TextBlock Text="相处方向" Margin="0,0,0,4" />
+                                    <ComboBox x:Name="PlayStyle" SelectedValuePath="Tag" AutomationProperties.Name="相处方向">
+                                        <ComboBoxItem Content="赚钱" Tag="earn" />
+                                        <ComboBoxItem Content="干活" Tag="workhorse" />
+                                        <ComboBoxItem Content="社区" Tag="community" />
+                                        <ComboBoxItem Content="布置" Tag="decor" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,12,10">
+                                    <TextBlock Text="性格" Margin="0,0,0,4" />
+                                    <ComboBox x:Name="Personality" SelectedValuePath="Tag" AutomationProperties.Name="性格">
+                                        <ComboBoxItem Content="温柔" Tag="gentle" />
+                                        <ComboBoxItem Content="活泼" Tag="lively" />
+                                        <ComboBoxItem Content="沉稳" Tag="calm" />
+                                        <ComboBoxItem Content="嘴硬心软" Tag="tsundere" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,0,10">
+                                    <TextBlock Text="交流频率" Margin="0,0,0,4" />
+                                    <ComboBox x:Name="CareFrequency" SelectedValuePath="Tag" AutomationProperties.Name="交流频率">
+                                        <ComboBoxItem Content="安静" Tag="quiet" />
+                                        <ComboBoxItem Content="适中" Tag="moderate" />
+                                        <ComboBoxItem Content="健谈" Tag="chatty" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,12,10">
+                                    <TextBlock Text="就寝时间" Margin="0,0,0,4" />
+                                    <ComboBox x:Name="Bedtime" AutomationProperties.Name="就寝时间" />
+                                </StackPanel>
+                            </UniformGrid>
+                            <Button x:Name="SaveProfileButton" Content="保存伙伴设置" HorizontalAlignment="Left" Click="SaveProfileClicked" />
+                            <Separator Margin="0,12" />
+                            <CheckBox x:Name="Initiative" Content="空闲时主动帮忙" Margin="0,0,0,8" />
+                            <TextBlock Text="主动帮忙时的偏好" Margin="0,0,0,4" />
+                            <ComboBox x:Name="IdlePreference" Width="200" HorizontalAlignment="Left" SelectedValuePath="Tag"
+                                      AutomationProperties.Name="主动帮忙时的偏好" Margin="0,0,0,9">
+                                <ComboBoxItem Content="由伙伴安排" Tag="autonomous" />
+                                <ComboBoxItem Content="清理障碍" Tag="clear" />
+                                <ComboBoxItem Content="采集" Tag="forage" />
+                                <ComboBoxItem Content="采木" Tag="wood" />
+                                <ComboBoxItem Content="原地等待" Tag="wait" />
+                            </ComboBox>
+                            <Button x:Name="SaveInitiativeButton" Content="保存主动帮忙设置" HorizontalAlignment="Left" Click="SaveInitiativeClicked" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="诊断">
+                <TextBox x:Name="Diagnostics" AutomationProperties.Name="运行日志" IsReadOnly="True" TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto" Margin="4" BorderThickness="0" FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" />
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Window>

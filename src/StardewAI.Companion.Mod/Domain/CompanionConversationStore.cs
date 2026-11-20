@@ -26,9 +26,7 @@ public sealed class CompanionConversationStore
 
     public IReadOnlyList<CompanionConversationEntry> Load(string saveId)
     {
-        string path = PathFor(saveId);
-        if (!File.Exists(path)) return Array.Empty<CompanionConversationEntry>();
-        var archive = JsonSerializer.Deserialize<CompanionConversationArchive>(File.ReadAllText(path));
+        var archive = ReadArchive(PathFor(saveId));
         return archive?.SaveId == saveId ? Retain(archive.Entries) : Array.Empty<CompanionConversationEntry>();
     }
 
@@ -45,10 +43,22 @@ public sealed class CompanionConversationStore
 
     public IReadOnlyList<CompanionConversationEntry> LoadHistory(string saveId)
     {
-        string path = PathFor(saveId) + ".history.json";
-        if (!File.Exists(path)) return Load(saveId);
-        var archive = JsonSerializer.Deserialize<CompanionConversationArchive>(File.ReadAllText(path));
-        return archive?.SaveId == saveId ? archive.Entries : Array.Empty<CompanionConversationEntry>();
+        var archive = ReadArchive(PathFor(saveId) + ".history.json");
+        return archive is null ? Load(saveId)
+            : archive.SaveId == saveId ? archive.Entries : Array.Empty<CompanionConversationEntry>();
+    }
+
+    private static CompanionConversationArchive? ReadArchive(string path)
+    {
+        try
+        {
+            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            var archive = JsonSerializer.Deserialize<CompanionConversationArchive>(stream);
+            if (archive?.Entries == null) throw new JsonException("Missing conversation entries");
+            return archive;
+        }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
     }
 
     private static void Write(string path, CompanionConversationArchive archive)

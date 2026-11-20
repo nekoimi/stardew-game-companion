@@ -89,6 +89,10 @@ public sealed class WebSocketTransportServer : ITransportServer
     public bool SupportsThinkingPause { get; set; }
     public long? ActorMultiplayerId { get; set; }
     public event Action<string, JsonObject>? OnPlayerMessage;
+    public event Action<JsonObject>? OnDesktopControl;
+    public bool DesktopClientEnabled { get; set; }
+    public Task<bool> SendDesktopStateAsync(string type, JsonObject payload) =>
+        SendChatEnvelopeAsync(CreateEnvelope(type, payload));
     public Task<bool> SendPlayerAuthorityAsync(string owner,string reason) => SendChatEnvelopeAsync(CreateEnvelope("player.authority",new JsonObject { ["owner"]=owner,["reason"]=reason,["saveId"]=_saveId }));
     public event Action<LifeChatReplyPayload>? OnLifeChatReplyReceived;
     public event Action<LifeProfileStatePayload>? OnLifeProfileStateReceived;
@@ -1525,6 +1529,8 @@ public sealed class WebSocketTransportServer : ITransportServer
         );
 
         EnqueueOutbound(envelope, isCritical: true, _socketGeneration);
+        if (DesktopClientEnabled && !IsObservationSkill(result.SkillId))
+            _ = SendDesktopStateAsync("desktop.result", payloadNode);
         return Task.CompletedTask;
     }
 
@@ -1660,6 +1666,15 @@ public sealed class WebSocketTransportServer : ITransportServer
                             if (!root.TryGetProperty("gameSessionId",out var session) || session.GetString() != _gameSessionId) continue;
                             var data = JsonNode.Parse(root.GetProperty("payload").GetRawText())!.AsObject();
                             OnPlayerMessage?.Invoke(playerType,data); continue;
+                        }
+                        if (playerType == "desktop.control")
+                        {
+                            if (DesktopClientEnabled && gen == ChatGeneration
+                                && root.TryGetProperty("saveId", out var desktopSave) && desktopSave.GetString() == _saveId
+                                && root.TryGetProperty("gameSessionId", out var desktopSession) && desktopSession.GetString() == _gameSessionId
+                                && JsonNode.Parse(root.GetProperty("payload").GetRawText()) is JsonObject desktopControl)
+                                OnDesktopControl?.Invoke(desktopControl);
+                            continue;
                         }
 
 
