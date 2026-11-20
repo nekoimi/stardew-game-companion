@@ -53,6 +53,7 @@ public class ReleaseBridgeLauncherTests
 
     [Theory]
     [InlineData("Write-Error 'AI CLI codex is missing. sessionToken=never-show-this'; exit 9", "codex", 9)]
+    [InlineData("Write-Error 'AI CLI pi entry point is missing. sessionToken=never-show-this'; exit 1", "pi 启动文件缺失", 1)]
     [InlineData("Write-Error 'AI CLI dsh is missing. sessionToken=never-show-this'; exit 1", "dsh", 1)]
     [InlineData("Write-Error 'AI CLI dsh Node.js is missing. sessionToken=never-show-this'; exit 1", "Node.js", 1)]
     [InlineData("Write-Error 'AI CLI dsh entry point is missing. sessionToken=never-show-this'; exit 1", "dsh 启动文件缺失", 1)]

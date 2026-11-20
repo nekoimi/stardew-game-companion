@@ -53,6 +53,7 @@ def test_mcp_server_tool_registration(mock_scheduler):
             eat_food feed_animals get_status get_work_overview harvest_and_store harvest_auto
             hoe_tiles insert_machine manage_goal manage_milestones manage_companion manage_plan manage_todo
             move_building navigate_to native_advance native_answer observe_building_services observe_crafting
+            delegate_goal set_goal_continuation
             observe_farm_space observe_farming_helpers observe_livestock observe_machines
             observe_map_image observe_production open_chest open_shop organize_chest pause_task pet_animal
             pickup_items place_items player_control plant_crop_workflow plant_seeds purchase_animal

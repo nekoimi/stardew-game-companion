@@ -987,6 +987,67 @@ class WorkStore:
             return goal
         return self._mutate(save_id, mutate)
 
+    def delegate_current_request(self, save_id: str, token: str | None, summary: str) -> Goal:
+        """Bind ongoing work to the original player message, never model text."""
+        if not summary.strip() or len(summary) > 1200:
+            raise WorkStateError("A short interpretation of the delegated goal is required")
+
+        def mutate(state: SaveWorkState) -> Goal:
+            self._assert_decision_valid(state, token)
+            request = next((r for r in state.requests if r.get("id") == state.decision.get("requestId")), None)
+            if not request or request.get("origin") not in {"player", "player-midflight"} or request.get("workStopped"):
+                raise WorkStateError("PLAYER_DELEGATION_REQUIRED: no active original player request")
+            goal = next((g for g in state.goals if g.constraints.get("playerRequestId") == request["id"]
+                         and g.constraints.get("continuous") is True and g.status == "active"), None)
+            if goal is None:
+                main = self._active_main_goal(state)
+                goal = Goal(id=_new_id("goal"), text=request["text"], source="user",
+                    kind="stage" if main else "main", parent_id=main.id if main else None,
+                    constraints={"playerRequestId": request["id"], "continuous": True})
+                state.goals.append(goal)
+            goal.project.update(summary=summary.strip(), continuation={"status": "continue"})
+            request["goalId"] = goal.id
+            state.decision.update(goalId=goal.id, goalScope=goal.id)
+            state.scheduler_epoch += 1
+            return goal
+
+        return self._mutate(save_id, mutate)
+
+    def set_goal_continuation(self, save_id: str, token: str | None, status: str,
+                              reason: str, trigger: dict[str, Any] | None = None) -> Goal:
+        """Save a decision boundary, not a queued action or workflow."""
+        if status not in {"continue", "wait"} or not reason.strip() or len(reason) > 500:
+            raise WorkStateError("Use continue or wait with a short reason")
+        if status == "wait":
+            self._validate_trigger(trigger)
+        elif trigger is not None:
+            raise WorkStateError("Only wait accepts a trigger")
+
+        def mutate(state: SaveWorkState) -> Goal:
+            self._assert_decision_valid(state, token)
+            goal = self._find_goal(state, state.decision.get("goalScope") or state.decision.get("goalId") or "")
+            if goal.status != "active" or goal.constraints.get("continuous") is not True:
+                raise WorkStateError("No active continuous delegation is bound to this turn")
+            goal.project["continuation"] = {"status": status, "reason": reason.strip(),
+                                             **({"trigger": dict(trigger)} if trigger else {})}
+            goal.project["nextAction"] = reason.strip()
+            goal.updated_at = _now_iso()
+            goal.epoch += 1
+            state.scheduler_epoch += 1
+            return goal
+
+        return self._mutate(save_id, mutate)
+
+    def continuation_ready(self, save_id: str, goal_id: str, snapshot: dict[str, Any]) -> bool:
+        goal = self._find_goal(self.state(save_id), goal_id)
+        continuation = goal.project.get("continuation") or {}
+        if continuation.get("status") != "wait":
+            return True
+        payload = snapshot.get("payload", snapshot)
+        world = payload.get("world") or {}
+        key = _calendar_key(world.get("year"), world.get("season"), world.get("dayOfMonth"))
+        return self._trigger_satisfied(continuation.get("trigger") or {}, snapshot, key)
+
     def revise_goal(
         self,
         save_id: str,

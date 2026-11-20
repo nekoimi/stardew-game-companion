@@ -9,9 +9,9 @@
 param(
     [string]$GameDir = "",
     [string]$TargetModDir = "",
-    [ValidateSet('agy', 'kimi', 'codex', 'dsh', 'mcode', 'claude', 'all', 'none')][string]$Agent = 'kimi',
+    [ValidateSet('agy', 'kimi', 'codex', 'dsh', 'mcode', 'pi', 'claude', 'all', 'none')][string]$Agent = 'kimi',
     [string]$Model = "",
-    [ValidateSet('default', 'off', 'low', 'medium', 'high', 'xhigh', 'max')][string]$Effort = '',
+    [ValidateSet('default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')][string]$Effort = '',
     [switch]$AutoInstall,
     [switch]$DryRun,
     [switch]$CheckOnly,
@@ -26,7 +26,7 @@ $OutputEncoding = (New-Object System.Text.UTF8Encoding($false))
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
 if (Test-Path -LiteralPath (Join-Path $repoRoot 'release-manifest.json')) {
-    if ($Agent -notin @('kimi', 'agy', 'codex', 'dsh', 'mcode', 'none')) { throw 'Release chat supports kimi, agy, codex, dsh or mcode; use register-mcp.ps1 for other MCP clients.' }
+    if ($Agent -notin @('kimi', 'agy', 'codex', 'dsh', 'mcode', 'pi', 'none')) { throw 'Release chat supports kimi, agy, codex, dsh, mcode or pi; use register-mcp.ps1 for other MCP clients.' }
     $releaseArgs = @{}
     foreach ($key in @('GameDir', 'TargetModDir', 'Agent', 'Model', 'Effort', 'AutoInstall', 'DryRun', 'CheckOnly')) {
         if ($PSBoundParameters.ContainsKey($key)) { $releaseArgs[$key] = $PSBoundParameters[$key] }
@@ -330,7 +330,7 @@ function Register-Mcp([string]$agentName, [string]$modDir, [bool]$isDryRun = $fa
                 Message = "已成功写入项目级配置: $mcpFile"
             }
         }
-        { $_ -in @('codex', 'dsh', 'mcode') } {
+        { $_ -in @('codex', 'dsh', 'mcode', 'pi') } {
             return [PSCustomObject]@{
                 Agent = $agentName
                 Success = $true
@@ -379,7 +379,7 @@ function Register-Mcp([string]$agentName, [string]$modDir, [bool]$isDryRun = $fa
 }
 
 function Set-ChatBackendConfig([string]$backendName, [bool]$isDryRun = $false) {
-    if ($backendName -notin @('agy', 'kimi', 'codex', 'dsh', 'mcode')) {
+    if ($backendName -notin @('agy', 'kimi', 'codex', 'dsh', 'mcode', 'pi')) {
         return
     }
     $configDir = Join-Path $repoRoot "config"
@@ -391,7 +391,7 @@ function Set-ChatBackendConfig([string]$backendName, [bool]$isDryRun = $false) {
     if (-not (Test-Path -LiteralPath $configDir)) {
         New-Item -ItemType Directory -Path $configDir -Force | Out-Null
     }
-    $model = if ($backendName -eq 'kimi') { 'kimi-code/k3' } elseif ($backendName -eq 'dsh') { 'deepseek-flash' } elseif ($backendName -in @('codex', 'mcode')) { '' } else { 'gemini-3.8-flash' }
+    $model = if ($backendName -eq 'kimi') { 'kimi-code/k3' } elseif ($backendName -eq 'dsh') { 'deepseek-flash' } elseif ($backendName -in @('codex', 'mcode', 'pi')) { '' } else { 'gemini-3.8-flash' }
     $backendSettings = @{ backend = $backendName; model = $model }
     if ($backendName -in @('codex', 'dsh')) { $backendSettings.effort = 'low' }
     if ($backendName -eq 'mcode') { $backendSettings.effort = 'default' }
@@ -449,7 +449,7 @@ Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "星露谷 AI 伙伴一键设置向导"
-$form.Size = New-Object System.Drawing.Size(660, 560)
+$form.Size = New-Object System.Drawing.Size(660, 585)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -510,7 +510,7 @@ $grpGame.Controls.Add($lblGameStatus)
 $grpAgent = New-Object System.Windows.Forms.GroupBox
 $grpAgent.Text = "2. 选择要接入的 AI 客户端"
 $grpAgent.Location = New-Object System.Drawing.Point(20, 215)
-$grpAgent.Size = New-Object System.Drawing.Size(605, 110)
+$grpAgent.Size = New-Object System.Drawing.Size(605, 135)
 $form.Controls.Add($grpAgent)
 
 $rbAgy = New-Object System.Windows.Forms.RadioButton
@@ -551,10 +551,16 @@ $rbClaude.Location = New-Object System.Drawing.Point(20, 75)
 $rbClaude.AutoSize = $true
 $grpAgent.Controls.Add($rbClaude)
 
+$rbPi = New-Object System.Windows.Forms.RadioButton
+$rbPi.Text = "Pi（持续目标，沿用本机模型）"
+$rbPi.Location = New-Object System.Drawing.Point(20, 100)
+$rbPi.AutoSize = $true
+$grpAgent.Controls.Add($rbPi)
+
 # 分组 3: 操作日志与提示
 $grpLog = New-Object System.Windows.Forms.GroupBox
 $grpLog.Text = "3. 状态与操作提示"
-$grpLog.Location = New-Object System.Drawing.Point(20, 335)
+$grpLog.Location = New-Object System.Drawing.Point(20, 360)
 $grpLog.Size = New-Object System.Drawing.Size(605, 125)
 $form.Controls.Add($grpLog)
 
@@ -571,14 +577,14 @@ $grpLog.Controls.Add($txtLog)
 # 底部按钮区
 $btnViewUsage = New-Object System.Windows.Forms.Button
 $btnViewUsage.Text = "查看 Token 使用记录"
-$btnViewUsage.Location = New-Object System.Drawing.Point(20, 475)
+$btnViewUsage.Location = New-Object System.Drawing.Point(20, 500)
 $btnViewUsage.Size = New-Object System.Drawing.Size(160, 32)
 $btnViewUsage.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
 $form.Controls.Add($btnViewUsage)
 
 $btnApply = New-Object System.Windows.Forms.Button
 $btnApply.Text = "一键完成设置 (安装 Mod + 注册 MCP)"
-$btnApply.Location = New-Object System.Drawing.Point(240, 475)
+$btnApply.Location = New-Object System.Drawing.Point(240, 500)
 $btnApply.Size = New-Object System.Drawing.Size(260, 32)
 $btnApply.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9, [System.Drawing.FontStyle]::Bold)
 $btnApply.BackColor = [System.Drawing.Color]::FromArgb(46, 117, 182)
@@ -587,7 +593,7 @@ $form.Controls.Add($btnApply)
 
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = "关闭"
-$btnClose.Location = New-Object System.Drawing.Point(515, 475)
+$btnClose.Location = New-Object System.Drawing.Point(515, 500)
 $btnClose.Size = New-Object System.Drawing.Size(110, 32)
 $form.Controls.Add($btnClose)
 
@@ -666,7 +672,7 @@ $btnApply.Add_Click({
     }
 
     # 3. 注册选定的客户端
-    $chosenAgent = if ($rbAgy.Checked) { 'agy' } elseif ($rbKimi.Checked) { 'kimi' } elseif ($rbCodex.Checked) { 'codex' } elseif ($rbDsh.Checked) { 'dsh' } elseif ($rbMcode.Checked) { 'mcode' } else { 'claude' }
+    $chosenAgent = if ($rbAgy.Checked) { 'agy' } elseif ($rbKimi.Checked) { 'kimi' } elseif ($rbCodex.Checked) { 'codex' } elseif ($rbDsh.Checked) { 'dsh' } elseif ($rbMcode.Checked) { 'mcode' } elseif ($rbPi.Checked) { 'pi' } else { 'claude' }
     try {
         $txtLog.AppendText(">>> 正在配置 AI 客户端 ($chosenAgent)...`r`n")
         $mcpRes = Register-Mcp -agentName $chosenAgent -modDir $targetMod

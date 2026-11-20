@@ -104,7 +104,7 @@ function Find-ReleaseAiCli([string]$Backend, [string]$LogRoot = '') {
     $application = Get-Command ($Backend + '.exe') -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     # npm exposes dsh and mcode through .cmd shims on Windows. The prefix need not be
     # APPDATA/npm, so honor a PATH installation before probing known folders.
-    if (-not $application -and $Backend -in @('dsh', 'mcode')) {
+    if (-not $application -and $Backend -in @('dsh', 'mcode', 'pi')) {
         $application = Get-Command ($Backend + '.cmd') -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     }
     if ($application) {
@@ -124,7 +124,7 @@ function Find-ReleaseAiCli([string]$Backend, [string]$LogRoot = '') {
             }
         }
     }
-    if ($Backend -in @('dsh', 'mcode')) {
+    if ($Backend -in @('dsh', 'mcode', 'pi')) {
         # A game/test launcher may override APPDATA. Windows' actual user folder
         # is an independent fallback; do not change the game's APPDATA itself.
         $roamingFolders = @($env:APPDATA, [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData))
@@ -136,6 +136,19 @@ function Find-ReleaseAiCli([string]$Backend, [string]$LogRoot = '') {
         }
         $cachedCli = Find-ReleaseCachedNpmCli $env:LOCALAPPDATA $Backend -LogRoot $LogRoot
         if ($cachedCli) { return $cachedCli }
+        # fnm's terminal initialization adds a temporary multishell directory to
+        # PATH. Steam does not run that initialization; use the stable default
+        # alias instead of guessing among installed Node versions or stale shells.
+        $fnmRoots = @($env:FNM_DIR)
+        foreach ($folder in @($env:APPDATA, $env:LOCALAPPDATA)) {
+            if ($folder) { $fnmRoots += Join-Path $folder 'fnm' }
+        }
+        foreach ($folder in ($fnmRoots | Where-Object { $_ } | Select-Object -Unique)) {
+            $npmCli = Join-Path $folder ("aliases\default\$Backend.cmd")
+            $exists = Test-Path -LiteralPath $npmCli -PathType Leaf
+            Write-ReleaseStartupDiagnostic $LogRoot @{ event = 'cli-probe'; backend = $Backend; path = $npmCli; exists = $exists; source = 'fnm-default' }
+            if ($exists) { return $npmCli }
+        }
     }
     $knownBinary = if ($Backend -eq 'agy' -and $env:LOCALAPPDATA) {
         Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
@@ -172,9 +185,9 @@ function Assert-ReleaseAiCli([string]$Binary, [string]$Backend, [string]$LogRoot
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $Binary
     $start.Arguments = '--version'
-    if ($Backend -in @('dsh', 'mcode') -and [IO.Path]::GetExtension($Binary) -eq '.cmd') {
+    if ($Backend -in @('dsh', 'mcode', 'pi') -and [IO.Path]::GetExtension($Binary) -eq '.cmd') {
         $nodeBinary = Find-ReleaseNpmNode $Binary $Backend
-        $entryPath = if ($Backend -eq 'mcode') { 'node_modules/@minimax-ai/code/cli.js' } else { 'node_modules/@deepseek-ai/dsh/lib/bin.js' }
+        $entryPath = if ($Backend -eq 'mcode') { 'node_modules/@minimax-ai/code/cli.js' } elseif ($Backend -eq 'pi') { 'node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js' } else { 'node_modules/@deepseek-ai/dsh/lib/bin.js' }
         $entry = Join-Path (Split-Path -Parent $Binary) $entryPath
         if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
             throw "AI CLI $Backend entry point is missing. Repair the $Backend installation and reopen the game."
@@ -217,7 +230,7 @@ function Start-ReleaseCompanion([string]$Root, [switch]$CheckOnly, [int]$OwnerPr
         $configPath = Join-Path $Root 'config/chat-backend.json'
         if (-not (Test-Path -LiteralPath $configPath)) { throw 'Run the setup entry first to select your AI backend and model.' }
         $settings = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($settings.backend -notin @('kimi', 'agy', 'codex', 'dsh', 'mcode')) { throw 'Choose Kimi, agy, Codex, dsh, or mcode in setup first.' }
+        if ($settings.backend -notin @('kimi', 'agy', 'codex', 'dsh', 'mcode', 'pi')) { throw 'Choose Kimi, agy, Codex, dsh, mcode, or pi in setup first.' }
         Write-ReleaseStartupDiagnostic $Root @{ event = 'startup'; backend = $settings.backend; powershell = (Get-Process -Id $PID).Path; appData = $env:APPDATA; windowsAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData) }
         $cliBinary = Find-ReleaseAiCli $settings.backend -LogRoot $Root
         Assert-ReleaseAiCli $cliBinary $settings.backend -LogRoot $Root

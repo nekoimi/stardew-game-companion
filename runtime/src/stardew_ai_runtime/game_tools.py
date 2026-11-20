@@ -71,7 +71,7 @@ def register_game_tools(mcp, implementations, declarations, operations, *, execu
                and name != "query_wiki"} | {"work_plan_overview", "get_work_overview", "autonomy_status", "learned_query"}
     Query = model("GameQuery", queries)
     Action = model("GameAction", operations, plan=True)
-    Arrangement = model("Arrangement", {"manage_milestones", "manage_companion", "remember_intent", "manage_goal", "manage_todo", "set_autonomy", "develop_capability", "manage_capability", "prepare_capability_builder"})
+    Arrangement = model("Arrangement", {"manage_milestones", "manage_companion", "remember_intent", "manage_goal", "manage_todo", "set_autonomy", "develop_capability", "manage_capability", "prepare_capability_builder", "delegate_goal", "set_goal_continuation"})
     Memory = model("Memory", {"save_memory", "save_method", "forget_memory", "record_decision_note", "answer_player_decision", "say_to_player"})
     Reference = model("Reference", {"recall_memory", "query_wiki", "read_guidance", "inspect_capabilities"})
 

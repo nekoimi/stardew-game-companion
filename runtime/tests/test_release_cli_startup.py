@@ -17,7 +17,7 @@ def _powershell(tmp_path, code, *, path=""):
     assert exe
     env = dict(os.environ)
     env.update(LOCALAPPDATA=str(tmp_path / "appdata"), APPDATA=str(tmp_path / "roaming"),
-               USERPROFILE=str(tmp_path / "profile"), PATH=path)
+               USERPROFILE=str(tmp_path / "profile"), FNM_DIR=str(tmp_path / "custom fnm"), PATH=path)
     source = (ROOT / "tools/release-package.ps1").as_posix().replace("'", "''")
     return subprocess.run([exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", f". '{source}'; {code}"],
                           env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=15)
@@ -46,6 +46,39 @@ def test_explicit_path_installation_takes_precedence_over_desktop(tmp_path):
         file.parent.mkdir(parents=True)
         file.write_bytes(b"fixture, not executed")
     result = _powershell(tmp_path, "Find-ReleaseAiCli 'codex'", path=str(explicit.parent))
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == explicit
+
+
+@pytest.mark.parametrize("location", ["custom fnm", "roaming/fnm"])
+def test_pi_fnm_default_is_found_without_terminal_initialization(tmp_path, location):
+    prefix = tmp_path / location / "aliases/default"
+    prefix.mkdir(parents=True)
+    shim = prefix / "pi.cmd"
+    shim.write_bytes(b"fixture, not executed")
+    node = prefix / "node.exe"
+    node.write_bytes(b"fixture, not executed")
+    result = _powershell(tmp_path, "$cli=Find-ReleaseAiCli 'pi'; $cli; Find-ReleaseNpmNode $cli 'pi'")
+    assert result.returncode == 0, result.stderr
+    assert [Path(line) for line in result.stdout.strip().splitlines()] == [shim, node]
+
+
+def test_pi_does_not_guess_another_fnm_version_when_default_has_no_pi(tmp_path):
+    unused = tmp_path / "custom fnm/node-versions/v99/installation/pi.cmd"
+    unused.parent.mkdir(parents=True)
+    unused.write_bytes(b"fixture, not executed")
+    (tmp_path / "custom fnm/aliases/default").mkdir(parents=True)
+    result = _powershell(tmp_path, "Find-ReleaseAiCli 'pi'")
+    assert result.returncode != 0 and "AI CLI pi is missing" in result.stderr
+
+
+def test_pi_path_installation_takes_precedence_over_fnm_default(tmp_path):
+    explicit = tmp_path / "preferred/pi.cmd"
+    default = tmp_path / "custom fnm/aliases/default/pi.cmd"
+    for file in (explicit, default):
+        file.parent.mkdir(parents=True)
+        file.write_bytes(b"fixture, not executed")
+    result = _powershell(tmp_path, "Find-ReleaseAiCli 'pi'", path=str(explicit.parent))
     assert result.returncode == 0, result.stderr
     assert Path(result.stdout.strip()) == explicit
 
@@ -83,7 +116,7 @@ def test_unusable_cli_reports_controlled_startup_error(tmp_path):
     assert "AI CLI codex could not start" in result.stderr
 
 
-@pytest.mark.parametrize("backend", ["dsh", "mcode"])
+@pytest.mark.parametrize("backend", ["dsh", "mcode", "pi"])
 def test_npm_cmd_in_custom_prefix_takes_precedence_over_roaming(tmp_path, backend):
     explicit = tmp_path / f"custom npm prefix/{backend}.cmd"
     standard = tmp_path / f"roaming/npm/{backend}.cmd"
@@ -167,7 +200,7 @@ def test_npm_node_standard_installation_is_found_with_empty_path(tmp_path, backe
     assert Path(result.stdout.strip()) == node
 
 
-@pytest.mark.parametrize("backend", ["dsh", "mcode"])
+@pytest.mark.parametrize("backend", ["dsh", "mcode", "pi"])
 def test_partial_npm_installation_reports_missing_entry_before_execution(tmp_path, backend):
     prefix = tmp_path / "npm"
     prefix.mkdir()

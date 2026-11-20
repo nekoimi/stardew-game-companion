@@ -24,13 +24,14 @@ def load_chat_backend_config(path: Path | None = None) -> dict[str, str]:
     target = path or config_path()
     try:
         raw: Any = json.loads(target.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and raw.get("backend") in {"agy", "kimi", "codex", "dsh", "mcode"}:
+        if isinstance(raw, dict) and raw.get("backend") in {"agy", "kimi", "codex", "dsh", "mcode", "pi"}:
             defaults = {"kimi": DEFAULT_MODEL, "agy": "gemini-3.8-flash", "codex": "", "dsh": "deepseek-flash",
-                        "mcode": ""}
+                        "mcode": "", "pi": ""}
             config = {"backend": str(raw["backend"]), "model": str(raw.get("model") or defaults[raw["backend"]])}
             if raw["backend"] in {"codex", "dsh", "mcode"}:
                 config["effort"] = "default" if raw["backend"] == "mcode" else "low"
-            allowed_efforts = ({"default", "off", "low", "high", "max"} if raw["backend"] == "dsh"
+            allowed_efforts = ({"default", "off", "minimal", "low", "medium", "high", "xhigh", "max"} if raw["backend"] == "pi"
+                               else {"default", "off", "low", "high", "max"} if raw["backend"] == "dsh"
                                else {"default", "low", "medium", "high", "xhigh", "max"} if raw["backend"] == "mcode"
                                else {"default", "low", "medium", "high", "xhigh"} if raw["backend"] == "codex"
                                else {"default", "low", "medium", "high"})

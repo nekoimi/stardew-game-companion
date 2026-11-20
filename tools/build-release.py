@@ -118,10 +118,11 @@ def build(args) -> Path:
         copy_file(ROOT / name, package / name)
     guide = (ROOT / "docs/release-guide.md").read_text(encoding="utf-8-sig")
     guide = guide.replace("(companion-guide.md", "(docs/companion-guide.md").replace("(mcp.md", "(docs/mcp.md").replace("(../CONTRIBUTING.md)", "(CONTRIBUTING.md)")
+    guide = guide.replace("(pi-autonomous-agent.md", "(docs/pi-autonomous-agent.md")
     (package / "使用说明.md").write_text(guide, encoding="utf-8")
     copy_file(ROOT / "CONTRIBUTING.md", package / "CONTRIBUTING.md")
     for name in ("release-guide.md", "companion-guide.md", "mcp.md", "farm-projects.md", "agent-self-integration.md",
-                 "companion-efficiency-and-play-design.md", "dual-connection-validation.md"):
+                 "companion-efficiency-and-play-design.md", "dual-connection-validation.md", "pi-autonomous-agent.md"):
         copy_file(ROOT / "docs" / name, package / "docs" / name)
     release_notes = ROOT / "docs" / f"release-notes-{args.version}.md"
     if release_notes.is_file():

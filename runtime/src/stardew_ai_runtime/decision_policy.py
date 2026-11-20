@@ -9,7 +9,7 @@ def decision_policy() -> str:
     return runtime_instructions()
 
 PROJECT_FIELDS = ("phase", "summary", "nextAction", "blocker", "prerequisites", "window",
-                  "progress", "reason", "farmRegion", "completionCriteria", "openQuestions")
+                  "progress", "reason", "farmRegion", "completionCriteria", "openQuestions", "continuation")
 
 
 def project_context(project: Any) -> dict[str, Any]:

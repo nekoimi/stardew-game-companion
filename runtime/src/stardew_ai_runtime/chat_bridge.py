@@ -72,6 +72,7 @@ from stardew_ai_runtime.job_feedback import (
 from stardew_ai_runtime.kimi_wire_usage import read_usage_since, wire_offset
 from stardew_ai_runtime.life_chat import LifeChatService
 from stardew_ai_runtime.owner_process import OwnerProcessGuard
+from stardew_ai_runtime.pi_backend import PiBackend
 from stardew_ai_runtime.plan_executor import (
     DispatchDeferred,
     PlanExecutor,
@@ -1109,6 +1110,7 @@ class ChatBridge:
         backend_model: str | None = None,
         kimi_cmd: str | None = None,
         mcode_cmd: str | None = None,
+        pi_cmd: str | None = None,
         internal_plan_client: Any | None = None,
         enable_plan_worker: bool = True,
     ):
@@ -1121,7 +1123,7 @@ class ChatBridge:
         self._builtin_backend_name = self.backend_name
         self._external_binding_id = None
         self._connection_state_sent = None
-        self.model = backend_model or model or (configured["model"] if self.backend_name == configured["backend"] else ("kimi-code/k3" if self.backend_name == "kimi" else "" if self.backend_name in {"codex", "mcode"} else "deepseek-flash" if self.backend_name == "dsh" else "gemini-3.8-flash"))
+        self.model = backend_model or model or (configured["model"] if self.backend_name == configured["backend"] else ("kimi-code/k3" if self.backend_name == "kimi" else "" if self.backend_name in {"codex", "mcode", "pi"} else "deepseek-flash" if self.backend_name == "dsh" else "gemini-3.8-flash"))
         self.effort = effort or configured.get("effort") or ("low" if self.backend_name in {"codex", "dsh"} else "default")
         self._builtin_model, self._builtin_effort = self.model, self.effort
         if self.connection_source == "external":
@@ -1130,6 +1132,7 @@ class ChatBridge:
         self.agy_cmd = agy_cmd or "agy.exe"
         self.kimi_cmd = kimi_cmd or "kimi.exe"
         self.mcode_cmd = mcode_cmd or "mcode"
+        self.pi_cmd = pi_cmd or "pi"
         # Game-only Kimi agent profile (new sessions only; resumed sessions keep theirs).
         self.agent = configured.get("agent")
         configured_agent_file = configured.get("agentFile")
@@ -1368,6 +1371,11 @@ class ChatBridge:
                     http_provider=os.environ.get("STARDEW_CODEX_HTTP_PROVIDER") or load_chat_backend_config().get("httpProvider") or None,
                     progress=getattr(self, "_backend_progress_callback", None),
                 )
+            elif self.backend_name == "pi":
+                if self.run_dir is None:
+                    raise ValueError("pi backend requires a game run directory")
+                self._backend = PiBackend(self.run_dir, model=self.model, command=self.pi_cmd,
+                    effort=self.effort, progress=getattr(self, "_backend_progress_callback", None))
             elif self.backend_name == "mcode":
                 if self.run_dir is None:
                     raise ValueError("mcode backend requires a game run directory")
@@ -2302,12 +2310,33 @@ class ChatBridge:
         model that never dispatches from hot-looping; dispatched jobs, day changes,
         pause and breaker cooldown still gate every follow-up independently.
         """
-        if getattr(self, "actor_mode", None) != "player" or self._autonomy is None:
+        if self._autonomy is None:
             return
+        scope = self._autonomy.state(save_id).goal_scope
+        work = self._work_store.state(save_id) if self._work_store is not None else None
+        delegated = next((g for g in work.goals if g.id == scope and g.status == "active"
+                          and g.constraints.get("continuous") is True), None) if work else None
+        if getattr(self, "actor_mode", None) != "player" and delegated is None:
+            return
+        if delegated is not None:
+            snapshot, _ = self._plan_snapshot_state()
+            if not self._work_store.continuation_ready(save_id, delegated.id, snapshot or {}):
+                return
+            # Native movement/resources can advance a goal without creating a
+            # legacy task. Only actual scene changes reset the silent-turn bound.
+            payload = (snapshot or {}).get("payload", snapshot or {})
+            progress = self._autonomy.fingerprint(save_id, payload, {"kind": "progress"})
+            actor = payload.get("companion") or {}
+            progress += json.dumps([actor.get("locationId"), actor.get("tileX"), actor.get("tileY")])
+            previous = getattr(self, "_continuous_progress", {})
+            if previous.get(save_id) != progress:
+                getattr(self, "_standby_rearm_streak", {}).pop(f"{save_id}:{self._current_game_day_key or 'unknown'}", None)
+            previous[save_id] = progress
+            self._continuous_progress = previous
         # An explicit future todo is a deliberate world wait, not a planner
         # which forgot to dispatch. Respect it instead of consuming six extra
         # model turns while the decision pause prevents the clock reaching it.
-        if self._work_store is not None:
+        if self._work_store is not None and delegated is None:
             scoped = self._autonomy.state(save_id).goal_scope
             waiting = [t for t in self._work_store.state(save_id).todos
                        if t.status == "pending" and (not scoped or t.goal_id == scoped)]
@@ -2435,12 +2464,16 @@ class ChatBridge:
         ):
             return
         snapshot = envelope.payload or {}
+        if getattr(self, "actor_mode", None) == "player" and self.control_owner != "agent":
+            return None
         if (snapshot.get("companion") or {}).get("restState") == "resting":
             return None  # Daytime recovery wakes again when the native actor is awake.
         if self._bedtime_winding_down(save_id, snapshot):
             return
         if self._work_store is not None:
             job_state = self._work_store.state(save_id)
+            if job_state.paused:
+                return None
             if state.goal_scope and not any(g.id == state.goal_scope and g.status == "active" for g in job_state.goals):
                 # Finished explicit work must not strand later accepted tasks or
                 # prevent idle help from resuming when that preference is on.
@@ -2451,6 +2484,19 @@ class ChatBridge:
                 state = self._autonomy.state(save_id)
                 if not state.enabled and not state.goal_scope:
                     return
+            scoped_goal = next((g for g in job_state.goals if g.id == state.goal_scope), None)
+            continuous = scoped_goal is not None and scoped_goal.constraints.get("continuous") is True
+            if continuous:
+                related = {scoped_goal.id}
+                for _ in job_state.goals:
+                    related.update(g.id for g in job_state.goals if g.parent_id in related)
+                if any(n.get("goalId") in related and not n.get("answeredAt") for n in job_state.notices):
+                    return None
+                time_of_day = (snapshot.get("world") or {}).get("timeOfDay")
+                night_due = (getattr(self, "actor_mode", None) == "player"
+                             and type(time_of_day) is int and time_of_day >= self.PLAYER_NEAR_MIDNIGHT)
+                if not night_due and not self._work_store.continuation_ready(save_id, scoped_goal.id, snapshot):
+                    return None
             decision = job_state.decision
             if decision.get("selected") and not decision.get("finished"):
                 selected_task = next((t for t in job_state.tasks if t.id == decision.get("taskId")), None)
@@ -2472,6 +2518,10 @@ class ChatBridge:
             world = snapshot.get("world") or {}
             due = self._work_store.evaluate_todos(save_id, snapshot=snapshot, game_date={
                 "year": world.get("year"), "season": world.get("season"), "day": world.get("dayOfMonth")})
+            planning_window = None
+            if state.goal_scope and (continuous or getattr(self, "actor_mode", None) == "player"):
+                clock = int(world.get("timeOfDay") or 0)
+                planning_window = (clock // 100 * 60 + clock % 100) // 30 if continuous else clock // 200
             work_signal = json.dumps({
                 # Advisory project notes increment the store epoch but are not
                 # new work. Wake only for changed objectives/authorization/state,
@@ -2485,8 +2535,12 @@ class ChatBridge:
                 # Accepted player work needs bounded planning opportunities even
                 # after a truthful NO_WORK result with no changed resources.
                 # This wakes the model, never selects a business action.
-                "planningWindow": (int(world.get("timeOfDay") or 0) // 200
-                    if getattr(self, "actor_mode", None) == "player" and state.goal_scope else None),
+                "planningWindow": planning_window,
+                "continuation": ({k: (scoped_goal.project.get("continuation") or {}).get(k)
+                                  for k in ("status", "trigger")} if continuous else None),
+                "position": ({k: (snapshot.get("companion") or {}).get(k) for k in ("locationId", "tileX", "tileY")}
+                             if continuous else None),
+                "production": snapshot.get("productionSignals") if continuous else None,
             }, sort_keys=True)
         candidate = self._autonomy.next_candidate(save_id, snapshot, work_signal=work_signal)
         if candidate is None:
@@ -4861,7 +4915,7 @@ class ChatBridge:
                 usage_delta = read_usage_since(
                     cid, task.wire_start_offset, cwd=project_root()
                 )
-            elif self.backend_name in {"codex", "mcode"}:
+            elif self.backend_name in {"codex", "mcode", "pi"}:
                 end_idx = -1
             else:
                 end_idx = get_max_gen_idx(cid) if cid else -1
@@ -4876,7 +4930,7 @@ class ChatBridge:
                     else "cancelled_before_conversation_established"
                 )
 
-            if self.backend_name not in {"codex", "mcode"} and not task.recorded:
+            if self.backend_name not in {"codex", "mcode", "pi"} and not task.recorded:
                 self._record_command(
                     request_id=active_req,
                     save_id=active_save,
@@ -5348,7 +5402,7 @@ class ChatBridge:
                         cid = active_task.provider_conversation_id or result.get("conversation_id") or self.get_conversation_id(save_id)
                         interrupted_usage = (get_command_usage_delta(cid, active_task.start_max_idx) if self.backend_name == "agy"
                             else self._codex_turn_usage(result) if self.backend_name == "codex"
-                            else result.get("usage") if self.backend_name == "mcode" else None)
+                            else result.get("usage") if self.backend_name in {"mcode", "pi"} else None)
                         self._record_command(
                             request_id=request_id,
                             save_id=save_id,
@@ -5363,7 +5417,7 @@ class ChatBridge:
                             duration=duration,
                         )
                         active_task.recorded = True
-                        if self.backend_name in {"codex", "mcode"} and self._autonomy and save_id:
+                        if self.backend_name in {"codex", "mcode", "pi"} and self._autonomy and save_id:
                             self._autonomy.record_usage(save_id, self._current_game_day_key or "unknown", result.get("usage"))
                     return
 
@@ -5411,7 +5465,8 @@ class ChatBridge:
                         reply_text = "Kimi 登录或认证已失效，请完成登录后再试。"
                     elif err == "RATE_LIMIT_EXCEEDED":
                         reply_text = "Kimi 请求过于频繁，请稍后重试。"
-                    elif err in {"MCODE_SESSION_UNAVAILABLE", "CODEX_SESSION_UNAVAILABLE", "CODEX_CONTEXT_EXHAUSTED"}:
+                    elif err in {"MCODE_SESSION_UNAVAILABLE", "CODEX_SESSION_UNAVAILABLE", "CODEX_CONTEXT_EXHAUSTED",
+                                 "PI_SESSION_UNAVAILABLE", "PI_SESSION_CHANGED"}:
                         reply_text = "原会话暂时无法恢复，已保留绑定并停止本轮；请修复原会话连接或明确选择更换伙伴。"
 
                 if cid and save_id and (not active_task.execution_deferred or active_task.preserve_session):
@@ -5460,6 +5515,11 @@ class ChatBridge:
                     usage_source = "dsh_assistant_message" if usage else "unknown"
                     if usage is None:
                         missing_reason = "dsh_response_usage_unavailable"
+                elif self.backend_name == "pi":
+                    usage = result.get("usage")
+                    usage_source = result.get("usage_source", "unknown")
+                    if usage is None:
+                        missing_reason = "pi_response_usage_unavailable"
                 elif self.backend_name == "mcode":
                     # One exec result is already scoped to exactly this turn,
                     # resumed session or not.
@@ -6284,6 +6344,8 @@ class ChatBridge:
                 if self.actor_mode == "player":
                     self._work_reload_context(active_task.save_id, str(delivered_session), delivered=True,
                                               expected_game_session_id=turn_native_session)
+            if delivered_session and result.get("context_compacted"):
+                self._prompt_delivery.invalidate_session(delivery_key, str(delivered_session))
             logger.info("Prompt delivery save=%s session=%s version=%s originalBytes=%s newBytes=%s",
                         active_task.save_id, delivered_session, pending_prompt["version"],
                         pending_prompt["originalPromptBytes"], pending_prompt["newPromptBytes"])
@@ -6885,7 +6947,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Windows game process owning this automatic launch; exit when it ends",
     )
     parser.add_argument(
-        "--backend", type=str, choices=["agy", "kimi", "codex", "dsh", "mcode"], default=None,
+        "--backend", type=str, choices=["agy", "kimi", "codex", "dsh", "mcode", "pi"], default=None,
         help="Chat provider (overrides config/chat-backend.json)",
     )
     parser.add_argument(
@@ -6909,6 +6971,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--kimi-cmd", type=str, default="kimi.exe", help="Path or name of Kimi CLI")
     parser.add_argument("--mcode-cmd", type=str, default="mcode", help="Path or name of MiniMax Code CLI")
+    parser.add_argument("--pi-cmd", type=str, default="pi", help="Path or name of Pi CLI (MCP/RPC required)")
 
     args = parser.parse_args(argv)
     if args.owner_pid is not None and not 0 < args.owner_pid <= 0xFFFFFFFF:
@@ -6943,6 +7006,7 @@ def _main_bridge(args: argparse.Namespace, owner_guard: OwnerProcessGuard | None
         backend=args.backend,
         kimi_cmd=args.kimi_cmd,
         mcode_cmd=args.mcode_cmd,
+        pi_cmd=args.pi_cmd,
         enable_plan_worker=False,
     )
 

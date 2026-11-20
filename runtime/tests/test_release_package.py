@@ -228,3 +228,33 @@ def test_mcode_release_install_defaults_and_preserves_existing_choices(tmp_path,
     assert global_mcp.read_bytes() == original
     assert "global MCP settings were not changed" in result.stdout
     verify_release(destination)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows installer")
+def test_pi_upgrade_preserves_model_memory_and_original_client_configuration(tmp_path):
+    import os
+
+    root = tmp_path / "新包 空格"
+    package_at(root)
+    game = tmp_path / "游戏 空格"
+    destination = game / "Mods/StardewAI.Companion.Mod"
+    (destination / "config").mkdir(parents=True)
+    (destination / "data").mkdir()
+    (game / "StardewModdingAPI.exe").write_bytes(b"fixture-only")
+    settings = {"backend": "pi", "model": "provider/existing", "effort": "medium", "custom": {"keep": True}}
+    config = destination / "config/chat-backend.json"
+    config.write_text(json.dumps(settings), encoding="utf-8")
+    memory = destination / "data/player-memory.json"
+    memory.write_bytes(b'{"keep":true}')
+    client = tmp_path / "original-client/mcp.json"
+    client.parent.mkdir()
+    client.write_bytes(b'{"mcpServers":{"original":{"command":"keep"}}}')
+    env = dict(os.environ, PI_CODING_AGENT_DIR=str(client.parent))
+    result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        str(root / "tools/setup-companion.ps1"), "-AutoInstall", "-GameDir", str(game)],
+        env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(config.read_text(encoding="utf-8-sig")) == settings
+    assert memory.read_bytes() == b'{"keep":true}'
+    assert client.read_bytes() == b'{"mcpServers":{"original":{"command":"keep"}}}'
+    verify_release(destination)

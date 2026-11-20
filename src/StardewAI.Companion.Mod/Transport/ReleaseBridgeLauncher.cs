@@ -46,11 +46,20 @@ public static class ReleaseBridgeLauncher
         string logPath = Path.Combine(start.WorkingDirectory, "data", "release-start.log");
         long logOffset = LogLength(logPath);
         string? reason = null;
+        object captureGate = new();
+        string recent = "";
         void Capture(object sender, DataReceivedEventArgs args)
         {
-            // Retain only recognized launcher failures, never CLI output or credentials.
-            string? safe = SafeFailureReason(args.Data);
-            if (safe != null) Interlocked.CompareExchange(ref reason, safe, null);
+            // PowerShell can wrap a marker in the middle of a word after a long
+            // package path. Reassemble a bounded window; retain only safe reasons.
+            lock (captureGate)
+            {
+                if (reason != null || args.Data == null) return;
+                recent += args.Data;
+                if (recent.Length > 4096) recent = recent[^4096..];
+                reason = SafeFailureReason(recent);
+                if (reason != null) recent = "";
+            }
         }
         try
         {
@@ -82,7 +91,8 @@ public static class ReleaseBridgeLauncher
     public static string? SafeFailureReason(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
-        foreach (string cli in new[] { "codex", "kimi", "agy", "dsh", "mcode" })
+        text = text.Replace("\r", "").Replace("\n", "");
+        foreach (string cli in new[] { "codex", "kimi", "agy", "dsh", "mcode", "pi" })
         {
             if (text.Contains($"AI CLI {cli} Node.js is missing", StringComparison.OrdinalIgnoreCase))
                 return $"{cli} 所需的 Node.js 未找到，请修复 Node.js 安装后重新打开游戏。";
@@ -103,6 +113,7 @@ public static class ReleaseBridgeLauncher
             ("Choose Kimi, agy, or Codex", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
             ("Choose Kimi, agy, Codex, or dsh", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
             ("Choose Kimi, agy, Codex, dsh, or mcode", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
+            ("Choose Kimi, agy, Codex, dsh, mcode, or pi", "AI 客户端配置无效，请重新运行“设置星露谷伙伴.cmd”。"),
             ("Packaged Python could not import", "伙伴随包运行环境缺少依赖，请重新安装完整伙伴包。"),
             ("Release file missing", "伙伴安装文件缺失，请重新安装完整伙伴包。"),
             ("Release file changed", "伙伴安装文件与发行包不一致，请重新安装匹配的伙伴包。"),

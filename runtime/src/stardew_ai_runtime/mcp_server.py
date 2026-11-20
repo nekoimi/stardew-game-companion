@@ -1668,6 +1668,51 @@ def create_mcp_server(
             raise ToolError(str(ex)) from None
 
     @mcp.tool()
+    async def delegate_goal(summary: str) -> dict[str, Any]:
+        """Accept the player's current instruction as an ongoing autonomous delegation.
+
+        Use only when the player asks you to take responsibility and keep advancing,
+        including broad goals such as running the farm or developing planting.
+        Do not call for casual wishes, advice, progress questions or your own proposals.
+        The program binds the original player message and save; summary records your
+        interpretation without changing that authorization. Routine steps need no new
+        confirmation. Existing pause and player takeover remain in force.
+        """
+        assert_life_turn_current(allow_control=True)
+        sid = await current_save_id()
+        store = work_for_run()
+        try:
+            goal = store.delegate_current_request(sid, decision_token(), summary)
+            autonomy = autonomy_for_run()
+            state = autonomy.set_enabled(sid, autonomy.state(sid).enabled, goal_scope=goal.id,
+                                         paused=store.state(sid).paused or autonomy.state(sid).paused)
+            return {"saveId": sid, "goal": asdict(goal), "paused": state.paused,
+                    "nextStep": "Act from the current scene; use set_goal_continuation only to record continuation or a real wait."}
+        except WorkStateError as ex:
+            raise ToolError(str(ex)) from None
+
+    @mcp.tool()
+    async def set_goal_continuation(status: Literal["continue", "wait"], reason: str,
+                                    trigger: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Record what follows this continuous-goal turn; no game action is queued.
+
+        continue means the goal still has actionable work. wait requires a native
+        gameTime/calendar/resource/inventory/crop/machineReady trigger, using the same
+        shape as manage_todo. Wait only when no current work should proceed; future
+        reminders alongside current work belong in manage_todo. Never wait until
+        tomorrow instead of using native sleep in player mode. Ask material choices
+        through request_player_decision. Complete bounded goals through manage_goal;
+        ongoing main goals remain active until the player ends the delegation.
+        """
+        assert_life_turn_current(allow_control=True)
+        sid = await current_save_id()
+        try:
+            goal = work_for_run().set_goal_continuation(sid, decision_token(), status, reason, trigger)
+            return {"saveId": sid, "goalId": goal.id, "continuation": goal.project["continuation"]}
+        except WorkStateError as ex:
+            raise ToolError(str(ex)) from None
+
+    @mcp.tool()
     async def manage_plan(
         goal_id: str,
         tasks: list[dict[str, Any]] | None = None,
@@ -4675,6 +4720,12 @@ def create_mcp_server(
             raise ToolError(str(ex)) from None
         await validate_actor_operation(name)
         goal = next((g for g in state.goals if g.id == (state.decision.get("goalScope") or state.decision.get("goalId"))), None)
+        if goal and goal.constraints.get("continuous") is True:
+            related = {goal.id}
+            for _ in state.goals:
+                related.update(g.id for g in state.goals if g.parent_id in related)
+            if any(n.get("goalId") in related and not n.get("answeredAt") for n in state.notices):
+                raise ToolError("PLAYER_DECISION_REQUIRED: wait for the player's answer before continuing this goal")
         args = bind_execution_scope_params(name, args, goal.constraints if goal else {})
         validated = validate_base_arguments(name, args, for_plan=True)
         parsed = base_metadata[name].arg_model.model_validate(validated)
@@ -4978,7 +5029,8 @@ def create_mcp_server(
                                            openWorldHint=tool.name in {"query_wiki", "call_capability"})
         tool.description = "Stardew Valley (SMAPI), current saved game. " + tool.description
         exempt = {"say_to_player", "answer_player_decision", "player_control", "request_player_decision", "begin_game_turn", "submit_plan", "remember_intent", "record_decision_note", "manage_goal", "manage_goals", "manage_plan", "manage_todo", "manage_todos", "manage_milestones", "manage_companion", "call_capability", "set_autonomy", "autonomy_status", "run_next_step", "dispatch_plan_operation", "reconcile_plan_command", "cancel_plan_command", "work_plan_overview"}
-        exempt.update({"save_memory", "save_method", "forget_memory", "develop_capability", "manage_capability", "prepare_capability_builder"})
+        exempt.update({"save_memory", "save_method", "forget_memory", "develop_capability", "manage_capability", "prepare_capability_builder",
+                       "delegate_goal", "set_goal_continuation"})
         if tool.name not in exempt and tool.name not in readonly and not tool.name.startswith(("query_", "get_", "list_", "discover_", "observe_")):
             tool.fn = protect_job(tool.name, tool.fn)
         if tool.name.startswith(("query_", "observe_")) and tool.name != "query_wiki":
