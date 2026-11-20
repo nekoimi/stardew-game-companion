@@ -253,6 +253,7 @@ public partial class MainWindow : Window
             case "life.care": AddEntry("提醒", Text(payload, "text")); break;
             case "chat.reply":
             case "life.chat.reply":
+                if (Flag(payload, "replyAlreadyDelivered")) break;
                 var reply = Text(payload, "replyText");
                 var error = Text(payload, "error");
                 if (reply.Length > 0 || error.Length > 0)

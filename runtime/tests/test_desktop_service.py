@@ -1,8 +1,10 @@
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 
 from stardew_ai_runtime.agent_backends import CodexBackend, DshBackend, McodeBackend
 from stardew_ai_runtime.chat_bridge import ActiveChatTask
@@ -50,6 +52,35 @@ class ReplySocket:
 
     async def send_text(self, text):
         self.sent.append(json.loads(text))
+
+
+@pytest.mark.parametrize("repeated", [True, False])
+def test_desktop_turn_marks_only_an_already_spoken_final_reply(tmp_path, repeated):
+    bridge = DesktopHarness(tmp_path)
+    bridge._chat_ws = socket = ReplySocket()
+    speech = "今天可以先浇水。"
+    final = speech if repeated else "水壶还需要补水。"
+
+    @asynccontextmanager
+    async def no_pause(*args):
+        yield
+
+    def provider(task, session, prompt, mode):
+        path = tmp_path / "data" / "life-controls" / f"{task.request_id}--speech.json"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"saveId": task.save_id, "action": "speak", "text": speech}), encoding="utf-8")
+        return {"success": True, "response": final}
+
+    bridge._thinking_pause = no_pause
+    bridge._execute_life_turn = provider
+    bridge._work_store.set_paused(bridge.save, True)  # Conversation needs no mock native action.
+    asyncio.run(bridge._run_life_chat_turn(socket, {"request_id": "chat", "save_id": bridge.save, "text": "今天做什么？"}))
+
+    events = [event["payload"] for _, event in bridge.events_after(0) if event["payload"].get("replyText")]
+    assert [event["status"] for event in events] == ["public-message", "completed"]
+    assert [event["replyText"] for event in events] == [speech, final]
+    assert events[-1].get("replyAlreadyDelivered", False) is repeated
+    assert any(message.get("payload") == events[-1] for message in socket.sent)
 
 
 def test_desktop_recovery_waits_for_native_receipt_before_dispatching(tmp_path):

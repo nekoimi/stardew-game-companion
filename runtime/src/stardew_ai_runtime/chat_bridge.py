@@ -1091,6 +1091,7 @@ class ActiveChatTask:
     goal_scope: str | None = None
     goal_default: str | None = None
     work_request_ids: list[str] = field(default_factory=list)
+    delivered_speech: set[str] = field(default_factory=set)
 
 
 class ChatBridge:
@@ -3320,7 +3321,8 @@ class ChatBridge:
                            "memoryProvider": "mcode" if getattr(self, "connection_source", "builtin") == "external" else self.backend_name,
                            "memoryConnectionSource": getattr(self, "connection_source", "builtin")})
 
-    async def _apply_life_intent(self, ws: WebSocketClient | None, request_id: str, save_id: str) -> None:
+    async def _apply_life_intent(self, ws: WebSocketClient | None, request_id: str, save_id: str,
+                                 *, turn: ActiveChatTask | None = None) -> None:
         if self.run_dir is None or not re.fullmatch(r"[A-Za-z0-9_-]+", request_id):
             return
         directory = self.run_dir / "data" / "life-controls"
@@ -3349,9 +3351,12 @@ class ChatBridge:
                 continue  # A newer player control invalidated this delayed response.
             action = intent.get("action")
             if action == "speak":
-                await self._send_reply(ws, Envelope.create_chat_reply(
+                speech = str(intent.get("text") or "")
+                delivered = await self._send_reply(ws, Envelope.create_chat_reply(
                     self.instance_id, f"{request_id}:speech:{path.stem}", "public-message",
-                    str(intent.get("text") or ""), save_id=save_id, command_complete=False))
+                    speech, save_id=save_id, command_complete=False))
+                if delivered and turn is not None and speech.strip():
+                    turn.delivered_speech.add(speech.strip())
             elif action == "bedtime" and self._profile_store is not None:
                 self._profile_store.set(save_id, {"bedtime": intent.get("bedtime")}, self._profile_revision(save_id))
                 profile = self._profile_store.get(save_id)
@@ -3704,7 +3709,7 @@ class ChatBridge:
             async with self._thinking_pause(active_task.request_id, active_task.save_id or None):
                 while not future.done():
                     await asyncio.wait({future}, timeout=0.1)
-                    await self._apply_life_intent(self._chat_ws, active_task.request_id, active_task.save_id or "")
+                    await self._apply_life_intent(self._chat_ws, active_task.request_id, active_task.save_id or "", turn=active_task)
                 return await asyncio.shield(future)
         except asyncio.CancelledError:
             # Cancelling an executor await does not stop the executor thread.
@@ -3845,7 +3850,7 @@ class ChatBridge:
                         profile_revision=self._profile_revision(save_id), memory_revision=self._memory_revision(save_id)))
                     return
                 if result.get("success"):
-                    await self._apply_life_intent(ws, request_id, save_id)
+                    await self._apply_life_intent(ws, request_id, save_id, turn=active_task)
                 success = bool(result.get("success"))
                 if success and notice_id and item.get("resolve_notice") and self._work_store is not None:
                     self._work_store.answer_player_notice(save_id, notice_id, text, request_id)
@@ -3888,12 +3893,14 @@ class ChatBridge:
                         self._life_chat.mark_prompt_delivered(save_id, str(cid), mode)
                     self._life_chat.record_discussion(save_id, mode, text, str(result.get("response") or ""))
                 if success:
+                    response = str(result.get("response") or "")
                     reply = Envelope.create_life_chat_reply(
                         sender_instance_id=self.instance_id,
                         request_id=request_id,
                         save_id=save_id,
                         status="completed",
-                        reply_text=str(result.get("response") or "") or None,
+                        reply_text=response or None,
+                        reply_already_delivered=response.strip() in active_task.delivered_speech,
                         answered_notice_id=resolved_notice,
                         profile_revision=self._profile_revision(save_id),
                         memory_revision=self._memory_revision(save_id),

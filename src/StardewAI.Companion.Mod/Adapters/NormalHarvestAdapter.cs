@@ -14,9 +14,9 @@ namespace StardewAI.Companion.Mod.Adapters;
 /// 1. Main-thread execution on the companion's loaded map.
 /// 2. Maturity via HoeDirt.readyForHarvest() only; scythe crops require an owned scythe.
 /// 3. Conservative inventory capacity precheck (one empty slot required).
-/// 4. Game1.player is temporarily swapped to the companion Farmer for the duration of
-///    crop.harvest (the game's harvest adds produce to Game1.player's inventory) and is
-///    restored in a finally block; the reference is verified after restoration.
+/// 4. The player backing field is scoped to the companion Farmer during native
+///    harvest and restored in a finally block. The player property setter unloads
+///    the previous farmer's renderer and is reserved for actual player replacement.
 ///    Player-bound actors skip the swap: the actor already IS Game1.player and the
 ///    harvest runs natively against the player.
 /// 5. Human player resources are verified unchanged before and after the harvest
@@ -26,23 +26,7 @@ namespace StardewAI.Companion.Mod.Adapters;
 /// </summary>
 public sealed class NormalHarvestAdapter : IHarvestAdapter
 {
-    private static readonly Action<Farmer> SetGamePlayer = CreatePlayerSetter();
-
-    private static Action<Farmer> CreatePlayerSetter()
-    {
-        var prop = typeof(Game1).GetProperty(nameof(Game1.player), BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        var setter = prop?.GetSetMethod(nonPublic: true);
-        if (setter != null)
-        {
-            return (Action<Farmer>)Delegate.CreateDelegate(typeof(Action<Farmer>), setter);
-        }
-        var field = typeof(Game1).GetField("_player", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        if (field != null)
-        {
-            return f => field.SetValue(null, f);
-        }
-        throw new InvalidOperationException("Failed to locate Game1.player setter or backing field.");
-    }
+    private static readonly FieldInfo? PlayerField = typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static);
 
     private readonly IWorldObserver _observer;
     private readonly IMonitor _monitor;
@@ -146,6 +130,8 @@ public sealed class NormalHarvestAdapter : IHarvestAdapter
         Farmer? originalPlayerRef = null;
         if (!playerBound)
         {
+            if (PlayerField?.FieldType != typeof(Farmer))
+                return HarvestTileResult.Failed("Native harvest cannot scope the companion without replacing the player renderer.");
             playerBefore = _observer.GetPlayerSnapshot();
             originalPlayerRef = Game1.player;
         }
@@ -175,7 +161,7 @@ public sealed class NormalHarvestAdapter : IHarvestAdapter
             }
             else
             {
-                SetGamePlayer(companion);
+                PlayerField!.SetValue(null, companion);
                 try
                 {
                     if (requiresScythe)
@@ -192,7 +178,7 @@ public sealed class NormalHarvestAdapter : IHarvestAdapter
                 }
                 finally
                 {
-                    SetGamePlayer(originalPlayerRef!);
+                    PlayerField.SetValue(null, originalPlayerRef);
                 }
             }
 

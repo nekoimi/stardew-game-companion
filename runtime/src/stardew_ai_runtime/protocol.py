@@ -1231,6 +1231,7 @@ class Envelope:
         proposal_node_id: str | None = None,
         activity: Mapping[str, Any] | None = None,
         answered_notice_id: str | None = None,
+        reply_already_delivered: bool = False,
     ) -> Envelope:
         """life.chat.reply: no token/session fields (contract §1.2)."""
         payload: dict[str, Any] = {
@@ -1254,6 +1255,8 @@ class Envelope:
             payload["activity"] = dict(activity)
         if answered_notice_id is not None:
             payload["answeredNoticeId"] = answered_notice_id
+        if reply_already_delivered:
+            payload["replyAlreadyDelivered"] = True
         return cls(
             protocol_version="0.1", message_type="life.chat.reply",
             message_id=f"msg-life-reply-{uuid.uuid4().hex[:8]}",
@@ -1594,6 +1597,7 @@ class LifeChatReplyPayload:
     proposal_node_id: str | None = None
     activity: dict[str, Any] | None = None
     answered_notice_id: str | None = None
+    reply_already_delivered: bool = False
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> LifeChatReplyPayload:
@@ -1610,6 +1614,7 @@ class LifeChatReplyPayload:
             proposal_node_id=value.get("proposalNodeId"),
             activity=value.get("activity"),
             answered_notice_id=value.get("answeredNoticeId"),
+            reply_already_delivered=value.get("replyAlreadyDelivered") is True,
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -1634,6 +1639,8 @@ class LifeChatReplyPayload:
             res["activity"] = dict(self.activity)
         if self.answered_notice_id is not None:
             res["answeredNoticeId"] = self.answered_notice_id
+        if self.reply_already_delivered:
+            res["replyAlreadyDelivered"] = True
         return res
 
 

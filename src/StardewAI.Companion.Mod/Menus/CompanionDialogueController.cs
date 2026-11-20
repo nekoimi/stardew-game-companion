@@ -30,17 +30,18 @@ public sealed class CompanionDialogueInbox
         ReplySucceeded = false;
     }
 
-    public bool Receive(string requestId, string status, string? text, bool proposalReady = false, string? proposalNodeId = null)
+    public bool Receive(string requestId, string status, string? text, bool proposalReady = false,
+        string? proposalNodeId = null, bool replyAlreadyDelivered = false)
     {
         if (requestId != PendingRequestId || status is not ("completed" or "failed")) return false;
         PendingRequestId = null;
         Reply = string.IsNullOrWhiteSpace(text)
             ? "我这边暂时没能接上话。等一下再来找我，好吗？"
             : PlainText(text);
-        HasUnreadReply = true;
         ReplySucceeded = status == "completed";
         ProposalReady = Mode == "plan" && ReplySucceeded && proposalReady && !string.IsNullOrWhiteSpace(proposalNodeId);
         ProposalNodeId = ProposalReady ? proposalNodeId : null;
+        HasUnreadReply = !replyAlreadyDelivered || ProposalReady;
         return true;
     }
 
@@ -619,9 +620,10 @@ public sealed class CompanionDialogueController
         else Game1.addHUDMessage(new HUDMessage("初次见面的约定有消息了，回来聊聊吧。"));
     }
 
-    public void Receive(string requestId, string status, string? text, bool proposalReady = false, string? proposalNodeId = null)
+    public void Receive(string requestId, string status, string? text, bool proposalReady = false,
+        string? proposalNodeId = null, bool replyAlreadyDelivered = false)
     {
-        _inbox.Receive(requestId, status, text, proposalReady, proposalNodeId);
+        _inbox.Receive(requestId, status, text, proposalReady, proposalNodeId, replyAlreadyDelivered);
     }
 
     private void Ask(string text, Response[] responses, Action<string> answer, string? caption = null)

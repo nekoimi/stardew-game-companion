@@ -756,7 +756,8 @@ public sealed record LifeChatReplyPayload(
     [property: JsonPropertyName("proposalReady"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool ProposalReady = false,
     [property: JsonPropertyName("proposalNodeId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ProposalNodeId = null,
     [property: JsonPropertyName("activity"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] CompanionActivityDto? Activity = null,
-    [property: JsonPropertyName("answeredNoticeId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AnsweredNoticeId = null
+    [property: JsonPropertyName("answeredNoticeId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AnsweredNoticeId = null,
+    [property: JsonPropertyName("replyAlreadyDelivered"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool ReplyAlreadyDelivered = false
 );
 
 public sealed record CompanionActivityDto(

@@ -2542,7 +2542,8 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 reply.MemoryRevision);
             if (accepted)
             {
-                _companionDialogue?.Receive(reply.RequestId, reply.Status, reply.ReplyText, reply.ProposalReady, reply.ProposalNodeId);
+                _companionDialogue?.Receive(reply.RequestId, reply.Status, reply.ReplyText,
+                    reply.ProposalReady, reply.ProposalNodeId, reply.ReplyAlreadyDelivered);
                 if (reply.Status == "queued")
                     ShowCompanionHud(new HUDMessage("伙伴已收到消息，正在排队处理；不用重复发送。"));
                 if (reply.Status is "completed" or "failed")
@@ -2552,7 +2553,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                         _lifeMenuUiState.ConfirmDecisionReply(reply.AnsweredNoticeId);
                     string text = !string.IsNullOrWhiteSpace(reply.ReplyText) ? reply.ReplyText
                         : !string.IsNullOrWhiteSpace(reply.Error) ? $"这次没能回复：{reply.Error}" : "这次没有收到回复，请再试一次。";
-                    if (_lifeMenuUiState.RecordCompanionReply(reply.RequestId,
+                    if (!reply.ReplyAlreadyDelivered && _lifeMenuUiState.RecordCompanionReply(reply.RequestId,
                         CompanionDialogueInbox.PlainText(text), GetCurrentGameDate()))
                     {
                         if (!_desktopMode && !visible)
