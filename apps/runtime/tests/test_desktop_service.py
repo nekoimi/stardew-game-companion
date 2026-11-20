@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
+from stardew_ai_runtime.adapters.providers.mcode_external import write_binding
 from stardew_ai_runtime.agent_backends import CodexBackend, DshBackend, McodeBackend
 from stardew_ai_runtime.chat_bridge import ActiveChatTask
 from stardew_ai_runtime.desktop_service import DesktopBridge, DesktopError, create_app
-from stardew_ai_runtime.external_connection import write_binding
 from stardew_ai_runtime.provider_registry import PROVIDERS, ProviderSpec, desktop_catalogue
 
 

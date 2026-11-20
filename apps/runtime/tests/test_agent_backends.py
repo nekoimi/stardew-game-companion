@@ -13,7 +13,7 @@ from stardew_ai_runtime.chat_backend_config import load_chat_backend_config
 @pytest.fixture(autouse=True)
 def _isolated_codex_config():
     # Backend tests never read the machine's user configuration or launch CLI.
-    with patch("stardew_ai_runtime.agent_backends.unrelated_mcp_config",
+    with patch("stardew_ai_runtime.adapters.providers.codex.unrelated_mcp_config",
                return_value=["-c", "mcp_servers.unrelated.enabled=false"]):
         yield
 
@@ -170,7 +170,7 @@ def test_codex_config_inspection_failure_does_not_start_model(tmp_path: Path) ->
     python = tmp_path / "runtime" / "python" / "python.exe"
     python.parent.mkdir(parents=True)
     python.touch()
-    with patch("stardew_ai_runtime.agent_backends.unrelated_mcp_config",
+    with patch("stardew_ai_runtime.adapters.providers.codex.unrelated_mcp_config",
                side_effect=RuntimeError("private config contents")), \
          patch("subprocess.Popen") as popen:
         result = CodexBackend(tmp_path).run(_task(), "existing", "只读观察")

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from stardew_ai_runtime.agy_process import AgyProcessOutcome
+from stardew_ai_runtime.adapters.providers.agy_process import AgyProcessOutcome
 from stardew_ai_runtime.chat_bridge import ActiveChatTask, ChatBridge
 from stardew_ai_runtime.decision_context import build_decision_context
 from stardew_ai_runtime.mcp_server import create_mcp_server
@@ -101,10 +101,10 @@ def test_failed_turn_does_not_put_response_in_error(tmp_path, monkeypatch):
 
     # Transport is covered separately; this test checks terminal error parsing.
     outcome = AgyProcessOutcome(json.dumps({"status": "FAILED", "response": "这是模型的有效汇报说明", "conversation_id": "cid-1"}), "", "cid-1", 1)
-    monkeypatch.setattr("stardew_ai_runtime.chat_bridge.run_agy_process", lambda *args, **kwargs: outcome)
-    monkeypatch.setattr("stardew_ai_runtime.chat_bridge.get_conversation_db_path", lambda *a: tmp_path / "dummy.db")
+    monkeypatch.setattr("stardew_ai_runtime.adapters.providers.agy.run_agy_process", lambda *args, **kwargs: outcome)
+    monkeypatch.setattr("stardew_ai_runtime.adapters.providers.agy_database.get_conversation_db_path", lambda *a: tmp_path / "dummy.db")
 
-    result = bridge._execute_agy_turn(task, "cid-1", "prompt")
+    result = bridge._get_backend().run(task, "cid-1", "prompt")
     assert result["success"] is False
     assert result["error"] == "AGY_EXIT_1"
     assert result["response"] == "这是模型的有效汇报说明"
@@ -256,15 +256,15 @@ def test_quota_baseline_reset_on_session_rotation(tmp_path, monkeypatch):
 
     # agy silently starts a new session; its old error baseline cannot carry over.
     outcome = AgyProcessOutcome(json.dumps({"status": "SUCCESS", "response": "ok", "conversation_id": "cid-new"}), "", "cid-new", 0)
-    monkeypatch.setattr("stardew_ai_runtime.chat_bridge.run_agy_process", lambda *args, **kwargs: outcome)
+    monkeypatch.setattr("stardew_ai_runtime.adapters.providers.agy.run_agy_process", lambda *args, **kwargs: outcome)
 
     called_args = []
     def fake_check(cid, baseline):
         called_args.append((cid, baseline))
         return False, ""
 
-    monkeypatch.setattr("stardew_ai_runtime.chat_bridge.check_new_quota_error", fake_check)
+    monkeypatch.setattr("stardew_ai_runtime.adapters.providers.agy.check_new_quota_error", fake_check)
 
-    bridge._execute_agy_turn(task, "cid-old", "prompt")
+    bridge._get_backend().run(task, "cid-old", "prompt")
     assert len(called_args) == 1
     assert called_args[0] == ("cid-new", -1)  # baseline must be reset to -1, not 100!

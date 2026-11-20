@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from stardew_ai_runtime.adapters.providers.codex_usage import CodexUsageMeter, normalize_usage
 from stardew_ai_runtime.agent_backends import CodexBackend
-from stardew_ai_runtime.codex_usage import CodexUsageMeter, normalize_usage
 
 SESSION = "01a0f177-c802-7622-8e37-82dc15d95cc8"
 

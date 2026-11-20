@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .provider_diagnostics import redact_text
+from stardew_ai_runtime.provider_diagnostics import redact_text
 
 
 class _ACPRequestError(RuntimeError):

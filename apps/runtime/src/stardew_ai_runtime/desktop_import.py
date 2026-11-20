@@ -9,8 +9,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from .adapters.providers.pi import resolve_pi_session
 from .game_reload import RUNTIME_FILES
-from .pi_backend import resolve_pi_session
 
 PENDING = ".desktop-import-pending"
 MOD_ID = "CSXizhang.StardewAICompanion"

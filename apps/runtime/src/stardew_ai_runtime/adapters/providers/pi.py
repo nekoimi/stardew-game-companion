@@ -17,8 +17,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .agent_backends import BackendProgress, BackendResult, KimiBackend
-from .agent_instructions import runtime_instructions
+from stardew_ai_runtime.agent_instructions import runtime_instructions
+from stardew_ai_runtime.application.provider_types import BackendProgress, BackendResult
+
+from .processes import terminate_owned_process
 
 
 def resolve_pi_session(run_dir: Path, session_id: str) -> Path:
@@ -69,7 +71,7 @@ class PiBackend:
                 settled.wait(timeout=2)
             except (OSError, ValueError):
                 pass
-        KimiBackend.terminate(proc)
+        terminate_owned_process(proc)
 
     def _executable(self) -> list[str]:
         if isinstance(self.command, list):
@@ -102,7 +104,7 @@ class PiBackend:
             "STARDEW_LIFE_MODE", "STARDEW_LIFE_TURN_ID", "STARDEW_LIFE_SAVE_ID",
             "STARDEW_LIFE_PROPOSAL_ID", "STARDEW_DECISION_TOKEN", "PYTHONPATH") if key in os.environ}
         context["STARDEW_MCP_SURFACE"] = "light"
-        context.setdefault("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
+        context.setdefault("PYTHONPATH", str(Path(__file__).resolve().parents[3]))
         config = workspace / ".pi" / "mcp.json"
         config.parent.mkdir(parents=True, exist_ok=True)
         document = {"mcpServers": {"stardew-companion": {

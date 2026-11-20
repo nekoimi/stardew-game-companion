@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from stardew_ai_runtime import agent_backends
+from stardew_ai_runtime.adapters.providers import dsh
 
 
 @pytest.mark.parametrize("scenario", ["resume", "not-found", "owned", "corrupt"])
@@ -14,7 +14,7 @@ def test_resume_only_creates_on_exact_persistence_not_found(scenario):
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is required by dsh compatibility plugin")
-    plugin = Path(agent_backends.__file__).with_name("dsh_resume_plugin.mjs")
+    plugin = Path(dsh.__file__).with_name("dsh_resume_plugin.mjs")
     script = r"""
 import vm from 'node:vm';
 import fs from 'node:fs';

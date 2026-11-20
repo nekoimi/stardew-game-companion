@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from stardew_ai_runtime.adapters.providers.codex_usage import codex_turn_usage
 from stardew_ai_runtime.chat_bridge import (
     ActiveChatTask,
     ChatBridge,
@@ -23,7 +24,6 @@ from stardew_ai_runtime.chat_bridge import (
     main,
     remove_chat_bridge_file_logging,
 )
-from stardew_ai_runtime.codex_usage import codex_turn_usage
 from stardew_ai_runtime.decision_policy import decision_policy
 from stardew_ai_runtime.protocol import (
     ChatCancelPayload,
@@ -316,7 +316,7 @@ def test_format_delivery_prompt_contains_chinese_reply_instruction() -> None:
 
 
 def test_execute_agy_turn_success_parsing() -> None:
-    bridge = ChatBridge(model="gemini-3.8-flash", effort="medium")
+    bridge = ChatBridge(backend="agy", model="gemini-3.8-flash", effort="medium")
     mock_stdout = json.dumps({
         "conversation_id": "cid-abc-123",
         "status": "SUCCESS",
@@ -336,7 +336,7 @@ def test_execute_agy_turn_success_parsing() -> None:
         mock_popen.return_value = mock_proc
 
         task = ActiveChatTask(request_id="r1", save_id="s1")
-        res = bridge._execute_agy_turn(
+        res = bridge._get_backend().run(
             active_task=task,
             conversation_id="cid-abc-123",
             prompt="给农作物浇水",
@@ -350,7 +350,7 @@ def test_execute_agy_turn_success_parsing() -> None:
 
 def test_execute_agy_turn_empty_response_not_falsified() -> None:
     """Empty response + SUCCESS cannot be falsified as '操作已完成'."""
-    bridge = ChatBridge()
+    bridge = ChatBridge(backend="agy")
     mock_stdout = json.dumps({
         "conversation_id": "cid-empty-001",
         "status": "SUCCESS",
@@ -364,7 +364,7 @@ def test_execute_agy_turn_empty_response_not_falsified() -> None:
         mock_popen.return_value = mock_proc
 
         task = ActiveChatTask(request_id="r1", save_id="s1")
-        res = bridge._execute_agy_turn(
+        res = bridge._get_backend().run(
             active_task=task,
             conversation_id="cid-empty-001",
             prompt="任何指令",
@@ -377,7 +377,7 @@ def test_execute_agy_turn_empty_response_not_falsified() -> None:
 
 def test_execute_agy_turn_effort_and_model_rules() -> None:
     """On resume, retain the configured model and effort."""
-    bridge = ChatBridge(model="gemini-3.8-flash", effort="medium")
+    bridge = ChatBridge(backend="agy", model="gemini-3.8-flash", effort="medium")
 
     with patch("subprocess.Popen") as mock_popen:
         mock_proc = MagicMock()
@@ -387,7 +387,7 @@ def test_execute_agy_turn_effort_and_model_rules() -> None:
 
         # 1. New conversation: --model AND --effort should be present
         task1 = ActiveChatTask(request_id="r1", save_id="s1")
-        bridge._execute_agy_turn(task1, conversation_id=None, prompt="test prompt")
+        bridge._get_backend().run(task1, conversation_id=None, prompt="test prompt")
         cmd_new = mock_popen.call_args[0][0]
         assert "--model" in cmd_new
         assert "gemini-3.8-flash" in cmd_new
@@ -398,7 +398,7 @@ def test_execute_agy_turn_effort_and_model_rules() -> None:
         # 2. Resumed conversation retains the explicitly configured model.
         task2 = ActiveChatTask(request_id="r2", save_id="s1")
         _mock_agy_stream(mock_proc, json.dumps({"status": "SUCCESS", "response": "ok"}), "")
-        bridge._execute_agy_turn(task2, conversation_id="existing-cid-999", prompt="test prompt")
+        bridge._get_backend().run(task2, conversation_id="existing-cid-999", prompt="test prompt")
         cmd_resume = mock_popen.call_args[0][0]
         assert "--conversation" in cmd_resume
         assert "existing-cid-999" in cmd_resume
@@ -410,7 +410,7 @@ def test_execute_agy_turn_effort_and_model_rules() -> None:
 
 def test_execute_agy_turn_quota_exhaustion() -> None:
     """Genuine quota exhaustion check."""
-    bridge = ChatBridge()
+    bridge = ChatBridge(backend="agy")
     failure_codes: list[str] = []
     bridge._backend_failure_callback = failure_codes.append
     with patch("subprocess.Popen") as mock_popen:
@@ -420,7 +420,7 @@ def test_execute_agy_turn_quota_exhaustion() -> None:
         mock_popen.return_value = mock_proc
 
         task = ActiveChatTask(request_id="r1", save_id="s1")
-        res = bridge._execute_agy_turn(
+        res = bridge._get_backend().run(
             active_task=task,
             conversation_id=None,
             prompt="种胡萝卜",
@@ -437,7 +437,7 @@ def test_execute_agy_turn_rate_limit_notifies_and_is_not_quota() -> None:
         "429 Too Many Requests: rate limit exceeded",
         "Error 429: rate limit exceeded. Please retry later.",
     ):
-        bridge = ChatBridge()
+        bridge = ChatBridge(backend="agy")
         failure_codes: list[str] = []
         bridge._backend_failure_callback = failure_codes.append
         with patch("subprocess.Popen") as mock_popen:
@@ -446,7 +446,7 @@ def test_execute_agy_turn_rate_limit_notifies_and_is_not_quota() -> None:
             _mock_agy_stream(mock_proc, "", error_text)
             mock_popen.return_value = mock_proc
 
-            res = bridge._execute_agy_turn(
+            res = bridge._get_backend().run(
                 active_task=ActiveChatTask(request_id="r2", save_id="s1"),
                 conversation_id=None,
                 prompt="种胡萝卜",
@@ -550,7 +550,7 @@ def test_get_command_usage_delta_calculation(tmp_path: Path) -> None:
     con.commit()
     con.close()
 
-    with patch("stardew_ai_runtime.chat_bridge.get_conversation_db_path", return_value=db_path):
+    with patch("stardew_ai_runtime.adapters.providers.agy_database.get_conversation_db_path", return_value=db_path):
         assert get_max_gen_idx("test-conv-123") == 2
 
         # Delta for new command starting after idx 0: should ONLY sum idx 1 and 2!
@@ -569,7 +569,7 @@ def test_get_command_usage_delta_calculation(tmp_path: Path) -> None:
 
 def test_old_stdout_error_ignored_on_successful_turn() -> None:
     """Historical stdout containing error string does NOT trigger quota error when turn succeeds."""
-    bridge = ChatBridge()
+    bridge = ChatBridge(backend="agy")
     # Simulate stdout that has old history with RESOURCE_EXHAUSTED, but current turn completed with SUCCESS
     mock_stdout = (
         "Previous turns:\nUser: Can you check error RESOURCE_EXHAUSTED?\n"
@@ -586,20 +586,20 @@ def test_old_stdout_error_ignored_on_successful_turn() -> None:
         mock_popen.return_value = mock_proc
 
         task = ActiveChatTask(request_id="r1", save_id="s1")
-        res = bridge._execute_agy_turn(task, conversation_id="cid-hist-1", prompt="浇水")
+        res = bridge._get_backend().run(task, conversation_id="cid-hist-1", prompt="浇水")
         assert res["success"] is True
         assert res["response"] == "胡萝卜浇水完成！"
 
 
 def test_cancel_race_pre_and_post_spawn() -> None:
     """Task cancelled pre-spawn skips Popen; post-spawn immediately kills process."""
-    bridge = ChatBridge()
+    bridge = ChatBridge(backend="agy")
 
     # Pre-spawn cancellation
     task_pre = ActiveChatTask(request_id="r_pre", save_id="s1")
     task_pre.cancelled = True
     with patch("subprocess.Popen") as mock_popen:
-        res_pre = bridge._execute_agy_turn(task_pre, conversation_id=None, prompt="test")
+        res_pre = bridge._get_backend().run(task_pre, conversation_id=None, prompt="test")
         assert res_pre["success"] is False
         assert res_pre["error"] == "CANCELLED"
         assert not mock_popen.called
@@ -618,7 +618,7 @@ def test_cancel_race_pre_and_post_spawn() -> None:
             return mock_proc
 
         mock_popen.side_effect = popen_side_effect
-        res_post = bridge._execute_agy_turn(task_post, conversation_id=None, prompt="test")
+        res_post = bridge._get_backend().run(task_post, conversation_id=None, prompt="test")
         assert res_post["success"] is False
         assert res_post["error"] == "CANCELLED"
         assert mock_proc.kill.called
@@ -638,7 +638,7 @@ def test_resume_omits_cumulative_cli_usage_when_delta_missing(tmp_path: Path) ->
         )
 
         mock_ws = AsyncMock()
-        with patch("stardew_ai_runtime.compatibility.assert_native_compatible"), patch.object(bridge, "_execute_agy_turn") as mock_turn, \
+        with patch("stardew_ai_runtime.compatibility.assert_native_compatible"), patch.object(bridge._get_backend(), "run") as mock_turn, \
              patch("stardew_ai_runtime.chat_bridge.get_command_usage_delta", return_value=None):
             mock_turn.return_value = {
                 "success": True,
@@ -685,7 +685,7 @@ def test_new_conversation_allows_session_local_cli_usage(tmp_path: Path) -> None
         bridge = ChatBridge(backend="agy", sessions_file=sessions_file, commands_file=cmd_file)
 
         mock_ws = AsyncMock()
-        with patch("stardew_ai_runtime.compatibility.assert_native_compatible"), patch.object(bridge, "_execute_agy_turn") as mock_turn, \
+        with patch("stardew_ai_runtime.compatibility.assert_native_compatible"), patch.object(bridge._get_backend(), "run") as mock_turn, \
              patch("stardew_ai_runtime.chat_bridge.get_command_usage_delta", return_value=None):
             mock_turn.return_value = {
                 "success": True,
@@ -759,7 +759,7 @@ def test_resume_ignores_old_cumulative_quota_error(tmp_path: Path) -> None:
     con.commit()
     con.close()
 
-    bridge = ChatBridge()
+    bridge = ChatBridge(backend="agy")
     mock_stdout = json.dumps({
         "conversation_id": "conv-resumed-old-err",
         "status": "SUCCESS",
@@ -768,7 +768,7 @@ def test_resume_ignores_old_cumulative_quota_error(tmp_path: Path) -> None:
     })
 
     with patch("subprocess.Popen") as mock_popen, \
-         patch("stardew_ai_runtime.chat_bridge.get_conversation_db_path", return_value=db_path):
+         patch("stardew_ai_runtime.adapters.providers.agy_database.get_conversation_db_path", return_value=db_path):
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         _mock_agy_stream(mock_proc, mock_stdout, "")
@@ -779,7 +779,7 @@ def test_resume_ignores_old_cumulative_quota_error(tmp_path: Path) -> None:
             save_id="s1",
             start_max_step_idx=10,  # Baseline is 10
         )
-        res = bridge._execute_agy_turn(
+        res = bridge._get_backend().run(
             task,
             conversation_id="conv-resumed-old-err",
             prompt="浇水",
@@ -799,7 +799,7 @@ def test_resume_detects_genuine_new_step17_quota_error(tmp_path: Path) -> None:
     con.commit()
     con.close()
 
-    bridge = ChatBridge()
+    bridge = ChatBridge(backend="agy")
     mock_stdout = json.dumps({
         "conversation_id": "conv-resumed-fresh-err",
         "status": "ERROR",
@@ -807,7 +807,7 @@ def test_resume_detects_genuine_new_step17_quota_error(tmp_path: Path) -> None:
     })
 
     with patch("subprocess.Popen") as mock_popen, \
-         patch("stardew_ai_runtime.chat_bridge.get_conversation_db_path", return_value=db_path):
+         patch("stardew_ai_runtime.adapters.providers.agy_database.get_conversation_db_path", return_value=db_path):
         mock_proc = MagicMock()
         mock_proc.returncode = 1
         _mock_agy_stream(mock_proc, mock_stdout, "")
@@ -818,7 +818,7 @@ def test_resume_detects_genuine_new_step17_quota_error(tmp_path: Path) -> None:
             save_id="s1",
             start_max_step_idx=5,  # Baseline is 5, step 6 is new!
         )
-        res = bridge._execute_agy_turn(
+        res = bridge._get_backend().run(
             task,
             conversation_id="conv-resumed-fresh-err",
             prompt="播种",
@@ -1761,13 +1761,13 @@ def test_chat_bridge_uncaught_exception_flushed_to_file(
 
 @pytest.mark.parametrize("conversation_id", [None, "existing-session"])
 def test_provider_default_effort_omits_unsupported_cli_option(conversation_id):
-    bridge = ChatBridge(model="claude-sonnet-4-6", effort="default")
+    bridge = ChatBridge(backend="agy", model="claude-sonnet-4-6", effort="default")
     with patch("subprocess.Popen") as popen:
         process = MagicMock()
         process.returncode = 0
         _mock_agy_stream(process, json.dumps({"status": "SUCCESS", "response": "ok"}), "")
         popen.return_value = process
-        result = bridge._execute_agy_turn(
+        result = bridge._get_backend().run(
             ActiveChatTask(request_id="effort-default", save_id="s1"),
             conversation_id=conversation_id, prompt="hello",
         )

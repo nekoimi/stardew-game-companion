@@ -11,9 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from .agent_backends import AgyBackend, CodexBackend, DshBackend, KimiBackend, McodeBackend
-from .codex_usage import codex_turn_usage
-from .pi_backend import PiBackend
+from .adapters.providers.agy import AgyBackend
+from .adapters.providers.codex import CodexBackend
+from .adapters.providers.codex_usage import codex_turn_usage
+from .adapters.providers.dsh import DshBackend
+from .adapters.providers.kimi import KimiBackend
+from .adapters.providers.mcode import McodeBackend
+from .adapters.providers.pi import PiBackend
 
 
 class Provider(Protocol):
@@ -30,7 +34,8 @@ class ProviderOptions:
     progress: Callable | None = None
     settings: dict[str, Any] | None = None
     local_sessions_only: bool = False
-    legacy_execute: Callable | None = None
+    receipt_dir: Path | None = None
+    failure: Callable[[str], None] | None = None
 
     def directory(self) -> Path:
         if self.run_dir is None:
@@ -114,7 +119,7 @@ def _dsh_version(run_dir: Path, client: str) -> tuple[list[str], dict[str, str]]
 
 
 def _external(options: ProviderOptions) -> Provider:
-    from .external_connection import ExternalSessionBackend
+    from .adapters.providers.mcode_external import ExternalSessionBackend
 
     return ExternalSessionBackend(options.directory(), progress=options.progress)
 
@@ -153,7 +158,9 @@ PROVIDERS = {spec.id: spec for spec in (
         usage_source="mcode_exec_result", missing_usage="mcode_exec_usage_unavailable"),
     ProviderSpec("kimi", "Kimi", "kimi.exe", lambda o: KimiBackend(o.model, o.command, cwd=o.cwd, progress=o.progress,
         agent=(o.settings or {}).get("agent"), agent_file=(o.settings or {}).get("agentFile")), "kimi-code/k3"),
-    ProviderSpec("agy", "Antigravity", "agy.exe", lambda o: AgyBackend(o.legacy_execute), "gemini-3.8-flash", recover_usage=_recover_agy),
+    ProviderSpec("agy", "Antigravity", "agy.exe", lambda o: AgyBackend(
+        o.run_dir, o.receipt_dir or o.run_dir or o.cwd, o.command, o.model, o.effort, o.failure),
+        "gemini-3.8-flash", recover_usage=_recover_agy),
 )}
 
 EXTERNAL_PROVIDER = ProviderSpec("external:mcode", "MiniMax Code", "mcode", _external,

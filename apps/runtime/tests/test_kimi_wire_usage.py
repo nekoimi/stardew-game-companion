@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from stardew_ai_runtime.kimi_wire_usage import (
+from stardew_ai_runtime.adapters.providers.kimi_wire_usage import (
     aggregate_usage_records,
     read_usage_since,
     resolve_wire_path,

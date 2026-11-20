@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from stardew_ai_runtime.mcode_session_identity import (
+from stardew_ai_runtime.adapters.providers.mcode_session_identity import (
     IdentityVerificationError,
     verify_session_identity,
 )

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from stardew_ai_runtime import external_connection as external
+from stardew_ai_runtime.adapters.providers import mcode_external as external
 from stardew_ai_runtime.chat_bridge import ActiveChatTask, ChatBridge
 
 

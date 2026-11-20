@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .external_connection import AcpError, call_adapter, read_binding
+from .adapters.providers.mcode_external import AcpError, call_adapter, read_binding
 
 
 class DesktopPartner:

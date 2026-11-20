@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from stardew_ai_runtime.agy_process import agy_input_message, run_agy_process
+from stardew_ai_runtime.adapters.providers.agy_process import agy_input_message, run_agy_process
 
 CID = "00000000-0000-4000-8000-000000000123"
 
@@ -172,7 +172,7 @@ def test_cancel_race_preserves_already_buffered_cid_without_late_progress(monkey
         task.cancelled = True
         return proc
 
-    monkeypatch.setattr("stardew_ai_runtime.agy_process.subprocess.Popen", spawn)
+    monkeypatch.setattr("stardew_ai_runtime.adapters.providers.agy_process.subprocess.Popen", spawn)
     cid_callback, progress = Mock(), Mock()
     result = run_agy_process(task, ["fake"], "只读", on_conversation=cid_callback, on_event=progress)
     assert result.cancelled and result.conversation_id == CID and task.provider_conversation_id == CID

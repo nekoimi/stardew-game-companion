@@ -65,7 +65,7 @@ def test_array_updates_and_external_compaction_reset(tmp_path, monkeypatch):
     assert '长目标' not in sent
     backend = McodeBackend.__new__(McodeBackend)
     backend.run_dir = tmp_path
-    monkeypatch.setattr('stardew_ai_runtime.mcode_compaction.compact_existing_session',
+    monkeypatch.setattr('stardew_ai_runtime.adapters.providers.mcode_compaction.compact_existing_session',
                         lambda *args: {'success': True, 'compacted': True})
     backend.compact_session(None, 's')
     assert '实时上下文：' in delivery.prepare('save', 's', prompt(changed), 'rules')[0]

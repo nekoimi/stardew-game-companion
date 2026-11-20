@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from stardew_ai_runtime import chat_bridge as bridge_module
-from stardew_ai_runtime.agy_process import AgyProcessOutcome
+from stardew_ai_runtime.adapters.providers import agy
+from stardew_ai_runtime.adapters.providers.agy_process import AgyProcessOutcome
 from stardew_ai_runtime.chat_bridge import ActiveChatTask, ChatBridge
 
 OLD_CID = "8a529711-ba69-4525-9e02-1677048039d6"
@@ -39,7 +40,7 @@ def test_life_baselines_reach_transport_and_changed_cid_resets_usage_interval(tm
     monkeypatch.setattr(bridge_module, "get_max_gen_idx", gen)
     monkeypatch.setattr(bridge_module, "get_max_step_idx", steps)
     monkeypatch.setattr(bridge_module, "get_command_usage_delta", delta)
-    monkeypatch.setattr(bridge_module, "check_new_quota_error", lambda *args: (False, ""))
+    monkeypatch.setattr(agy, "check_new_quota_error", lambda *args: (False, ""))
     monkeypatch.setattr("stardew_ai_runtime.compatibility.assert_native_compatible", lambda *args: None)
     observed = []
 
@@ -50,7 +51,7 @@ def test_life_baselines_reach_transport_and_changed_cid_resets_usage_interval(tm
         return AgyProcessOutcome(json.dumps({"conversation_id": returned_cid, "status": "SUCCESS", "response": "ok"}),
                                  "", returned_cid, 0)
 
-    monkeypatch.setattr(bridge_module, "run_agy_process", transport)
+    monkeypatch.setattr(agy, "run_agy_process", transport)
     result = bridge._execute_life_turn(task, OLD_CID, "只读对话")
     assert observed == [(7, 11, 7, OLD_CID)]
     gen.assert_called_once_with(OLD_CID)
@@ -171,9 +172,9 @@ def test_transport_recovery_and_ui_share_ledger_root_even_if_run_dir_changes(tmp
         observed.append(options["run_dir"])
         return AgyProcessOutcome(json.dumps({"status": "SUCCESS", "response": "ok"}), "", None, 0)
 
-    monkeypatch.setattr(bridge_module, "run_agy_process", transport)
-    monkeypatch.setattr(bridge_module, "check_new_quota_error", lambda *args: (False, ""))
-    result = bridge._execute_agy_turn(ActiveChatTask(request_id="ledger-test", save_id="Save1"), None, "只读")
+    monkeypatch.setattr(agy, "run_agy_process", transport)
+    monkeypatch.setattr(agy, "check_new_quota_error", lambda *args: (False, ""))
+    result = bridge._get_backend().run(ActiveChatTask(request_id="ledger-test", save_id="Save1"), None, "只读")
     assert result["success"]
     root = bridge._commands_file.parent
     recovery.assert_called_once_with(root)

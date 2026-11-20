@@ -4687,7 +4687,7 @@ def create_mcp_server(
         # without creating a persisted plan or waiting for the model to exit.
         assert_life_turn_current()
         if external_codex and resolved_surface == "light":
-            from .external_connection import read_binding
+            from .adapters.providers.mcode_external import read_binding
             root = Path(getattr(sched, "run_dir", None) or run_dir or ".")
             binding = read_binding(root)
             if binding and binding.get("enabled", True):

@@ -27,7 +27,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import sys
 import time
 import uuid
@@ -38,15 +37,21 @@ from typing import Any
 
 from stardew_ai_runtime.adapters.mcp.plan_client import InternalMcpPlanClient
 from stardew_ai_runtime.adapters.persistence.provider_sessions import ProviderSessionStore
+from stardew_ai_runtime.adapters.providers.agy_database import (
+    get_command_usage_delta,
+    get_max_gen_idx,
+    get_max_step_idx,
+)
+from stardew_ai_runtime.adapters.providers.agy_process import terminate_agy_process
+from stardew_ai_runtime.adapters.providers.codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
+from stardew_ai_runtime.adapters.providers.kimi_wire_usage import read_usage_since, wire_offset
 from stardew_ai_runtime.agent_instructions import instructions_revision, load_instruction_bundle
-from stardew_ai_runtime.agy_process import run_agy_process, terminate_agy_process
 from stardew_ai_runtime.application.game_session import restore_loaded_game
 from stardew_ai_runtime.application.plan_worker import PlanWorker
 from stardew_ai_runtime.application.runtime_events import RuntimeEvents
 from stardew_ai_runtime.application.turns import ActiveChatTask, cancel_active_turn
 from stardew_ai_runtime.autonomy import AutonomyController
 from stardew_ai_runtime.chat_backend_config import load_chat_backend_config, project_root
-from stardew_ai_runtime.codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
 from stardew_ai_runtime.companion_care import CompanionCareService
 from stardew_ai_runtime.companion_memory import CompanionMemoryStore, resolve_companion_id
 from stardew_ai_runtime.companion_milestones import (
@@ -68,7 +73,6 @@ from stardew_ai_runtime.job_feedback import (
     compact_task_feedback,
     project_task_feedback_state,
 )
-from stardew_ai_runtime.kimi_wire_usage import read_usage_since, wire_offset
 from stardew_ai_runtime.life_chat import LifeChatService
 from stardew_ai_runtime.owner_process import OwnerProcessGuard
 from stardew_ai_runtime.plan_executor import (
@@ -253,219 +257,6 @@ def remove_chat_bridge_file_logging() -> None:
             root_logger.removeHandler(h)
 
 
-def _decode_varint(data: bytes, offset: int) -> tuple[int, int]:
-    res = 0
-    shift = 0
-    while offset < len(data):
-        b = data[offset]
-        offset += 1
-        res |= (b & 0x7F) << shift
-        if not (b & 0x80):
-            return res, offset
-        shift += 7
-    return res, offset
-
-
-def _parse_protobuf(data: bytes) -> dict[int, list[tuple[int, Any]]]:
-    offset = 0
-    fields: dict[int, list[tuple[int, Any]]] = {}
-    while offset < len(data):
-        try:
-            tag_val, offset = _decode_varint(data, offset)
-        except Exception:
-            break
-        tag = tag_val >> 3
-        wire = tag_val & 7
-        if wire == 0:
-            val, offset = _decode_varint(data, offset)
-        elif wire == 2:
-            length, offset = _decode_varint(data, offset)
-            val = data[offset : offset + length]
-            offset += length
-        elif wire == 1:
-            val = data[offset : offset + 8]
-            offset += 8
-        elif wire == 5:
-            val = data[offset : offset + 4]
-            offset += 4
-        else:
-            break
-        fields.setdefault(tag, []).append((wire, val))
-    return fields
-
-
-def _parse_usage_from_gen_metadata(data: bytes) -> dict[str, int]:
-    usage = {
-        "prompt_tokens": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "thinking_tokens": 0,
-        "total_tokens": 0,
-    }
-    if not data:
-        return usage
-    f = _parse_protobuf(data)
-    if 1 not in f:
-        return usage
-    wire, val = f[1][0]
-    if wire != 2 or not isinstance(val, bytes):
-        return usage
-    gen_meta = _parse_protobuf(val)
-    if 4 not in gen_meta:
-        return usage
-    wire4, val4 = gen_meta[4][0]
-    if wire4 != 2 or not isinstance(val4, bytes):
-        return usage
-    u = _parse_protobuf(val4)
-    usage["prompt_tokens"] = u.get(1, [(0, 0)])[0][1]
-    usage["input_tokens"] = u.get(2, [(0, 0)])[0][1]
-    usage["output_tokens"] = u.get(3, [(0, 0)])[0][1]
-    usage["cache_read_tokens"] = u.get(5, [(0, 0)])[0][1]
-    usage["thinking_tokens"] = u.get(9, [(0, 0)])[0][1]
-    usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
-    usage["input_context_measured"] = any(key in u for key in (2, 5))
-    return usage
-
-
-def get_conversation_db_path(conversation_id: str) -> Path:
-    return (
-        Path.home()
-        / ".gemini"
-        / "antigravity-cli"
-        / "conversations"
-        / f"{conversation_id}.db"
-    )
-
-
-def get_max_gen_idx(conversation_id: str | None) -> int:
-    """Returns the maximum gen_metadata.idx recorded for conversation_id, or -1 if none."""
-    if not conversation_id:
-        return -1
-    db_path = get_conversation_db_path(conversation_id)
-    if not db_path.is_file():
-        return -1
-    try:
-        con = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
-        cur = con.cursor()
-        cur.execute("SELECT MAX(idx) FROM gen_metadata")
-        row = cur.fetchone()
-        con.close()
-        return row[0] if (row and row[0] is not None) else -1
-    except Exception as ex:
-        logger.debug("Failed getting max gen idx for %s: %s", conversation_id, ex)
-        return -1
-
-
-def get_command_usage_delta(conversation_id: str | None, start_idx: int) -> dict[str, Any] | None:
-    """Calculates exact usage delta for generations strictly after start_idx."""
-    if not conversation_id:
-        return None
-    db_path = get_conversation_db_path(conversation_id)
-    if not db_path.is_file():
-        return None
-    try:
-        con = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
-        cur = con.cursor()
-        cur.execute(
-            "SELECT idx, data FROM gen_metadata WHERE idx > ? ORDER BY idx",
-            (start_idx,),
-        )
-        rows = cur.fetchall()
-        con.close()
-        if not rows:
-            return None
-
-        inp = 0
-        out = 0
-        cache = 0
-        thinking = 0
-        for _, data in rows:
-            u = _parse_usage_from_gen_metadata(data)
-            inp += u.get("input_tokens", 0)
-            out += u.get("output_tokens", 0)
-            cache += u.get("cache_read_tokens", 0)
-            thinking += u.get("thinking_tokens", 0)
-
-        latest = _parse_usage_from_gen_metadata(rows[-1][1])
-        measured = latest.get("input_context_measured", False)
-        return {
-            "input_tokens": inp,
-            "output_tokens": out,
-            "cache_read_tokens": cache,
-            "thinking_tokens": thinking,
-            "total_tokens": inp + out,
-            "generations_count": len(rows),
-            "start_idx": start_idx + 1,
-            "end_idx": rows[-1][0],
-            "source": "db_gen_metadata_delta",
-            "input_includes_cache": False,
-            "input_context_measured": measured,
-            "latestRequestInputContext": latest["input_tokens"] + latest["cache_read_tokens"] if measured else None,
-        }
-    except Exception as ex:
-        logger.warning(
-            "Failed calculating usage delta for %s (start_idx=%d): %s",
-            conversation_id,
-            start_idx,
-            ex,
-        )
-        return None
-
-
-def get_max_step_idx(conversation_id: str | None) -> int:
-    """Returns the maximum steps.idx recorded for conversation_id, or -1 if none."""
-    if not conversation_id:
-        return -1
-    db_path = get_conversation_db_path(conversation_id)
-    if not db_path.is_file():
-        return -1
-    try:
-        con = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
-        cur = con.cursor()
-        cur.execute("SELECT coalesce(max(idx), -1) FROM steps")
-        row = cur.fetchone()
-        con.close()
-        return row[0] if (row and row[0] is not None) else -1
-    except Exception as ex:
-        logger.debug("Failed getting max step idx for %s: %s", conversation_id, ex)
-        return -1
-
-
-def check_new_quota_error(conversation_id: str | None, start_step_idx: int) -> tuple[bool, str]:
-    """Checks if any new step with idx > start_step_idx and step_type == 17 has RESOURCE_EXHAUSTED."""
-    if not conversation_id:
-        return False, ""
-    db_path = get_conversation_db_path(conversation_id)
-    if not db_path.is_file():
-        return False, ""
-    try:
-        con = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
-        cur = con.cursor()
-        cur.execute(
-            "SELECT idx, step_payload FROM steps WHERE idx > ? AND step_type = 17 ORDER BY idx",
-            (start_step_idx,),
-        )
-        rows = cur.fetchall()
-        con.close()
-        for _idx, payload in rows:
-            text = (
-                payload.decode("utf-8", errors="replace")
-                if isinstance(payload, bytes)
-                else str(payload)
-            )
-            if (
-                "RESOURCE_EXHAUSTED" in text
-                or "Individual quota reached" in text
-                or "quota exceeded" in text
-            ):
-                return True, text
-        return False, ""
-    except Exception as ex:
-        logger.debug("Failed checking new steps for quota error: %s", ex)
-        return False, ""
-
-
 class ChatBridge:
     """Bridges WebSocket /chat messages to agy CLI executions with lifecycle and cancel management."""
 
@@ -637,7 +428,7 @@ class ChatBridge:
             return False
         if getattr(self, "connection_source", "builtin") != "external":
             return True
-        from .external_connection import read_binding
+        from .adapters.providers.mcode_external import read_binding
         binding = read_binding(self.run_dir)
         return bool(binding and binding.get("enabled", True)
                     and getattr(self, "_external_status", None) == "connected")
@@ -651,7 +442,7 @@ class ChatBridge:
         return events is not None and events.control_pending()
 
     def _connection_projection(self) -> dict[str, Any]:
-        from .external_connection import read_binding
+        from .adapters.providers.mcode_external import read_binding
         source = getattr(self, "connection_source", "builtin")
         binding = read_binding(self.run_dir) if source == "external" else None
         status = "connected" if source == "builtin" else getattr(self, "_external_status", "waiting")
@@ -677,7 +468,7 @@ class ChatBridge:
     async def _refresh_external_connection(self, ws):
         if getattr(self, "connection_source", "builtin") != "external":
             return
-        from .external_connection import read_binding
+        from .adapters.providers.mcode_external import read_binding
         binding = read_binding(self.run_dir)
         identity = (binding.get("bindingId"), binding.get("enabled", True)) if binding else None
         previous = getattr(self, "_external_binding_id", None)
@@ -688,7 +479,7 @@ class ChatBridge:
                 self._work_store.revoke_decision(self._active_task.save_id)
         self._external_binding_id = identity
         if time.monotonic() >= getattr(self, "_external_health_at", 0) or previous != identity:
-            from .external_connection import AcpError, call_adapter
+            from .adapters.providers.mcode_external import AcpError, call_adapter
             self._external_health_at = time.monotonic() + 2
             if not binding or not binding.get("enabled", True):
                 self._external_status = "waiting"
@@ -754,7 +545,8 @@ class ChatBridge:
                 settings={"agent": self.agent, "agentFile": self.agent_file,
                           "httpProvider": os.environ.get("STARDEW_CODEX_HTTP_PROVIDER") or load_chat_backend_config().get("httpProvider")},
                 local_sessions_only=getattr(self, "_local_pi_sessions_only", False),
-                legacy_execute=self._execute_agy_turn,
+                receipt_dir=self._commands_file.parent,
+                failure=self._notify_backend_failure,
             ))
         return self._backend
 
@@ -1097,7 +889,7 @@ class ChatBridge:
 
     def get_conversation_id(self, save_id: str | None) -> str | None:
         if getattr(self, "connection_source", "builtin") == "external":
-            from .external_connection import read_binding
+            from .adapters.providers.mcode_external import read_binding
             binding = read_binding(self.run_dir)
             return binding["providerSessionId"] if binding and binding.get("enabled", True) else None
         if not save_id:
@@ -1133,8 +925,6 @@ class ChatBridge:
     def _cancel_provider_process(self, proc: Any) -> None:
         """Stop an owned provider process using its provider-specific tree policy."""
         if self.backend_name == "agy":
-            # Keep the module-level seam so integrations can replace the tree
-            # terminator without changing provider registry state.
             terminate_agy_process(proc)
             return
         cancel_provider(self._backend, proc)
@@ -5532,11 +5322,6 @@ class ChatBridge:
         if not self._connection_ready():
             return {"success": False, "response": "等待原伙伴连接；未启动替代会话。",
                     "conversation_id": conversation_id, "error": "EXTERNAL_CONNECTION_WAITING"}
-        # Preserve the legacy test/integration seam when callers explicitly
-        # replace _execute_agy_turn; normal production dispatch remains solely
-        # controlled by backend_name.
-        if self.backend_name == "kimi" and type(self._execute_agy_turn).__module__.startswith("unittest.mock"):
-            return self._execute_agy_turn(active_task, conversation_id, prompt)
         from stardew_ai_runtime.compatibility import assert_native_compatible
         assert_native_compatible(self.run_dir)
         token = uuid.uuid4().hex
@@ -5606,283 +5391,6 @@ class ChatBridge:
                 os.environ.pop("STARDEW_DECISION_TOKEN", None)
             else:
                 os.environ["STARDEW_DECISION_TOKEN"] = previous_token
-
-    def _execute_agy_turn(
-        self,
-        active_task: ActiveChatTask,
-        conversation_id: str | None,
-        prompt: str,
-    ) -> dict[str, Any]:
-        """Executes agy CLI command synchronously in background thread with cancellation support."""
-        requested_cid = conversation_id
-        # AGY MCP workers outlive CLI turns. Refresh the exact authorization
-        # through the same explicit per-run context mechanism used by other
-        # persistent provider workers; never bind to the global common install.
-        if self.run_dir:
-            context = {key: os.environ[key] for key in
-                       ("STARDEW_LIFE_MODE", "STARDEW_LIFE_TURN_ID", "STARDEW_LIFE_SAVE_ID", "STARDEW_DECISION_TOKEN")
-                       if key in os.environ}
-            path = Path(self.run_dir) / "data" / "agy-turn-context.json"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp = path.with_suffix(".tmp")
-            temp.write_text(json.dumps(context), encoding="utf-8")
-            temp.replace(path)
-        server = os.environ.get("STARDEW_AGY_GAME_SERVER")
-        if server:
-            prompt = f"本回合游戏工具仅来自 MCP 服务 {server}，对应当前已绑定隔离存档；不要调用其他游戏服务。\n" + prompt
-        cmd = [self.agy_cmd]
-
-        # Keep the configured provider model on resume as well: agy otherwise
-        # may route a saved conversation through its unrelated default model.
-        if conversation_id:
-            cmd.extend(["--conversation", conversation_id])
-        if self.model:
-            cmd.extend(["--model", self.model])
-
-        # Explicit provider default supports models whose CLI rejects --effort.
-        if self.effort and self.effort != "default":
-            cmd.extend(["--effort", self.effort])
-
-        cmd.extend([
-            "--mode", "accept-edits",
-            "--dangerously-skip-permissions",
-            "--print-timeout", "10m",
-        ])
-
-        logger.info("Executing agy CLI: %s", " ".join(cmd[:6]) + " ...")
-        start_time = time.monotonic()
-
-        # Check BEFORE spawn (cancel race condition guard)
-        if active_task.cancelled:
-            logger.info("Task [%s] was cancelled before Popen spawn.", active_task.request_id)
-            return {
-                "success": False,
-                "response": "任务已取消。",
-                "error": "CANCELLED",
-                "conversation_id": conversation_id,
-                "duration": 0.0,
-            }
-
-        try:
-            def on_conversation(cid: str) -> None:
-                if cid != requested_cid:
-                    active_task.start_max_idx = -1
-                    active_task.start_max_step_idx = -1
-
-            outcome = run_agy_process(active_task, cmd, prompt, conversation_id,
-                run_dir=self._commands_file.parent,
-                model=self.model or "", start_idx=active_task.start_max_idx,
-                timeout_seconds=600, on_conversation=on_conversation)
-            conversation_id = outcome.conversation_id or conversation_id
-            returncode = outcome.returncode
-            stdout, stderr = outcome.stdout, outcome.stderr
-            if outcome.timed_out:
-                logger.error("agy CLI timed out after 600s")
-                return {
-                    "success": False,
-                    "response": "执行超时 (10分钟)，操作已中止。",
-                    "error": "TIMEOUT",
-                    "conversation_id": conversation_id,
-                    "duration": time.monotonic() - start_time,
-                    "status": "interrupted",
-                }
-
-            duration = time.monotonic() - start_time
-            stdout = stdout or ""
-            stderr = stderr or ""
-
-            if active_task.cancelled or outcome.cancelled:
-                return {
-                    "success": False,
-                    "response": "任务已取消。",
-                    "error": "CANCELLED",
-                    "conversation_id": conversation_id,
-                    "duration": duration,
-                    "status": "interrupted",
-                }
-
-            # Parse JSON output if available
-            parsed = None
-            try:
-                parsed = json.loads(stdout)
-            except Exception:
-                # Try finding JSON block in stdout if CLI emitted header/history text
-                first_brace = stdout.find("{")
-                last_brace = stdout.rfind("}")
-                if first_brace != -1 and last_brace > first_brace:
-                    candidate = stdout[first_brace:last_brace + 1]
-                    try:
-                        p = json.loads(candidate)
-                        if isinstance(p, dict):
-                            parsed = p
-                    except Exception:
-                        pass
-                if parsed is None:
-                    # Try line by line backwards
-                    for line in reversed(stdout.splitlines()):
-                        line = line.strip()
-                        if line.startswith("{") and line.endswith("}"):
-                            try:
-                                p = json.loads(line)
-                                if isinstance(p, dict):
-                                    parsed = p
-                                    break
-                            except Exception:
-                                pass
-
-            cid = (parsed.get("conversation_id") if parsed else None) or conversation_id
-            op_status = parsed.get("status") if parsed else None
-            raw_response = parsed.get("response", "") if parsed else ""
-            response_text = raw_response.strip() if isinstance(raw_response, str) else ""
-            usage = parsed.get("usage") if parsed else None
-
-            # Quota / Rate limit error checking using authoritative new steps baseline
-            # Check for genuine fresh quota evidence:
-            # 1. Authoritative DB steps check: new step_type=17 with idx > start_max_step_idx
-            # Reset step baseline if agy established a new session / changed conversation_id
-            step_baseline = -1 if (cid and requested_cid and cid != requested_cid) else active_task.start_max_step_idx
-            is_new_quota_step, step_err_text = check_new_quota_error(
-                cid, step_baseline
-            )
-            if is_new_quota_step:
-                logger.error(
-                    "Genuine Quota Exhausted detected in new step_type=17 step for [%s]: %s",
-                    cid,
-                    step_err_text[:300],
-                )
-                return {
-                    "success": False,
-                    "response": "AI 模型额度已用尽，任务已停止。请稍后或联系管理员补充额度。",
-                    "error": "RESOURCE_EXHAUSTED",
-                    "conversation_id": cid,
-                    "duration": duration,
-                }
-
-            # 2. Check current process stderr (process-local, never cumulative)
-            hard_quota_pattern = re.compile(
-                r"(RESOURCE_EXHAUSTED|Resource has been exhausted|quota exceeded|Individual quota reached)",
-                re.IGNORECASE,
-            )
-            rate_limit_pattern = re.compile(
-                r"(429 Too Many Requests|rate limit exceeded|rate_limit)",
-                re.IGNORECASE,
-            )
-
-            if stderr and hard_quota_pattern.search(stderr):
-                logger.error("Genuine Quota Exhausted detected in stderr: %s", stderr[:300])
-                self._notify_backend_failure("RESOURCE_EXHAUSTED")
-                return {
-                    "success": False,
-                    "response": "AI 模型额度已用尽，任务已停止。请稍后或联系管理员补充额度。",
-                    "error": "RESOURCE_EXHAUSTED",
-                    "conversation_id": cid,
-                    "duration": duration,
-                }
-
-            if stderr and rate_limit_pattern.search(stderr):
-                logger.warning("Transient Rate Limit detected in stderr: %s", stderr[:300])
-                self._notify_backend_failure("RATE_LIMIT_EXCEEDED")
-                return {
-                    "success": False,
-                    "response": "AI 请求过于频繁 (Rate Limit)，请稍候重试。",
-                    "error": "RATE_LIMIT_EXCEEDED",
-                    "conversation_id": cid,
-                    "duration": duration,
-                }
-
-            # 3. For new conversation only (not resumed), parsed.get("error") is fresh evidence
-            is_new_session = requested_cid is None
-            if is_new_session and parsed and parsed.get("error"):
-                new_session_err = str(parsed.get("error"))
-                if hard_quota_pattern.search(new_session_err):
-                    logger.error("Quota Exhausted in new session error: %s", new_session_err[:300])
-                    self._notify_backend_failure("RESOURCE_EXHAUSTED")
-                    return {
-                        "success": False,
-                        "response": "AI 模型额度已用尽，任务已停止。请稍后或联系管理员补充额度。",
-                        "error": "RESOURCE_EXHAUSTED",
-                        "conversation_id": cid,
-                        "duration": duration,
-                    }
-                elif rate_limit_pattern.search(new_session_err):
-                    self._notify_backend_failure("RATE_LIMIT_EXCEEDED")
-                    return {
-                        "success": False,
-                        "response": "AI 请求过于频繁 (Rate Limit)，请稍候重试。",
-                        "error": "RATE_LIMIT_EXCEEDED",
-                        "conversation_id": cid,
-                        "duration": duration,
-                    }
-
-            # 4. If op_status is SUCCESS and response_text exists, current turn succeeded!
-            # (Ignore any old cumulative error carried in parsed JSON)
-            if op_status == "SUCCESS":
-                if response_text:
-                    return {
-                        "success": True,
-                        "response": response_text,
-                        "conversation_id": cid,
-                        "usage": usage,
-                        "duration": duration,
-                    }
-                else:
-                    logger.warning("agy returned SUCCESS but response was empty.")
-                    return {
-                        "success": False,
-                        "response": "模型已执行但未返回具体汇报说明。",
-                        "error": "EMPTY_MODEL_RESPONSE",
-                        "conversation_id": cid,
-                        "usage": usage,
-                        "duration": duration,
-                    }
-
-            # 5. Non-zero exit code or failed status
-            is_error = (returncode != 0) or (op_status not in ("SUCCESS", None))
-            if is_error:
-                cli_err = (parsed.get("error") or "") if is_new_session else ""
-                err_text = f"{stderr}\n{cli_err}".strip()
-                if err_text:
-                    err_marker = err_text[:200]
-                    resp = response_text if response_text else f"AI 执行出错 (退出码 {returncode})：{err_text[:200]}"
-                else:
-                    err_marker = f"AGY_EXIT_{returncode}" if returncode != 0 else f"AGY_STATUS_{op_status}"
-                    resp = response_text if response_text else f"AI 执行出错 (退出码 {returncode})"
-                logger.error("agy exited with error: code=%s, status=%s, err=%s", returncode, op_status, err_text[:300] or err_marker)
-                return {
-                    "success": False,
-                    "response": resp,
-                    "error": err_marker,
-                    "conversation_id": cid,
-                    "duration": duration,
-                }
-
-            # Plain text output fallback if proc.returncode == 0
-            clean_stdout = stdout.strip()
-            if returncode == 0 and clean_stdout:
-                return {
-                    "success": True,
-                    "response": clean_stdout,
-                    "conversation_id": conversation_id,
-                    "duration": duration,
-                }
-
-            return {
-                "success": False,
-                "response": f"AI 未能正常生成回复 (code {returncode})",
-                "error": "NO_OUTPUT",
-                "conversation_id": conversation_id,
-                "duration": duration,
-            }
-        except Exception as ex:
-            logger.error("Failed to execute agy CLI: %s", ex, exc_info=True)
-            return {
-                "success": False,
-                "response": f"调用后台 AI 服务发生异常：{ex}",
-                "error": str(ex),
-                "conversation_id": conversation_id,
-            }
-        finally:
-            active_task.process = None
 
     async def _push_work_state(self, ws: WebSocketClient | None, save_id: str) -> None:
         if ws is None:

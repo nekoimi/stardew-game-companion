@@ -11,11 +11,11 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from .adapters.providers.mcode_external import AcpError, read_binding
 from .application.player_service import PlayerOperationError as DesktopError
 from .application.player_service import PlayerService
 from .chat_bridge import ChatBridge
 from .desktop_partner import DesktopPartner
-from .external_connection import AcpError, read_binding
 from .protocol import Envelope
 from .provider_registry import PROVIDERS, ClientError
 

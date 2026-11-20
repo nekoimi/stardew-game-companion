@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from stardew_ai_runtime.adapters.providers.pi import PiBackend
 from stardew_ai_runtime.chat_backend_config import load_chat_backend_config
 from stardew_ai_runtime.chat_bridge import ActiveChatTask, ChatBridge
-from stardew_ai_runtime.pi_backend import PiBackend
 
 FAKE = Path(__file__).parent / "support/fake_pi.py"
 

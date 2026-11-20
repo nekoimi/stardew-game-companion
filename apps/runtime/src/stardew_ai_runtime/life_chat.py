@@ -14,8 +14,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .adapters.providers.codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
 from .agent_instructions import instructions_revision
-from .codex_game_profile import CODEX_GAME_TOOL_PROFILE_VERSION
 from .decision_policy import decision_policy
 
 logger = logging.getLogger("stardew_ai_runtime.life_chat")

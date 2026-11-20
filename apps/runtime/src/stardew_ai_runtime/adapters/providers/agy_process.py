@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .usage_meter import AgyTurnReceipts
+from stardew_ai_runtime.usage_meter import AgyTurnReceipts
 
 logger = logging.getLogger(__name__)
 

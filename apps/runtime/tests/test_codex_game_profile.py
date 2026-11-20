@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from stardew_ai_runtime.codex_game_profile import (
+from stardew_ai_runtime.adapters.providers.codex_game_profile import (
     game_tool_config,
     unrelated_mcp_config,
     write_game_instructions,
