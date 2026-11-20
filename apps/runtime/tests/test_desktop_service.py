@@ -17,13 +17,16 @@ class DesktopHarness(DesktopBridge):
     def __init__(self, root):
         super().__init__(root, "", "pi")
         self.save = "Farm_1"
-        self.game_session = self._player_session_id = "session-a"
-        self._chat_ws = object()
-        self._latest_snapshot_payload = {"companion": {"activity": "idle"}}
+        self.game_session = self.runtime._player_session_id = "session-a"
+        self.runtime._chat_ws = object()
+        self.runtime._latest_snapshot_payload = {"companion": {"activity": "idle"}}
         self._awaiting_native_control = False
         self.calls = []
         self.disconnect_on_status = False
         self.receipt_reads = 0
+        self._original_cancel = self.runtime.handle_chat_cancel
+        self.runtime.handle_chat_cancel = self.handle_chat_cancel
+        self.runtime._handle_life_message = self._handle_life_message
 
     async def native_control(self, binding, action, **kwargs):
         self.calls.append((action, kwargs))
@@ -40,7 +43,7 @@ class DesktopHarness(DesktopBridge):
     async def handle_chat_cancel(self, ws, request_id, reason, save_id, **scope):
         self.calls.append(("cancel-turn", reason))
         if scope:
-            return await super().handle_chat_cancel(ws, request_id, reason, save_id, **scope)
+            return await self._original_cancel(ws, request_id, reason, save_id, **scope)
 
     async def _handle_life_message(self, ws, kind, payload, save_id):
         self.calls.append(("agent-input", payload))
@@ -57,7 +60,7 @@ class ReplySocket:
 @pytest.mark.parametrize("repeated", [True, False])
 def test_desktop_turn_marks_only_an_already_spoken_final_reply(tmp_path, repeated):
     bridge = DesktopHarness(tmp_path)
-    bridge._chat_ws = socket = ReplySocket()
+    bridge.runtime._chat_ws = socket = ReplySocket()
     speech = "今天可以先浇水。"
     final = speech if repeated else "水壶还需要补水。"
 
@@ -71,10 +74,10 @@ def test_desktop_turn_marks_only_an_already_spoken_final_reply(tmp_path, repeate
         path.write_text(json.dumps({"saveId": task.save_id, "action": "speak", "text": speech}), encoding="utf-8")
         return {"success": True, "response": final}
 
-    bridge._thinking_pause = no_pause
-    bridge._execute_life_turn = provider
-    bridge._work_store.set_paused(bridge.save, True)  # Conversation needs no mock native action.
-    asyncio.run(bridge._run_life_chat_turn(socket, {"request_id": "chat", "save_id": bridge.save, "text": "今天做什么？"}))
+    bridge.runtime._thinking_pause = no_pause
+    bridge.runtime._execute_life_turn = provider
+    bridge.runtime._work_store.set_paused(bridge.save, True)  # Conversation needs no mock native action.
+    asyncio.run(bridge.runtime._run_life_chat_turn(socket, {"request_id": "chat", "save_id": bridge.save, "text": "今天做什么？"}))
 
     events = [event["payload"] for _, event in bridge.events_after(0) if event["payload"].get("replyText")]
     assert [event["status"] for event in events] == ["public-message", "completed"]
@@ -89,21 +92,21 @@ def test_desktop_recovery_waits_for_native_receipt_before_dispatching(tmp_path):
             await super().send_text(text)
             request = self.sent[-1]["payload"]
             assert request["action"] == "recover"
-            assert bridge._work_store.state(save).paused and bridge._autonomy.state(save).paused
+            assert bridge.runtime._work_store.state(save).paused and bridge.runtime._autonomy.state(save).paused
             project(recoveryPending=receipt is None, requestId=request["requestId"], result=receipt,
                     error="TERMINAL_UNKNOWN" if receipt is None else None)
 
     def project(**payload):
-        bridge.desktop_message({"messageType": "desktop.control.result", "saveId": save,
+        bridge.native_event({"messageType": "desktop.control.result", "saveId": save,
                                 "gameSessionId": session, "payload": {"paused": True, **payload}}, save)
 
     bridge = DesktopBridge(tmp_path, "", "pi")
     save, session = "Farm_1", "session-a"
     bridge.save = save
-    bridge.game_session = bridge._player_session_id = session
-    bridge._latest_snapshot_payload = {"companion": {"activity": "idle"}}
-    bridge._chat_ws = socket = RecoverySocket()
-    bridge.actor_mode, bridge.control_owner = "player", "human"
+    bridge.game_session = bridge.runtime._player_session_id = session
+    bridge.runtime._latest_snapshot_payload = {"companion": {"activity": "idle"}}
+    bridge.runtime._chat_ws = socket = RecoverySocket()
+    bridge.runtime.actor_mode, bridge.runtime.control_owner = "player", "human"
     receipt = None
 
     async def verify():
@@ -118,12 +121,12 @@ def test_desktop_recovery_waits_for_native_receipt_before_dispatching(tmp_path):
                 return await client.post("/v1/commands", json={"gameSessionId": session,
                                                               "requestId": "fresh", "text": "浇水"})
 
-            assert not bridge._connection_ready()  # No native projection after runtime startup.
+            assert not bridge.permits_dispatch()  # No native projection after runtime startup.
             assert (await control("handoff")).status_code == 409
             assert (await submit()).status_code == 409
             project(recoveryPending=True)
             assert bridge.status()["recoveryPending"]
-            assert not bridge._connection_ready()
+            assert not bridge.permits_dispatch()
             assert (await control("resume")).status_code == 409
             assert (await submit()).status_code == 409
             assert socket.sent == [] and bridge.turns == set()
@@ -137,7 +140,7 @@ def test_desktop_recovery_waits_for_native_receipt_before_dispatching(tmp_path):
             assert (await control("recover")).status_code == 200
             assert bridge.events_after(0)[0][1] == {"type": "result", "payload": receipt}
             assert bridge.status()["paused"] and bridge.status()["controlOwner"] == "human"
-            assert bridge._connection_ready() and not bridge.status()["recoveryPending"]
+            assert bridge.permits_dispatch() and not bridge.status()["recoveryPending"]
             assert [item["payload"]["action"] for item in socket.sent] == ["recover", "recover"]
 
     asyncio.run(verify())
@@ -154,7 +157,7 @@ def test_desktop_usage_shares_receipts_and_only_projects_the_current_game_sessio
              "usage": {"input_tokens": 200, "output_tokens": 20, "cache_read_tokens": 120}},
             {**base, "requestId": "elsewhere", "saveId": "OtherFarm", "usage": {"input_tokens": 300, "output_tokens": 30,
                                                                           "cache_read_tokens": 0, "estimated_api_cost_usd": 0.5}}]
-    bridge._commands_file.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    bridge.runtime._commands_file.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
 
     async def verify():
         transport = httpx.ASGITransport(app=create_app(bridge, "token"))
@@ -217,7 +220,7 @@ def test_interrupt_with_unknown_native_result_keeps_dispatch_gate_closed(tmp_pat
     async def send_reply(ws, reply):
         failed.append(reply.payload)
 
-    bridge._send_reply = send_reply
+    bridge.runtime._send_reply = send_reply
     asyncio.run(bridge.command(bridge.binding(), "replace", "现在去浇水", True, None))
     assert [call[0] for call in bridge.calls] == ["interrupt", "cancel-turn", "status"]
     assert bridge.settling == "old-action"
@@ -227,37 +230,37 @@ def test_interrupt_with_unknown_native_result_keeps_dispatch_gate_closed(tmp_pat
 
 def test_desktop_withdraws_background_goal_without_interrupting_current_goal(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    bridge._chat_ws = ReplySocket()
-    current = bridge._work_store.add_goal(bridge.save, "照料动物", source="user")
-    background = bridge._work_store.add_goal(bridge.save, "清理树林", source="agent")
-    bridge._autonomy.set_goal_scope(bridge.save, current.id)
+    bridge.runtime._chat_ws = ReplySocket()
+    current = bridge.runtime._work_store.add_goal(bridge.save, "照料动物", source="user")
+    background = bridge.runtime._work_store.add_goal(bridge.save, "清理树林", source="agent")
+    bridge.runtime._autonomy.set_goal_scope(bridge.save, current.id)
 
     asyncio.run(bridge.control(bridge.binding(), "cancel", goalId=background.id))
 
     assert bridge.calls == []
-    goals = {g["id"]: g["status"] for g in bridge._work_store.list_goals(bridge.save)}
+    goals = {g["id"]: g["status"] for g in bridge.runtime._work_store.list_goals(bridge.save)}
     assert goals == {current.id: "active", background.id: "cancelled"}
     assert bridge.status()["work"]["currentGoalId"] == current.id
 
 
 def test_desktop_withdraws_current_goal_and_waits_for_native_terminal(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    bridge._chat_ws = ReplySocket()
-    goal = bridge._work_store.add_goal(bridge.save, "照料动物", source="user")
-    bridge._autonomy.set_goal_scope(bridge.save, goal.id)
+    bridge.runtime._chat_ws = ReplySocket()
+    goal = bridge.runtime._work_store.add_goal(bridge.save, "照料动物", source="user")
+    bridge.runtime._autonomy.set_goal_scope(bridge.save, goal.id)
 
     asyncio.run(bridge.control(bridge.binding(), "cancel", goalId=goal.id))
 
     assert [name for name, _ in bridge.calls] == ["interrupt", "cancel-turn", "status", "status", "unhold"]
     assert bridge.calls[3][1]["commandId"] == "old-action"
-    assert bridge._work_store.list_goals(bridge.save)[0]["status"] == "cancelled"
+    assert bridge.runtime._work_store.list_goals(bridge.save)[0]["status"] == "cancelled"
 
 
 def test_desktop_reply_is_bound_to_selected_decision(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    goal = bridge._work_store.add_goal(bridge.save, "照料动物", source="user")
-    first = bridge._work_store.request_player_decision(bridge.save, goal.id, "饲料够用吗？")
-    second = bridge._work_store.request_player_decision(bridge.save, goal.id, "先照料哪种动物？")
+    goal = bridge.runtime._work_store.add_goal(bridge.save, "照料动物", source="user")
+    first = bridge.runtime._work_store.request_player_decision(bridge.save, goal.id, "饲料够用吗？")
+    second = bridge.runtime._work_store.request_player_decision(bridge.save, goal.id, "先照料哪种动物？")
     assert [d["id"] for d in bridge.status()["decisions"]] == [first["id"], second["id"]]
 
     asyncio.run(bridge.command(bridge.binding(), "answer", "先照料鸡", False, second["id"]))
@@ -269,8 +272,8 @@ def test_desktop_reply_is_bound_to_selected_decision(tmp_path):
 
 def test_desktop_profile_uses_existing_revision_and_game_notification(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    ws = bridge._chat_ws = ReplySocket()
-    bridge._profile_store.set(bridge.save, {"companionName": "星星", "personality": "calm"}, 0)
+    ws = bridge.runtime._chat_ws = ReplySocket()
+    bridge.runtime._profile_store.set(bridge.save, {"companionName": "星星", "personality": "calm"}, 0)
     headers = {"Authorization": "Bearer token"}
 
     async def verify():
@@ -295,34 +298,34 @@ def test_desktop_profile_uses_existing_revision_and_game_notification(tmp_path):
 
 def test_desktop_initiative_settings_preserve_pause_and_goal(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    bridge._chat_ws = ReplySocket()
-    bridge._autonomy.set_goal_scope(bridge.save, "goal-scope")
-    bridge._autonomy.set_paused(bridge.save, True)
+    bridge.runtime._chat_ws = ReplySocket()
+    bridge.runtime._autonomy.set_goal_scope(bridge.save, "goal-scope")
+    bridge.runtime._autonomy.set_paused(bridge.save, True)
 
     updated = asyncio.run(bridge.save_initiative(bridge.binding(), "free", "wait"))
 
     assert updated["initiativeMode"] == "free"
     assert updated["idlePreference"] == "wait"
-    state = bridge._autonomy.state(bridge.save)
+    state = bridge.runtime._autonomy.state(bridge.save)
     assert state.paused and state.goal_scope == "goal-scope"
 
 
 def test_history_reply_after_save_switch_is_not_returned_to_desktop(tmp_path):
     bridge = DesktopBridge(tmp_path, "", "pi")
     bridge.save = "Farm_1"
-    bridge.game_session = bridge._player_session_id = "session-a"
-    bridge._latest_snapshot_payload = {"companion": {"activity": "idle"}}
+    bridge.game_session = bridge.runtime._player_session_id = "session-a"
+    bridge.runtime._latest_snapshot_payload = {"companion": {"activity": "idle"}}
 
     class SwitchingSocket:
         async def send_text(self, text):
             request = json.loads(text)
-            bridge.desktop_message({**request, "messageType": "desktop.control.result", "payload": {
+            bridge.native_event({**request, "messageType": "desktop.control.result", "payload": {
                 "requestId": request["payload"]["requestId"], "history": {"entries": [{"text": "旧存档记录"}]},
             }}, "Farm_1")
             bridge.save = "Farm_2"
-            bridge.game_session = bridge._player_session_id = "session-b"
+            bridge.game_session = bridge.runtime._player_session_id = "session-b"
 
-    bridge._chat_ws = SwitchingSocket()
+    bridge.runtime._chat_ws = SwitchingSocket()
     bridge.native_state = {"paused": True}
 
     async def verify():
@@ -339,8 +342,8 @@ def test_history_reply_after_save_switch_is_not_returned_to_desktop(tmp_path):
 
 def test_desktop_memory_edits_share_revision_and_stay_in_the_loaded_save(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    ws = bridge._chat_ws = ReplySocket()
-    bridge._memory_store.add("OtherFarm", kind="agreement", text="保留原来的约定", source="player",
+    ws = bridge.runtime._chat_ws = ReplySocket()
+    bridge.runtime._memory_store.add("OtherFarm", kind="agreement", text="保留原来的约定", source="player",
                              game_date="unknown", expected_revision=0)
 
     async def verify():
@@ -372,13 +375,13 @@ def test_desktop_memory_edits_share_revision_and_stay_in_the_loaded_save(tmp_pat
             assert response.status_code == 200 and response.json()["entries"] == []
 
     asyncio.run(verify())
-    assert bridge._memory_store.list("OtherFarm")["entries"][0]["text"] == "保留原来的约定"
+    assert bridge.runtime._memory_store.list("OtherFarm")["entries"][0]["text"] == "保留原来的约定"
 
 
 def test_desktop_waits_for_external_partner_without_losing_native_controls(tmp_path, monkeypatch):
     monkeypatch.setenv("STARDEW_CONNECTION_SOURCE", "external")
     bridge = DesktopHarness(tmp_path)
-    bridge._sessions["pi:Farm_1"] = "builtin"
+    bridge.runtime._sessions["pi:Farm_1"] = "builtin"
 
     async def verify():
         transport = httpx.ASGITransport(app=create_app(bridge, "token"))
@@ -397,7 +400,7 @@ def test_desktop_waits_for_external_partner_without_losing_native_controls(tmp_p
 
     asyncio.run(verify())
     assert bridge.calls == [("takeover", {})] and not bridge.requests
-    assert bridge._backend is None and bridge.get_conversation_id("Farm_1") is None
+    assert bridge.runtime._backend is None and bridge.runtime.get_conversation_id("Farm_1") is None
 
 
 def test_desktop_requires_explicit_original_session_and_idle_confirmation(tmp_path, monkeypatch):
@@ -432,18 +435,18 @@ def test_desktop_requires_explicit_original_session_and_idle_confirmation(tmp_pa
 def test_backend_selection_keeps_provider_specific_session_and_client(tmp_path, monkeypatch):
     monkeypatch.setenv("STARDEW_CONNECTION_SOURCE", "builtin")
     codex = DesktopBridge(tmp_path, "", "selected-codex.exe", backend="codex")
-    codex.record_conversation_id("farm", "codex-original")
+    codex.runtime.record_conversation_id("farm", "codex-original")
     dsh = DesktopBridge(tmp_path, "", "selected-dsh.cmd", backend="dsh")
-    dsh.record_conversation_id("farm", "dsh-original")
+    dsh.runtime.record_conversation_id("farm", "dsh-original")
     mcode = DesktopBridge(tmp_path, "", "selected-mcode.cmd", backend="mcode")
 
-    assert isinstance(codex._get_backend(), CodexBackend) and codex._get_backend().command == "selected-codex.exe"
-    assert isinstance(dsh._get_backend(), DshBackend) and dsh._get_backend().model == "deepseek-flash"
-    assert dsh._get_backend().command == "selected-dsh.cmd"
-    assert isinstance(mcode._get_backend(), McodeBackend) and mcode._get_backend().command == "selected-mcode.cmd"
-    assert mcode.get_conversation_id("farm") is None
-    assert dsh.get_conversation_id("farm") == "dsh-original"
-    assert codex.get_conversation_id("farm") == "codex-original"
+    assert isinstance(codex.runtime._get_backend(), CodexBackend) and codex.runtime._get_backend().command == "selected-codex.exe"
+    assert isinstance(dsh.runtime._get_backend(), DshBackend) and dsh.runtime._get_backend().model == "deepseek-flash"
+    assert dsh.runtime._get_backend().command == "selected-dsh.cmd"
+    assert isinstance(mcode.runtime._get_backend(), McodeBackend) and mcode.runtime._get_backend().command == "selected-mcode.cmd"
+    assert mcode.runtime.get_conversation_id("farm") is None
+    assert dsh.runtime.get_conversation_id("farm") == "dsh-original"
+    assert codex.runtime.get_conversation_id("farm") == "codex-original"
 
 
 def test_registered_provider_runs_a_game_turn_without_bridge_dispatch_changes(tmp_path, monkeypatch):
@@ -472,12 +475,12 @@ def test_registered_provider_runs_a_game_turn_without_bridge_dispatch_changes(tm
     bridge = DesktopBridge(tmp_path, "", "configured.exe", backend=spec.id, effort="high")
     bridge._awaiting_native_control = False
     task = ActiveChatTask("turn", "Farm_1")
-    result = bridge._execute_turn(task, "existing", "玩家说：看看农场")
+    result = bridge.runtime._execute_turn(task, "existing", "玩家说：看看农场")
 
-    assert bridge.model == "game-test" and result["response"] == "已观察农场。"
-    assert bridge._provider_usage(result, "turn", "Farm_1") == (result["usage"], "fixture_receipt", None)
+    assert bridge.runtime.model == "game-test" and result["response"] == "已观察农场。"
+    assert bridge.runtime._provider_usage(result, "turn", "Farm_1") == (result["usage"], "fixture_receipt", None)
     assert calls[0][:2] == ("turn", "existing")
-    asyncio.run(bridge._close_backend())
+    asyncio.run(bridge.runtime._close_backend())
     assert calls[-1] == "closed"
 
 
@@ -500,22 +503,22 @@ def test_dsh_desktop_installation_is_version_checked_without_cmd_shell(tmp_path,
 
 def test_desktop_adopts_and_defers_current_milestone_without_taking_control(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    ws = bridge._chat_ws = ReplySocket()
-    bridge.actor_mode = "player"
-    bridge.control_owner = "human"
-    bridge._latest_snapshot_payload["world"] = {"year": 1, "season": "spring", "dayOfMonth": 12, "timeOfDay": 800}
-    bridge._profile_store.set(bridge.save, {"playStyle": "earn"}, 0)
+    ws = bridge.runtime._chat_ws = ReplySocket()
+    bridge.runtime.actor_mode = "player"
+    bridge.runtime.control_owner = "human"
+    bridge.runtime._latest_snapshot_payload["world"] = {"year": 1, "season": "spring", "dayOfMonth": 12, "timeOfDay": 800}
+    bridge.runtime._profile_store.set(bridge.save, {"playStyle": "earn"}, 0)
     original = next(node for node in bridge.status()["milestones"] if "草莓" in node["title"])
 
     async def verify():
         binding = bridge.binding()
         adopted = await bridge.change_milestone(binding, "adopt", original["id"], original["updatedAt"])
-        await asyncio.gather(*bridge._life_drain_tasks)
+        await asyncio.gather(*bridge.runtime._life_drain_tasks)
         node = next(row for row in adopted["nodes"] if row["id"] == original["id"])
         assert node["status"] == "adopted"
-        assert bridge.control_owner == "human" and bridge._active_task is None
-        assert bridge._pending_life_preparation[bridge.save] == {}
-        assert bridge._work_store.list_todos(bridge.save)
+        assert bridge.runtime.control_owner == "human" and bridge.runtime._active_task is None
+        assert bridge.runtime._pending_life_preparation[bridge.save] == {}
+        assert bridge.runtime._work_store.list_todos(bridge.save)
         try:
             await bridge.change_milestone(binding, "defer", original["id"], original["updatedAt"])
         except DesktopError as error:
@@ -524,7 +527,7 @@ def test_desktop_adopts_and_defers_current_milestone_without_taking_control(tmp_
             raise AssertionError("Stale milestone action was accepted")
         deferred = await bridge.change_milestone(binding, "defer", node["id"], node["updatedAt"])
         assert next(row for row in deferred["nodes"] if row["id"] == node["id"])["status"] == "deferred"
-        assert all(todo["status"] == "cancelled" for todo in bridge._work_store.list_todos(bridge.save))
+        assert all(todo["status"] == "cancelled" for todo in bridge.runtime._work_store.list_todos(bridge.save))
 
     asyncio.run(verify())
     assert bridge.calls == []
@@ -533,10 +536,10 @@ def test_desktop_adopts_and_defers_current_milestone_without_taking_control(tmp_
 
 def test_desktop_closes_and_restores_one_pending_decision_without_answering_it(tmp_path):
     bridge = DesktopHarness(tmp_path)
-    bridge._chat_ws = ReplySocket()
-    first = bridge._work_store.add_goal(bridge.save, "照料农场", source="user")
-    notice = bridge._work_store.request_player_decision(bridge.save, first.id, "先浇水还是收菜？", ["浇水", "收菜"])
-    other = bridge._work_store.request_player_decision(bridge.save, first.id, "种什么作物？")
+    bridge.runtime._chat_ws = ReplySocket()
+    first = bridge.runtime._work_store.add_goal(bridge.save, "照料农场", source="user")
+    notice = bridge.runtime._work_store.request_player_decision(bridge.save, first.id, "先浇水还是收菜？", ["浇水", "收菜"])
+    other = bridge.runtime._work_store.request_player_decision(bridge.save, first.id, "种什么作物？")
 
     async def verify():
         transport = httpx.ASGITransport(app=create_app(bridge, "token"))
@@ -551,8 +554,8 @@ def test_desktop_closes_and_restores_one_pending_decision_without_answering_it(t
             assert snapshot["closedDecisions"][0]["id"] == notice["id"]
             assert (await client.post("/v1/notices", json={**body, "action": "restore"})).status_code == 200
             assert bridge.status()["decisions"][0]["choices"] == ["浇水", "收菜"]
-            assert not any(row.get("answeredAt") for row in bridge._work_store.state(bridge.save).notices)
-            bridge._work_store.answer_player_notice(bridge.save, notice["id"], "浇水", "other-client")
+            assert not any(row.get("answeredAt") for row in bridge.runtime._work_store.state(bridge.save).notices)
+            bridge.runtime._work_store.answer_player_notice(bridge.save, notice["id"], "浇水", "other-client")
             assert (await client.post("/v1/notices", json=body)).status_code == 409
 
     asyncio.run(verify())

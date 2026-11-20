@@ -40,7 +40,9 @@ from stardew_ai_runtime.adapters.mcp.plan_client import InternalMcpPlanClient
 from stardew_ai_runtime.adapters.persistence.provider_sessions import ProviderSessionStore
 from stardew_ai_runtime.agent_instructions import instructions_revision, load_instruction_bundle
 from stardew_ai_runtime.agy_process import run_agy_process, terminate_agy_process
+from stardew_ai_runtime.application.game_session import restore_loaded_game
 from stardew_ai_runtime.application.plan_worker import PlanWorker
+from stardew_ai_runtime.application.runtime_events import RuntimeEvents
 from stardew_ai_runtime.application.turns import ActiveChatTask, cancel_active_turn
 from stardew_ai_runtime.autonomy import AutonomyController
 from stardew_ai_runtime.chat_backend_config import load_chat_backend_config, project_root
@@ -486,8 +488,14 @@ class ChatBridge:
         backend_command: str | None = None,
         internal_plan_client: Any | None = None,
         enable_plan_worker: bool = True,
+        events: RuntimeEvents | None = None,
+        explicit_handoff: bool = False,
+        local_pi_sessions_only: bool = False,
     ):
         self.run_dir = Path(run_dir) if run_dir else None
+        self._events = events
+        self._explicit_handoff = explicit_handoff
+        self._local_pi_sessions_only = local_pi_sessions_only
         configured = load_chat_backend_config()
         self.backend_name = backend or configured["backend"]
         self.connection_source = os.environ.get("STARDEW_CONNECTION_SOURCE", "builtin")
@@ -624,7 +632,7 @@ class ChatBridge:
     def provider(self) -> str:
         return self.backend_name
 
-    def _connection_ready(self) -> bool:
+    def partner_connected(self) -> bool:
         if getattr(self, "_connection_switching", False):
             return False
         if getattr(self, "connection_source", "builtin") != "external":
@@ -633,6 +641,14 @@ class ChatBridge:
         binding = read_binding(self.run_dir)
         return bool(binding and binding.get("enabled", True)
                     and getattr(self, "_external_status", None) == "connected")
+
+    def _connection_ready(self) -> bool:
+        events = getattr(self, "_events", None)
+        return self.partner_connected() and (events is None or events.permits_dispatch())
+
+    def _control_pending(self) -> bool:
+        events = getattr(self, "_events", None)
+        return events is not None and events.control_pending()
 
     def _connection_projection(self) -> dict[str, Any]:
         from .external_connection import read_binding
@@ -1203,7 +1219,10 @@ class ChatBridge:
                 last_wait_log = 0.0
 
                 try:
-                    await self._prepare_game_load(save_id, disc.get("gameSessionId"))
+                    session_id = disc.get("gameSessionId")
+                    await self._prepare_game_load(save_id, session_id)
+                    if self._events is not None:
+                        self._events.game_loaded(session_id)
                     # A stale discovery file is not a live game session. Only
                     # invalidate decisions and wake work after authentication
                     # succeeds, so offline retries cannot mutate saved work.
@@ -1214,7 +1233,14 @@ class ChatBridge:
                         self._plan_worker.supplied_save_id = str(save_id) if save_id else None
                         self._plan_worker.start()
                         self._notify_plan_worker(str(save_id) if save_id else None)
-                    await self._receive_loop(ws, save_id, stop_event)
+                    if self._events is not None:
+                        self._latest_snapshot_payload = None
+                        self._events.game_connected(save_id)
+                    try:
+                        await self._receive_loop(ws, save_id, stop_event)
+                    finally:
+                        if self._events is not None:
+                            await self._events.game_disconnected()
                 finally:
                     self.abort_active_task("WebSocket disconnected")
                     await ws.close()
@@ -1236,64 +1262,7 @@ class ChatBridge:
         await self._close_backend()
 
     async def _prepare_game_load(self, save_id: str | None, session_id: str | None) -> None:
-        from .game_reload import (
-            mark_game_load_applied,
-            pending_game_load,
-            preserve_provider_sessions,
-            recover_recorded_choices,
-            restore_game_load,
-        )
-
-        if self.run_dir is None or not save_id:
-            return
-        request = pending_game_load(self.run_dir, save_id, session_id)
-        if request is None:
-            recover_recorded_choices(self.run_dir, save_id)
-            return
-        self.abort_active_task("Game save reloaded")
-        self._autonomy_generation += 1
-        self._active_player_requests.pop(save_id, None)
-        delivery = self._delivery_tasks.pop(save_id, None)
-        if delivery is not None and not delivery.done():
-            delivery.cancel()
-        wakeup = self._autonomy_wakeup_tasks.pop(save_id, None)
-        if wakeup is not None and wakeup is not asyncio.current_task():
-            wakeup.cancel()
-            await asyncio.gather(wakeup, return_exceptions=True)
-        self._autonomy_wakeup_snapshots.pop(save_id, None)
-        if self._plan_worker is not None:
-            await self._plan_worker.stop()
-        active = self._active_task.async_task if self._active_task else None
-        if active is not None and active is not asyncio.current_task():
-            await asyncio.gather(active, return_exceptions=True)
-        restore_game_load(self.run_dir, request)
-        preserve_provider_sessions(self.run_dir, request, self._sessions, self._sessions_file)
-        from .prompt_delivery import PromptDelivery
-        delivery = PromptDelivery(self.run_dir / "prompt-delivery.json")
-        for key, baseline in list(delivery.state.items()):
-            if f":{save_id}:" in key:
-                delivery.invalidate_session(key, baseline.get("session"))
-        self._latest_snapshot_payload = None
-
-        self._latest_snapshot_observed_at = None
-        self._latest_snapshot_revision = None
-        self._current_game_day_key = None
-        self._last_day_settlement = None
-        self._last_native_ui_recovery_signal = None
-        self._evening_care_fired_day = None
-        for mapping in (self._last_work_projection, self._work_projection_times,
-                        self._pending_native_cancels, self._autonomy_last_snapshot_at,
-                        self._autonomy_pending_snapshot, self._autonomy_pending_task_fingerprints):
-            mapping.pop(save_id, None)
-        self._life_proposals.pop(save_id, None)
-        self._bind_autonomy_store()
-        self._bind_work_store()
-        self._bind_companion_stores()
-        recover_recorded_choices(self.run_dir, save_id)
-        if self._life_chat is not None:
-            self._life_chat.record_fingerprint(save_id, self._profile_revision(save_id), self._memory_instruction_revision(save_id))
-        mark_game_load_applied(self.run_dir, request)
-        logger.info("Restored game-save facts with retained player-intent summary for %s", save_id)
+        await restore_loaded_game(self, save_id, session_id)
 
     async def _receive_loop(
         self,
@@ -1344,9 +1313,9 @@ class ChatBridge:
                     continue
 
                 msg_type = data.get("messageType")
-                desktop_message = getattr(self, "desktop_message", None)
-                if msg_type in {"desktop.control.result", "desktop.result"} and desktop_message is not None:
-                    desktop_message(data, active_save_id)
+                events = getattr(self, "_events", None)
+                if msg_type in {"desktop.control.result", "desktop.result"} and events is not None:
+                    events.native_event(data, active_save_id)
                     continue
                 await self._refresh_external_connection(ws)
                 if msg_type == "connection.source.set":
@@ -1379,7 +1348,10 @@ class ChatBridge:
                     )
                     self._track_actor_mode(envelope.payload)
                     if self.actor_mode == "player" and not self._player_claim_attempted:
-                        await self._maybe_claim_player_control(ws, active_save_id)
+                        if self._explicit_handoff:
+                            self._player_claim_attempted = True
+                        else:
+                            await self._maybe_claim_player_control(ws, active_save_id)
                     try:
                         self._write_life_snapshot(active_save_id)
                     except OSError as ex:
@@ -1529,7 +1501,7 @@ class ChatBridge:
         *, force: bool = False
     ) -> None:
         """Evaluate the latest native snapshot through the chat channel only."""
-        if getattr(self, "_desktop_control_pending", False):
+        if self._control_pending():
             return
         if not self._connection_ready():
             return
@@ -2848,12 +2820,12 @@ class ChatBridge:
 
     async def _drain_life_queue(self, ws: WebSocketClient | None) -> None:
         """Process queued life submits FIFO once the model slot is free."""
-        if self._life_draining or not self._connection_ready() or getattr(self, "_desktop_control_pending", False):
+        if self._life_draining or not self._connection_ready() or self._control_pending():
             return
         self._life_draining = True
         try:
             while self._life_queue or self._pending_life_preparation:
-                if not self._connection_ready() or getattr(self, "_desktop_control_pending", False):
+                if not self._connection_ready() or self._control_pending():
                     return
                 if self._busy_lock.locked() or (
                     self._active_task and not self._active_task.cancelled
@@ -6184,6 +6156,9 @@ class ChatBridge:
                 logger.warning("agent.thinking end [%s] send failed", lease_id, exc_info=True)
 
     async def _send_reply(self, ws: WebSocketClient | None, reply: Envelope) -> bool:
+        events = getattr(self, "_events", None)
+        if events is not None:
+            events.publish_reply(reply)
         if reply.message_type == "chat.reply" and self._active_task is not None and self._active_task.execution_deferred and (
             reply.payload.get("requestId") == self._active_task.request_id
         ):
