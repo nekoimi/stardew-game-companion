@@ -42,13 +42,11 @@ public partial class MainWindow : Window
         Timeline.ItemsSource = _entries;
         InitializeSaveViews();
         DesktopSettings settings = new();
-        var path = Path.Combine(_root, "data", "desktop-settings.json");
         try
         {
-            if (File.Exists(path))
-                settings = JsonSerializer.Deserialize<DesktopSettings>(File.ReadAllText(path)) ?? new();
-            GameFolder.Text = DesktopSession.IsGameDirectory(settings.GameDirectory)
-                ? settings.GameDirectory : DesktopSession.DetectGame();
+            settings = DesktopInstallation.LoadSettings(_root);
+            GameFolder.Text = DesktopInstallation.IsGameDirectory(settings.GameDirectory)
+                ? settings.GameDirectory : DesktopInstallation.DetectGame();
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -75,7 +73,7 @@ public partial class MainWindow : Window
             return;
         }
         var settings = Settings();
-        if (!DesktopSession.IsGameDirectory(settings.GameDirectory))
+        if (!DesktopInstallation.IsGameDirectory(settings.GameDirectory))
         {
             Pages.SelectedItem = SettingsPage;
             ActivityText.Text = "请选择包含 StardewModdingAPI.exe 的游戏目录。";
@@ -180,7 +178,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            DesktopSession.WriteJson(Path.Combine(_root, "data", "desktop-settings.json"), Settings());
+            DesktopInstallation.SaveSettings(_root, Settings());
             ActivityText.Text = "设置已保存，下次启动生效。";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

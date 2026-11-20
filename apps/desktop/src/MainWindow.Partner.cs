@@ -28,7 +28,7 @@ public partial class MainWindow
         _clients.TryAdd("pi", new(settings.Model, settings.PiPath));
         try
         {
-            string path = Path.Combine(DesktopSession.ModDirectory(_root), "desktop-providers.json");
+            string path = Path.Combine(DesktopInstallation.ModDirectory(_root), "desktop-providers.json");
             BackendPicker.ItemsSource = JsonSerializer.Deserialize<DesktopProvider[]>(File.ReadAllText(path), JsonSerializerOptions.Web);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
@@ -118,7 +118,7 @@ public partial class MainWindow
     {
         try
         {
-            DesktopSession.WriteJson(Path.Combine(_root, "data", "desktop-settings.json"), Settings());
+            DesktopInstallation.SaveSettings(_root, Settings());
             OriginalFeedback.Text = "原会话目录已保存。";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { OriginalFeedback.Text = ex.Message; }

@@ -10,7 +10,7 @@ public partial class MainWindow
 
     private void RefreshImportControls()
     {
-        bool pending = DesktopSession.ImportPending(_root);
+        bool pending = DesktopInstallation.ImportPending(_root);
         ImportButton.Content = pending ? "继续上次导入" : "从原安装导入…";
         ImportDataOnly.IsEnabled = !pending;
     }
@@ -20,14 +20,14 @@ public partial class MainWindow
         if (_session is not null || _closing || _importing) return;
         string? source = null;
         bool dataOnly = ImportDataOnly.IsChecked == true;
-        if (!DesktopSession.ImportPending(_root))
+        if (!DesktopInstallation.ImportPending(_root))
         {
             var picker = new OpenFolderDialog { Title = "选择原伙伴 Mod、游戏目录或旧绿色包目录" };
-            var defaultSource = DesktopSession.ModDirectory(GameFolder.Text);
+            var defaultSource = DesktopInstallation.ModDirectory(GameFolder.Text);
             if (Directory.Exists(defaultSource)) picker.InitialDirectory = defaultSource;
             if (picker.ShowDialog(this) != true) return;
             source = picker.FolderName;
-            var nested = DesktopSession.ModDirectory(source);
+            var nested = DesktopInstallation.ModDirectory(source);
             if (File.Exists(Path.Combine(nested, "manifest.json"))) source = nested;
             string message = dataOnly
                 ? "复制旧安装中的工作、历史和伙伴记忆？后续使用这个绿色包已选择的伙伴来源。"
@@ -41,7 +41,7 @@ public partial class MainWindow
         RefreshControls();
         try
         {
-            var result = await DesktopSession.ImportAsync(_root, source, dataOnly);
+            var result = await DesktopInstallation.ImportAsync(_root, source, dataOnly);
             int sessions = Number(result, "sessions") ?? 0;
             ImportFeedback.Text = $"已导入 {Number(result, "dataFiles")} 份数据，复制 {sessions} 个 Pi 会话。"
                 + (sessions > 0 ? "选择本机 Pi 并进入对应存档可接续原会话。" : "启动游戏后进入对应存档。");
