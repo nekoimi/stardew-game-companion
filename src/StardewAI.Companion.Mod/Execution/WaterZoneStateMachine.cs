@@ -33,6 +33,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
     private readonly Action<string, LogLevel>? _log;
 
     private readonly object _stateLock = new();
+    private readonly ActionPathPlanning _pathPlanning = new();
 
     // Active execution context
     private WaterZoneRequest? _currentRequest;
@@ -112,6 +113,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
 
         lock (_stateLock)
         {
+            _pathPlanning.Dispose();
             _currentRequest = request;
             _wateredTiles.Clear();
             _skippedTiles.Clear();
@@ -245,11 +247,10 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
 
             // Pick the first target from the companion's current position using
             // feasible path length, with preference for adjacent/connected tiles.
-            ReorderRemainingTargets();
 
             _currentTargetIndex = 0;
             _currentTargetTile = _pendingTargets[0];
-            PlanPathToCurrentTarget();
+            PlanPathToCurrentTarget(reorder: true);
 
             earlyTerminalResult = null;
             NotifyPlayer($"AI Companion: Watering task started ({_pendingTargets.Count} tiles).");
@@ -289,6 +290,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
             {
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Paused;
+                _pathPlanning.Dispose();
                 _pauseStartedClock = _observer.TimeOfDay;
                 _actor.Halt();
                 _avatar?.SetAnimation("idle");
@@ -349,6 +351,12 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
             // State Dispatch
             try
             {
+                if (_pathPlanning.IsPending && CurrentState != ExecutionState.Cancelling)
+                {
+                    _pathPlanning.Advance();
+                    return;
+                }
+
                 switch (CurrentState)
                 {
                     case ExecutionState.Navigating:
@@ -389,12 +397,12 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
     /// Manhattan distance. Only the nearest <see cref="MaxOrderingCandidates"/> are
     /// costed with a path query; the rest stay ordered by connectivity/distance.
     /// </summary>
-    private void ReorderRemainingTargets()
+    private IEnumerable<NavigationSearch?> ReorderRemainingTargets()
     {
         int start = _currentTargetIndex;
         int remainingCount = _pendingTargets.Count - start;
         if (remainingCount <= 1)
-            return;
+            yield break;
 
         var remaining = _pendingTargets.GetRange(start, remainingCount);
         var remainingSet = new HashSet<TileCoordinate>(remaining);
@@ -417,8 +425,10 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
                 continue;
             }
 
-            var path = _navigator.FindPathToInteract(_actor, _currentRequest!.LocationId, tile, _avoidTiles);
-            costByTile[tile] = path.Success && path.Steps.Count > 0 ? path.Steps.Count : int.MaxValue;
+            var path = _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
+                _currentRequest!.LocationId, tile, _avoidTiles);
+            yield return path;
+            costByTile[tile] = path.Result.Success && path.Result.Steps.Count > 0 ? path.Result.Steps.Count : int.MaxValue;
         }
 
         int Connectivity(TileCoordinate tile) =>
@@ -440,22 +450,37 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
         }
     }
 
-    private void PlanPathToCurrentTarget()
+    private NavigationSearch<PathResult> BeginWateringPath(bool reorder) => new(search => SearchWateringPath(search, reorder));
+
+    private IEnumerable<NavigationSearch?> SearchWateringPath(NavigationSearch<PathResult> search, bool reorder)
+    {
+        if (reorder)
+            foreach (var step in ReorderRemainingTargets()) yield return step;
+        _currentTargetTile = _pendingTargets[_currentTargetIndex];
+        var path = _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
+            _currentRequest!.LocationId, _currentTargetTile, _avoidTiles);
+        yield return path;
+        search.Result = path.Result;
+    }
+
+    private void PlanPathToCurrentTarget(bool reorder = false)
     {
         if (_currentRequest is null) return;
-
-        var pathResult = _navigator.FindPathToInteract(_actor, _currentRequest.LocationId, _currentTargetTile, _avoidTiles);
-        if (!pathResult.Success)
-        {
-            Log($"Navigation to tile ({_currentTargetTile.X}, {_currentTargetTile.Y}) failed: {pathResult.ErrorMessage ?? "Navigation failed"}", LogLevel.Warn);
-            _failedTiles.Add(new FailedTileInfo(_currentTargetTile, pathResult.ErrorMessage ?? "Navigation failed"));
-            AdvanceToNextTarget();
-            return;
-        }
-
-        _currentPath = pathResult.Steps.ToList();
-        _currentPathIndex = 0;
         CurrentState = ExecutionState.Navigating;
+        _pathPlanning.Start(_actor, () => BeginWateringPath(reorder), pathResult =>
+        {
+            if (!pathResult.Success)
+            {
+                Log($"Navigation to tile ({_currentTargetTile.X}, {_currentTargetTile.Y}) failed: {pathResult.ErrorMessage ?? "Navigation failed"}", LogLevel.Warn);
+                _failedTiles.Add(new FailedTileInfo(_currentTargetTile, pathResult.ErrorMessage ?? "Navigation failed"));
+                AdvanceToNextTarget();
+                return;
+            }
+
+            _currentPath = pathResult.Steps.ToList();
+            _currentPathIndex = 0;
+            CurrentState = ExecutionState.Navigating;
+        });
     }
 
     private void TickNavigating()
@@ -497,16 +522,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
             }
 
             // Replan from current tile, excluding all known blocked positions.
-            var replanResult = _navigator.FindPathToInteract(_actor, _currentRequest!.LocationId, _currentTargetTile, _avoidTiles);
-            if (!replanResult.Success)
-            {
-                _failedTiles.Add(new FailedTileInfo(_currentTargetTile, replanResult.ErrorMessage ?? "Navigation replan failed"));
-                AdvanceToNextTarget();
-                return;
-            }
-
-            _currentPath = replanResult.Steps.ToList();
-            _currentPathIndex = 0;
+            PlanPathToCurrentTarget();
             return;
         }
 
@@ -559,6 +575,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pathPlanning.Dispose();
             _pauseStartedClock = _observer.TimeOfDay;
             _actor.Halt();
             _avatar?.SetAnimation("idle");
@@ -713,6 +730,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pathPlanning.Dispose();
             _pauseStartedClock = _observer.TimeOfDay;
             _actor.Halt();
             _avatar?.SetAnimation("idle");
@@ -763,14 +781,14 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
         // re-read from native state by the navigator, so a stale block for one
         // target must not permanently exclude a tile for later targets.
         _avoidTiles.Clear();
-        ReorderRemainingTargets();
         _currentTargetTile = _pendingTargets[_currentTargetIndex];
         _replanCount = 0;
-        PlanPathToCurrentTarget();
+        PlanPathToCurrentTarget(reorder: true);
     }
 
     private WaterZoneResult FinishExecution(ExecutionState state, string? errorMessage = null, string? errorCode = null, bool retryRecommended = false)
     {
+        _pathPlanning.Dispose();
         CurrentState = state;
         _actor.Halt();
         _actor.EndUsingTool();
@@ -868,11 +886,10 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
                 _pauseStartedClock = null;
                 CurrentState = ExecutionState.Navigating;
                 _avoidTiles.Clear();
-                ReorderRemainingTargets();
                 _currentTargetTile = _pendingTargets[_currentTargetIndex];
                 _replanCount = 0;
                 // Re-observe world and re-plan from current position to next unwatered target
-                PlanPathToCurrentTarget();
+                PlanPathToCurrentTarget(reorder: true);
                 NotifyPlayer("AI Companion: Task resumed.");
             }
         }

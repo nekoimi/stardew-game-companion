@@ -13,6 +13,37 @@ namespace StardewAI.Companion.Mod.Transport.Tests;
 public class WebSocketTransportServerTests
 {
     [Fact]
+    public void LateCancelAndSubsequentQueryReplayConfirmedResultThroughIncomingQueue()
+    {
+        var handler = new TestTransportHandler();
+        using var server = new WebSocketTransportServer(0, "token", handler, "save", "session");
+        typeof(WebSocketTransportServer).GetProperty(nameof(server.State))!.SetValue(server, TransportState.Ready);
+        var completed = new SkillResultPayload("done", "task", "succeeded", 3, 0, 0, 9, new());
+        server.Idempotency.MarkCompleted("idempotency", completed);
+        var receive = typeof(WebSocketTransportServer).GetMethod("ProcessIncomingRawMessage", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        foreach (var type in new[] { "skill.cancel", "skill.result.query" })
+        {
+            var envelope = new EnvelopeDto("0.1", type, type, "test", 1, 1, DateTimeOffset.UtcNow,
+                new JsonObject { ["commandId"] = "done" }, SaveId: "save", GameSessionId: "session");
+            receive.Invoke(server, new object[] { JsonSerializer.Serialize(envelope), 0L });
+            server.Update();
+        }
+        var outgoing = (System.Collections.IEnumerable)typeof(WebSocketTransportServer)
+            .GetField("_outboundCriticalQueue", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
+        var results = outgoing.Cast<object>().Select(item => (EnvelopeDto)item.GetType().GetProperty("Envelope")!.GetValue(item)!).ToList();
+        Assert.Equal(2, results.Count);
+        Assert.All(results, result => {
+            Assert.Equal("skill.result", result.MessageType);
+            Assert.Equal("succeeded", result.Payload["terminalState"]!.ToString());
+            Assert.Equal(3, result.Payload["completedCount"]!.GetValue<int>());
+        });
+        Assert.Equal(0, handler.CancelCount);
+        Assert.Equal(0, handler.AcceptCount);
+        Assert.True(server.Idempotency.TryGetCompletedResult("done", out var cached));
+        Assert.Same(completed, cached);
+    }
+
+    [Fact]
     public async Task ChatCancelWaitsForGameThreadAndRejectsStaleConnectionOrSession()
     {
         var handler = new TestTransportHandler();

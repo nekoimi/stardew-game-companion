@@ -6,6 +6,25 @@ namespace StardewAI.Companion.Mod.Tests;
 
 public class ActorStateTests : IDisposable
 {
+    [Fact]
+    public void VersionOneSummarySaveStillLoadsAndUpgradesOnNextCapture()
+    {
+        var repo = new JsonActorStateRepository(_testDir);
+        var legacy = CompanionActorState.CreateDefault("legacy");
+        legacy.Version = 1;
+        legacy.Inventory[0] = legacy.Inventory[0] with { WaterLeft = 0, UpgradeLevel = 2 };
+        repo.Save(legacy);
+        var loaded = repo.LoadOrInitializeDefaults("legacy");
+        Assert.Null(loaded.NativeInventory);
+        var actor = new FarmerMechanicsActor("legacy");
+        actor.ApplyPersistentState(loaded);
+        var captured = actor.CapturePersistentState();
+        Assert.Equal(CompanionActorState.CurrentSchemaVersion, captured.Version);
+        Assert.Equal(0, captured.Inventory[0].WaterLeft);
+        Assert.Equal(2, captured.Inventory[0].UpgradeLevel);
+        Assert.Null(captured.PersistedTaskId);
+    }
+
     private readonly string _testDir;
 
     public ActorStateTests()
@@ -33,7 +52,7 @@ public class ActorStateTests : IDisposable
         Assert.True(repo.StateExists("companion-1"));
         Assert.Equal(CompanionActorState.DefaultMaxStamina, state1.Stamina);
         Assert.Equal(CompanionActorState.DefaultMaxWater, state1.Water);
-        Assert.Equal(1, state1.Version);
+        Assert.Equal(CompanionActorState.CurrentSchemaVersion, state1.Version);
 
         // Mutate state and save
         state1.Stamina = 120.0f;

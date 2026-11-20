@@ -22,7 +22,7 @@ namespace StardewAI.Companion.Mod.Adapters;
 /// 4. Tools are never deposited; the human player's inventory is never touched and is
 ///    verified unchanged after each operation (companion mode only; in player mode the
 ///    actor IS the human player, so the transfer targets that inventory by design).
-/// 5. Organize merges only same (QualifiedItemId, quality) stacks into the earliest slot via
+/// 5. Organize merges only natively compatible stacks into the earliest slots via
 ///    Item.addToStack, never reorders, and verifies per-(itemId, quality) conservation.
 /// </summary>
 public sealed class NormalChestAdapter : IChestAdapter
@@ -283,62 +283,7 @@ public sealed class NormalChestAdapter : IChestAdapter
 
         try
         {
-            var merges = new List<ChestMergeInfo>();
-            var items = chest.Items;
-
-            // Current merge target slot per (QualifiedItemId, quality) key.
-            var targets = new Dictionary<(string ItemId, int Quality), int>();
-
-            for (int slot = 0; slot < items.Count; slot++)
-            {
-                var source = items[slot];
-                if (source is null) continue;
-
-                var key = (source.QualifiedItemId ?? source.ItemId ?? source.Name, source.Quality);
-                if (!targets.TryGetValue(key, out int targetSlot))
-                {
-                    targets[key] = slot;
-                    continue;
-                }
-
-                var target = items[targetSlot];
-                if (target is null)
-                {
-                    targets[key] = slot;
-                    continue;
-                }
-
-                int sourceBefore = source.Stack;
-                int leftover = target.addToStack(source);
-                int moved = sourceBefore - leftover;
-
-                if (moved > 0)
-                {
-                    merges.Add(new ChestMergeInfo(
-                        ItemId: key.Item1,
-                        ItemName: source.Name,
-                        Quality: key.Quality,
-                        MergedStack: moved,
-                        FromSlot: slot,
-                        ToSlot: targetSlot
-                    ));
-                }
-
-                if (leftover <= 0)
-                {
-                    items[slot] = null;
-                    if (target.Stack >= target.maximumStackSize())
-                    {
-                        targets.Remove(key);
-                    }
-                }
-                else
-                {
-                    // Target is full; the partially merged source becomes the new earliest target.
-                    source.Stack = leftover;
-                    targets[key] = slot;
-                }
-            }
+            var merges = MergeCompatibleStacks(chest.Items);
 
             // Conservation check: per-(itemId, quality) totals must be identical before and after.
             var totalsAfter = ChestTotalsByKey(chest);
@@ -577,6 +522,37 @@ public sealed class NormalChestAdapter : IChestAdapter
                 }
             }
         }
+    }
+
+    internal static IReadOnlyList<ChestMergeInfo> MergeCompatibleStacks(IList<Item> items)
+    {
+        var merges = new List<ChestMergeInfo>();
+        for (int slot = 0; slot < items.Count; slot++)
+        {
+            var source = items[slot];
+            if (source is null) continue;
+            // Keep the earliest compatible stacks. ID and quality alone don't
+            // distinguish wine ingredients, attachments or modded item state.
+            for (int targetSlot = 0; targetSlot < slot && source.Stack > 0; targetSlot++)
+            {
+                var target = items[targetSlot];
+                if (target is null || !target.canStackWith(source) || target.Stack >= target.maximumStackSize())
+                    continue;
+                int before = source.Stack;
+                int leftover = target.addToStack(source);
+                int moved = before - leftover;
+                if (moved > 0)
+                    merges.Add(new ChestMergeInfo(source.QualifiedItemId, source.Name,
+                        source.Quality, moved, slot, targetSlot));
+                if (leftover <= 0)
+                {
+                    items[slot] = null!;
+                    break;
+                }
+                source.Stack = leftover;
+            }
+        }
+        return merges;
     }
 
     private Chest? ResolveNormalChest(string locationName, TileCoordinate chestTile)

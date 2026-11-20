@@ -551,8 +551,10 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
             gameFarmer.Items[1] = hoe;
             gameFarmer.CurrentToolIndex = toolSlot;
 
-            _actor = new FarmerMechanicsActor("companion-1", gameFarmer, wateringCan, targetLocation.Name, activeTile, Monitor.Log, hoe: hoe);
-            _actor.ApplyPersistentState(activeState);
+            var restoredActor = new FarmerMechanicsActor("companion-1", gameFarmer, wateringCan, targetLocation.Name, activeTile, Monitor.Log, hoe: hoe);
+            restoredActor.ApplyPersistentState(activeState);
+            // A failed item restore must not leave a partial actor eligible for saving.
+            _actor = restoredActor;
             // Grass cutting uses the companion's own native Scythe. Supply the
             // ordinary starter tool on first load and on older saved actors;
             // never borrow or modify the human player's inventory.

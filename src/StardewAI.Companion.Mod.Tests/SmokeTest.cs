@@ -58,10 +58,14 @@ public class SmokeTest
         Assert.Equal("task-slice-001", actor.ActiveTaskId);
 
         // 4. Physical continuous movement over multiple ticks
-        // Distance is 64 pixels. At 3.5 px/tick, takes ~19 ticks.
-        for (int i = 0; i < 15; i++)
+        // Path planning now yields before physical movement starts.
+        int tickCounter = 1;
+        while (actor.PixelPosition.Y == 10 * 64 && tickCounter < 30)
+            machine.Update(null, tickCounter++);
+        Assert.True(actor.PixelPosition.Y > 10 * 64);
+        for (int i = 1; i < 15; i++)
         {
-            machine.Update(null, i + 1);
+            machine.Update(null, tickCounter++);
             Assert.Equal(ExecutionState.Navigating, machine.CurrentState);
             // Confirm actor is physically in between (10, 10) and (10, 11)
             Assert.True(actor.PixelPosition.Y > 10 * 64);
@@ -70,7 +74,6 @@ public class SmokeTest
 
         // Advance until arrival at interaction tile (10, 11)
         int maxTicks = 100;
-        int tickCounter = 16;
         while (machine.CurrentState == ExecutionState.Navigating && tickCounter < maxTicks)
         {
             machine.Update(null, tickCounter++);

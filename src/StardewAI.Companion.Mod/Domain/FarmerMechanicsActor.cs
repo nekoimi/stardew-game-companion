@@ -1091,6 +1091,10 @@ public sealed class FarmerMechanicsActor : IFarmerActor
         ArgumentNullException.ThrowIfNull(state);
         lock (_lock)
         {
+            // Decode everything before changing the actor or the live inventory.
+            var nativeSlots = state.NativeInventory is not null && _gameFarmer is not null
+                ? NativeInventoryPersistence.Restore(state.NativeInventory)
+                : null;
             _maxStamina = (int)state.MaxStamina;
             Stamina = state.Stamina;
             _maxWater = state.MaxWater;
@@ -1102,10 +1106,9 @@ public sealed class FarmerMechanicsActor : IFarmerActor
             // Populate actual Farmer.Items from persisted state atomically
             if (_gameFarmer != null)
             {
-                var targetSlots = new Item?[36];
-                bool wateringCanRestored = false;
+                var targetSlots = nativeSlots ?? new Item?[36];
 
-                for (int i = 0; i < state.Inventory.Count; i++)
+                for (int i = 0; nativeSlots is null && i < state.Inventory.Count; i++)
                 {
                     var inv = state.Inventory[i];
                     int targetSlot = (inv.SlotIndex >= 0 && inv.SlotIndex < 36) ? inv.SlotIndex : i;
@@ -1124,11 +1127,6 @@ public sealed class FarmerMechanicsActor : IFarmerActor
                         var can = new WateringCan { WaterLeft = inv.WaterLeft };
                         can.UpgradeLevel = inv.UpgradeLevel;
                         restoredItem = can;
-                        if (!wateringCanRestored)
-                        {
-                            _wateringCan = can;
-                            wateringCanRestored = true;
-                        }
                     }
                     else
                     {
@@ -1157,16 +1155,6 @@ public sealed class FarmerMechanicsActor : IFarmerActor
                     targetSlots[targetSlot] = restoredItem;
                 }
 
-                // If watering can was not in inventory, restore our active watering can
-                if (!wateringCanRestored)
-                {
-                    if (_wateringCan == null)
-                    {
-                        _wateringCan = new WateringCan { WaterLeft = state.Water };
-                    }
-                    targetSlots[0] = _wateringCan;
-                }
-
                 // Atomic commit to _gameFarmer.Items
                 _gameFarmer.Items.Clear();
                 for (int s = 0; s < 36; s++)
@@ -1174,6 +1162,7 @@ public sealed class FarmerMechanicsActor : IFarmerActor
                     _gameFarmer.Items.Add(targetSlots[s]);
                 }
 
+                _wateringCan = null;
                 // Ensure current tool index points to the watering can
                 for (int slot = 0; slot < _gameFarmer.Items.Count; slot++)
                 {
@@ -1290,6 +1279,7 @@ public sealed class FarmerMechanicsActor : IFarmerActor
                 MaxWater = MaxWater,
                 Pose = new AuthoritativePose(LocationName, Tile, Facing),
                 Inventory = inventoryToPersist,
+                NativeInventory = _gameFarmer is not null ? NativeInventoryPersistence.Capture(_gameFarmer.Items) : null,
                 LastSavedUtc = DateTime.UtcNow.ToString("o"),
                 PersistedTaskId = _activeTaskId
             };

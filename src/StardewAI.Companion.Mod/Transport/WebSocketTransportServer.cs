@@ -1358,6 +1358,13 @@ public sealed class WebSocketTransportServer : ITransportServer
             {
                 _handler.OnCancelSkill(payload, envelope);
             }
+            else if (_idempotencyManager.TryGetCompletedResult(payload.CommandId, out var completed))
+            {
+                // A late cancel cannot turn confirmed work into "never executed".
+                var cached = JsonSerializer.SerializeToNode(completed, JsonOptions)!.AsObject();
+                EnqueueOutbound(CreateEnvelope("skill.result", cached, envelope.MessageId,
+                    worldRevision: completed!.FinalWorldRevision), isCritical: true, _socketGeneration);
+            }
             else
             {
                 // Command was purged before execution or never started; emit terminal cancelled result

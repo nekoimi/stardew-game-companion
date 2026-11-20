@@ -37,6 +37,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
     private readonly Action<string, LogLevel>? _log;
 
     private readonly object _stateLock = new();
+    private readonly ActionPathPlanning _pathPlanning = new();
 
     private NativeActionRequest? _currentRequest;
     private List<NativeActionTarget> _pendingTargets = new();
@@ -49,6 +50,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
     private bool _actionEffectExecuted;
     private bool _nativeToolAnimation;
     private NativeActionStepResult? _lastStepResult;
+    private bool _effectRecorded;
     private string? _firstPreconditionMessage;
 
     private readonly List<NativeActionEffect> _completed = new();
@@ -61,6 +63,8 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
     private long _elapsedTicks;
     private readonly ExecutionProgressWatchdog _progressWatchdog = new();
     private int _startClock;
+    private int? _pauseStartedClock;
+    private int _pausedGameMinutes;
     private bool _playerActionRequired;
 
     private volatile bool _cancelRequested;
@@ -138,6 +142,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
 
         lock (_stateLock)
         {
+            _pathPlanning.Dispose();
             _currentRequest = request;
             _inventoryBefore = ActorGuards.IsPlayerBound(_actor) ? SnapshotNativeInventory() : null;
             _completed.Clear();
@@ -153,9 +158,12 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
             _actionEffectExecuted = false;
             _nativeToolAnimation = false;
             _lastStepResult = null;
+            _effectRecorded = false;
             _firstPreconditionMessage = null;
             _playerActionRequired = false;
             _startClock = _observer.TimeOfDay;
+            _pauseStartedClock = null;
+            _pausedGameMinutes = 0;
             _cancelRequested = false;
             _cancelReason = null;
             _pauseRequested = false;
@@ -222,6 +230,9 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
         {
             if (CurrentState == ExecutionState.Paused)
             {
+                if (_pauseStartedClock is { } pauseClock)
+                    _pausedGameMinutes += IWorldObserver.CalculateGameMinutesElapsed(pauseClock, _observer.TimeOfDay);
+                _pauseStartedClock = null;
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Preparing;
                 Log($"{_currentRequest?.SkillId} resumed (task={ActiveTaskId}).");
@@ -258,6 +269,8 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
             {
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Paused;
+                _pathPlanning.Dispose();
+                _pauseStartedClock = _observer.TimeOfDay;
                 _actor.Halt();
                 _avatar?.SetAnimation("idle");
                 OnNotification?.Invoke("AI Companion: Task paused.");
@@ -276,7 +289,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
                 return;
             }
 
-            int elapsedMinutes = IWorldObserver.CalculateGameMinutesElapsed(_startClock, _observer.TimeOfDay);
+            int elapsedMinutes = ActiveGameMinutes();
             if (_currentRequest is not null && _currentRequest.MaxGameMinutes > 0 && elapsedMinutes > _currentRequest.MaxGameMinutes)
             {
                 Log($"{_currentRequest.SkillId} budget exceeded: {elapsedMinutes} > {_currentRequest.MaxGameMinutes} minutes.", LogLevel.Warn);
@@ -287,6 +300,12 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
 
             try
             {
+                if (_pathPlanning.IsPending && CurrentState != ExecutionState.Cancelling)
+                {
+                    _pathPlanning.Advance();
+                    return;
+                }
+
                 switch (CurrentState)
                 {
                     case ExecutionState.Preparing:
@@ -340,20 +359,26 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
             return;
         }
 
-        var pathResult = FindInteractionPath();
-        if (!pathResult.Success || pathResult.Steps.Count == 0)
-        {
-            _skipped.Add(new NativeActionEffect(Describe(_currentTarget), "skipped", "unreachable", Tile: _currentTarget.Tile));
-            _currentTargetIndex++;
-            CurrentState = ExecutionState.Preparing;
-            return;
-        }
+        QueueInteractionPath(resetReplans: true);
+    }
 
-        _currentPath = pathResult.Steps.ToList();
-        _currentPathIndex = 0;
-        _replanCount = 0;
-        CurrentState = ExecutionState.Navigating;
-        EmitProgress("navigating");
+    private void QueueInteractionPath(bool resetReplans)
+    {
+        _pathPlanning.Start(_actor, BeginInteractionPath, pathResult =>
+        {
+            if (!pathResult.Success || pathResult.Steps.Count == 0)
+            {
+                _skipped.Add(new NativeActionEffect(Describe(_currentTarget), "skipped", "unreachable", Tile: _currentTarget.Tile));
+                _currentTargetIndex++;
+                CurrentState = ExecutionState.Preparing;
+                return;
+            }
+            _currentPath = pathResult.Steps.ToList();
+            _currentPathIndex = 0;
+            if (resetReplans) _replanCount = 0;
+            CurrentState = ExecutionState.Navigating;
+            EmitProgress("navigating");
+        });
     }
 
     private void HandleNavigating()
@@ -387,17 +412,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
                 return;
             }
 
-            var replan = FindInteractionPath();
-            if (!replan.Success || replan.Steps.Count == 0)
-            {
-                _skipped.Add(new NativeActionEffect(Describe(_currentTarget), "skipped", "unreachable", Tile: _currentTarget.Tile));
-                _currentTargetIndex++;
-                CurrentState = ExecutionState.Preparing;
-                return;
-            }
-
-            _currentPath = replan.Steps.ToList();
-            _currentPathIndex = 0;
+            QueueInteractionPath(resetReplans: false);
             return;
         }
 
@@ -430,6 +445,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
         _actionTicks = 0;
         _actionEffectExecuted = false;
         _lastStepResult = null;
+        _effectRecorded = false;
         _nativeToolAnimation = false;
         if (_currentRequest!.Kind == NativeActionKind.EatFood && _actor is FarmerMechanicsActor eatingActor)
         {
@@ -460,20 +476,27 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
         return _actor.Tile == _currentTarget.Tile || _actor.Tile.IsAdjacentTo(_currentTarget.Tile);
     }
 
-    private PathResult FindInteractionPath()
+    private NavigationSearch<PathResult> BeginInteractionPath()
     {
         if (_currentRequest!.Kind != NativeActionKind.MoveBuilding)
-            return _navigator.FindPathToInteract(_actor, _currentRequest.LocationId, _currentTarget.Tile);
-        // The destination is the new building's top-left origin. North and west are
-        // guaranteed outside every positive-sized footprint; east/south may be inside.
-        // Use explicit endpoints because FindPathToInteract accepts an already-adjacent actor.
+            return _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
+                _currentRequest.LocationId, _currentTarget.Tile);
+        return new NavigationSearch<PathResult>(SearchBuildingInteraction);
+    }
+
+    private IEnumerable<NavigationSearch?> SearchBuildingInteraction(NavigationSearch<PathResult> search)
+    {
+        // North and west stand outside every positive-sized destination footprint.
         var north = new TileCoordinate(_currentTarget.Tile.X, _currentTarget.Tile.Y - 1);
         var west = new TileCoordinate(_currentTarget.Tile.X - 1, _currentTarget.Tile.Y);
-        return new[] {
-            _navigator.FindPath(_currentRequest.LocationId, _actor.Tile, north, FacingDirection.Down),
-            _navigator.FindPath(_currentRequest.LocationId, _actor.Tile, west, FacingDirection.Right)
-        }.Where(p => p.Success).OrderBy(p => p.Steps.Count).FirstOrDefault()
-            ?? PathResult.Failed("No reachable standing tile outside the building destination footprint.");
+        PathResult? best = null;
+        foreach (var endpoint in new[] { (north, FacingDirection.Down), (west, FacingDirection.Right) })
+        {
+            var path = _navigator.BeginPath(_currentRequest!.LocationId, _actor.Tile, endpoint.Item1, endpoint.Item2);
+            yield return path;
+            if (path.Result.Success && (best is null || path.Result.Steps.Count < best.Steps.Count)) best = path.Result;
+        }
+        search.Result = best ?? PathResult.Failed("No reachable standing tile outside the building destination footprint.");
     }
 
     private void HandleActing(GameTime? time, long tickCount)
@@ -500,6 +523,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
             _staminaUsed += _lastStepResult.StaminaCost;
             _totalCost += _lastStepResult.TotalCost;
             _waterUsed += _lastStepResult.WaterUsed;
+            RecordConfirmedEffect();
         }
 
         bool finished = _nativeToolAnimation
@@ -526,9 +550,9 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
         }
         else if (result.Success)
         {
-            // Resource deltas were already settled when the adapter returned
-            // (see HandleActing); this stage only records the per-target effect.
-            _completed.Add(new NativeActionEffect(targetLabel, result.State, null, result.ItemId, result.ItemCount, _currentTarget.Tile, result.CollectedItems));
+            // The adapter's confirmed effect and costs are already recorded.
+            // Verification advances the target without counting the effect twice.
+            RecordConfirmedEffect();
             EmitProgress("verifying", result.State);
             // Water tiles are alternative refill sources, not separate jobs.
             // Once the native adapter confirms a refill, the whole request is satisfied.
@@ -640,6 +664,8 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
         if (_pauseRequested)
         {
             CurrentState = ExecutionState.Paused;
+            _pathPlanning.Dispose();
+            _pauseStartedClock = _observer.TimeOfDay;
             Log($"{_currentRequest?.SkillId} paused at safe boundary (task={ActiveTaskId}).");
             return true;
         }
@@ -649,6 +675,8 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
 
     private NativeActionResult FinishExecution(ExecutionState terminalState, string? errorMessage, string? errorCode)
     {
+        _pathPlanning.Dispose();
+        RecordConfirmedEffect();
         CurrentState = terminalState;
         _actor.SetActiveTask(null);
         _actor.Halt();
@@ -693,6 +721,17 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
         OnCompleted?.Invoke(result);
         return result;
     }
+
+    private void RecordConfirmedEffect()
+    {
+        if (_effectRecorded || _lastStepResult is not { Success: true } result) return;
+        _completed.Add(new NativeActionEffect(Describe(_currentTarget), result.State, null,
+            result.ItemId, result.ItemCount, _currentTarget.Tile, result.CollectedItems));
+        _effectRecorded = true;
+    }
+
+    private int ActiveGameMinutes() => Math.Max(0,
+        IWorldObserver.CalculateGameMinutesElapsed(_startClock, _pauseStartedClock ?? _observer.TimeOfDay) - _pausedGameMinutes);
 
     private Dictionary<(string ItemId, int Quality), int> SnapshotNativeInventory()
     {

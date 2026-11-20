@@ -31,6 +31,7 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
     private readonly Action<string, LogLevel>? _log;
 
     private readonly object _stateLock = new();
+    private readonly ActionPathPlanning _pathPlanning = new();
 
     // Active execution context
     private ChestActionRequest? _currentRequest;
@@ -51,6 +52,8 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
     private long _elapsedTicks;
     private readonly ExecutionProgressWatchdog _progressWatchdog = new();
     private int _startClock;
+    private int? _pauseStartedClock;
+    private int _pausedGameMinutes;
 
     // Signals
     private volatile bool _cancelRequested;
@@ -108,6 +111,7 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
 
         lock (_stateLock)
         {
+            _pathPlanning.Dispose();
             _currentRequest = request;
             _depositedItems.Clear();
             _withdrawnItems.Clear();
@@ -121,6 +125,8 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
             _withdrawPlanIndex = 0;
             _withdrawRemainingCount = 0;
             _startClock = _observer.TimeOfDay;
+            _pauseStartedClock = null;
+            _pausedGameMinutes = 0;
             _cancelRequested = false;
             _cancelReason = null;
             _pauseRequested = false;
@@ -286,6 +292,8 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
             {
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Paused;
+                _pauseStartedClock = _observer.TimeOfDay;
+                _pathPlanning.Dispose();
                 _actor.Halt();
                 _avatar?.SetAnimation("idle");
                 NotifyPlayer("AI Companion: Task paused.");
@@ -312,7 +320,7 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
             _elapsedTicks++;
 
             // 4. Actual game clock delta measurement & budget check
-            int gameMinutesElapsed = IWorldObserver.CalculateGameMinutesElapsed(_startClock, _observer.TimeOfDay);
+            int gameMinutesElapsed = Math.Max(0, IWorldObserver.CalculateGameMinutesElapsed(_startClock, _observer.TimeOfDay) - _pausedGameMinutes);
             if (_currentRequest.MaxGameMinutes > 0 && gameMinutesElapsed > _currentRequest.MaxGameMinutes)
             {
                 _actor.Halt();
@@ -339,6 +347,12 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
             // State Dispatch
             try
             {
+                if (_pathPlanning.IsPending && CurrentState != ExecutionState.Cancelling)
+                {
+                    _pathPlanning.Advance();
+                    return;
+                }
+
                 switch (CurrentState)
                 {
                     case ExecutionState.Navigating:
@@ -367,20 +381,23 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
     private void PlanPathToChest()
     {
         if (_currentRequest is null) return;
-
-        var pathResult = _navigator.FindPathToInteract(_actor, _currentRequest.LocationId, _currentRequest.ChestTile);
-        if (!pathResult.Success)
-        {
-            Log($"Navigation to chest ({_currentRequest.ChestTile.X}, {_currentRequest.ChestTile.Y}) failed: {pathResult.ErrorMessage ?? "Navigation failed"}", LogLevel.Warn);
-            FinishExecution(ExecutionState.Failed,
-                $"Chest at ({_currentRequest.ChestTile.X}, {_currentRequest.ChestTile.Y}) is unreachable: {pathResult.ErrorMessage ?? "Navigation failed"}",
-                "CHEST_UNREACHABLE");
-            return;
-        }
-
-        _currentPath = pathResult.Steps.ToList();
-        _currentPathIndex = 0;
         CurrentState = ExecutionState.Navigating;
+        _pathPlanning.Start(_actor, () => _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
+                _currentRequest.LocationId, _currentRequest.ChestTile), pathResult =>
+        {
+            if (!pathResult.Success)
+            {
+                Log($"Navigation to chest ({_currentRequest.ChestTile.X}, {_currentRequest.ChestTile.Y}) failed: {pathResult.ErrorMessage ?? "Navigation failed"}", LogLevel.Warn);
+                FinishExecution(ExecutionState.Failed,
+                    $"Chest at ({_currentRequest.ChestTile.X}, {_currentRequest.ChestTile.Y}) is unreachable: {pathResult.ErrorMessage ?? "Navigation failed"}",
+                    "CHEST_UNREACHABLE");
+                return;
+            }
+
+            _currentPath = pathResult.Steps.ToList();
+            _currentPathIndex = 0;
+            CurrentState = ExecutionState.Navigating;
+        });
     }
 
     private void TickNavigating()
@@ -415,16 +432,7 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
             }
 
             // Replan from current tile
-            var replanResult = _navigator.FindPathToInteract(_actor, _currentRequest!.LocationId, _currentRequest.ChestTile);
-            if (!replanResult.Success)
-            {
-                FinishExecution(ExecutionState.Failed,
-                    $"Chest became unreachable: {replanResult.ErrorMessage ?? "Navigation replan failed"}", "CHEST_UNREACHABLE");
-                return;
-            }
-
-            _currentPath = replanResult.Steps.ToList();
-            _currentPathIndex = 0;
+            PlanPathToChest();
             return;
         }
 
@@ -481,6 +489,8 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pauseStartedClock = _observer.TimeOfDay;
+            _pathPlanning.Dispose();
             _actor.Halt();
             _avatar?.SetAnimation("idle");
             return;
@@ -514,6 +524,8 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pauseStartedClock = _observer.TimeOfDay;
+            _pathPlanning.Dispose();
             _actor.Halt();
             _avatar?.SetAnimation("idle");
             return;
@@ -741,6 +753,7 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
         bool retryRecommended = false,
         bool chestFull = false)
     {
+        _pathPlanning.Dispose();
         CurrentState = state;
         _actor.Halt();
         _actor.SetActiveTask(null);
@@ -843,6 +856,9 @@ public sealed class ChestActionStateMachine : ISkillExecutionMachine
         {
             if (IsPaused && _currentRequest != null)
             {
+                if (_pauseStartedClock is { } pauseClock)
+                    _pausedGameMinutes += IWorldObserver.CalculateGameMinutesElapsed(pauseClock, _observer.TimeOfDay);
+                _pauseStartedClock = null;
                 CurrentState = ExecutionState.Navigating;
                 _replanCount = 0;
                 // Re-observe world and re-plan from current position to the chest

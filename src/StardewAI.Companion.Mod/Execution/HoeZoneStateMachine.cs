@@ -31,6 +31,7 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
     private readonly Action<string, LogLevel>? _log;
 
     private readonly object _stateLock = new();
+    private readonly ActionPathPlanning _pathPlanning = new();
 
     private HoeZoneRequest? _currentRequest;
     private List<TileCoordinate> _pendingTargets = new();
@@ -51,6 +52,8 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
     private long _elapsedTicks;
     private readonly ExecutionProgressWatchdog _progressWatchdog = new();
     private int _startClock;
+    private int? _pauseStartedClock;
+    private int _pausedGameMinutes;
 
     private volatile bool _cancelRequested;
     private volatile string? _cancelReason;
@@ -100,6 +103,7 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
 
         lock (_stateLock)
         {
+            _pathPlanning.Dispose();
             _currentRequest = request;
             _hoedTiles.Clear();
             _skippedTiles.Clear();
@@ -113,6 +117,8 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
             _actionEffectExecuted = false;
             _lastHoeResult = null;
             _startClock = _observer.TimeOfDay;
+            _pauseStartedClock = null;
+            _pausedGameMinutes = 0;
             _cancelRequested = false;
             _cancelReason = null;
             _pauseRequested = false;
@@ -192,6 +198,9 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
         {
             if (CurrentState == ExecutionState.Paused)
             {
+                if (_pauseStartedClock is { } pauseClock)
+                    _pausedGameMinutes += IWorldObserver.CalculateGameMinutesElapsed(pauseClock, _observer.TimeOfDay);
+                _pauseStartedClock = null;
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Preparing;
                 Log($"hoe-tiles resumed (task={ActiveTaskId}).");
@@ -229,6 +238,8 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
             {
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Paused;
+                _pauseStartedClock = _observer.TimeOfDay;
+                _pathPlanning.Dispose();
                 _actor.Halt();
                 _avatar?.SetAnimation("idle");
                 NotifyPlayer("AI Companion: Task paused.");
@@ -249,11 +260,17 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
                 return;
             }
 
-            int elapsedMinutes = IWorldObserver.CalculateGameMinutesElapsed(_startClock, _observer.TimeOfDay);
+            int elapsedMinutes = Math.Max(0, IWorldObserver.CalculateGameMinutesElapsed(_startClock, _observer.TimeOfDay) - _pausedGameMinutes);
             if (_currentRequest is not null && _currentRequest.MaxGameMinutes > 0 && elapsedMinutes > _currentRequest.MaxGameMinutes)
             {
                 Log($"hoe-tiles budget exceeded: {elapsedMinutes} > {_currentRequest.MaxGameMinutes} minutes.", LogLevel.Warn);
                 FinishExecution(ExecutionState.PartiallySucceeded, "Game-clock minute budget exceeded.", "BUDGET_EXCEEDED");
+                return;
+            }
+
+            if (_pathPlanning.IsPending && CurrentState != ExecutionState.Cancelling)
+            {
+                _pathPlanning.Advance();
                 return;
             }
 
@@ -325,20 +342,30 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
             return;
         }
 
-        var pathResult = _navigator.FindPathToInteract(_actor, _currentRequest!.LocationId, _currentTargetTile);
-        if (!pathResult.Success || pathResult.Steps.Count == 0)
-        {
-            _skippedTiles.Add(new SkippedTileInfo(_currentTargetTile, "unreachable"));
-            _currentTargetIndex++;
-            CurrentState = ExecutionState.Preparing;
-            return;
-        }
-
-        _currentPath = pathResult.Steps.ToList();
-        _currentPathIndex = 0;
-        _replanCount = 0;
-        CurrentState = ExecutionState.Navigating;
+        QueueInteractionPath(resetReplans: true);
     }
+
+    private void QueueInteractionPath(bool resetReplans)
+    {
+        _pathPlanning.Start(_actor, BeginInteractionPath, pathResult =>
+        {
+            if (!pathResult.Success || pathResult.Steps.Count == 0)
+            {
+                _skippedTiles.Add(new SkippedTileInfo(_currentTargetTile, "unreachable"));
+                _currentTargetIndex++;
+                CurrentState = ExecutionState.Preparing;
+                return;
+            }
+            _currentPath = pathResult.Steps.ToList();
+            _currentPathIndex = 0;
+            if (resetReplans) _replanCount = 0;
+            CurrentState = ExecutionState.Navigating;
+        });
+    }
+
+    private NavigationSearch<PathResult> BeginInteractionPath() =>
+        _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
+            _currentRequest!.LocationId, _currentTargetTile);
 
     private void HandleNavigating()
     {
@@ -376,17 +403,7 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
                 return;
             }
 
-            var replan = _navigator.FindPathToInteract(_actor, _currentRequest!.LocationId, _currentTargetTile);
-            if (!replan.Success || replan.Steps.Count == 0)
-            {
-                _skippedTiles.Add(new SkippedTileInfo(_currentTargetTile, "unreachable"));
-                _currentTargetIndex++;
-                CurrentState = ExecutionState.Preparing;
-                return;
-            }
-
-            _currentPath = replan.Steps.ToList();
-            _currentPathIndex = 0;
+            QueueInteractionPath(resetReplans: false);
             return;
         }
 
@@ -484,6 +501,8 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
         if (_pauseRequested)
         {
             CurrentState = ExecutionState.Paused;
+            _pauseStartedClock = _observer.TimeOfDay;
+            _pathPlanning.Dispose();
             Log($"hoe-tiles paused at safe boundary (task={ActiveTaskId}).");
             return true;
         }
@@ -493,6 +512,7 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
 
     private HoeZoneResult FinishExecution(ExecutionState terminalState, string? errorMessage, string? errorCode)
     {
+        _pathPlanning.Dispose();
         CurrentState = terminalState;
         _actor.SetActiveTask(null);
         _actor.Halt();

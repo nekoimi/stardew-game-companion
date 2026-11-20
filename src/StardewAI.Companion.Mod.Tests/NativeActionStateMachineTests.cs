@@ -9,6 +9,33 @@ namespace StardewAI.Companion.Mod.Tests;
 public class NativeActionStateMachineTests
 {
     [Fact]
+    public void RepeatedPausesDoNotSpendWorkBudgetOrRepeatFinishedAction()
+    {
+        var (machine, _, observer, adapter) = CreateHarness();
+        Assert.True(machine.Start(Request(NativeActionKind.ChopTree, new TileCoordinate(10, 11)) with { MaxGameMinutes = 30 }, out _));
+        machine.RequestPause();
+        machine.Update(null, 1);
+        Assert.True(machine.IsPaused);
+        observer.TimeOfDay = 800;
+        machine.Resume();
+        machine.StepTicks(1);
+        Assert.Null(machine.FinalResult);
+        machine.RequestPause();
+        machine.StepTicks(20);
+        Assert.True(machine.IsPaused);
+        observer.TimeOfDay = 1000;
+        machine.Resume();
+        machine.StepTicks(100);
+        Assert.Equal(ExecutionState.Succeeded, machine.FinalResult!.FinalState);
+        Assert.Single(machine.FinalResult.Effects);
+        Assert.Equal(1, adapter.CallCount);
+        // A finished task cannot be restarted by a stale resume.
+        machine.Resume();
+        machine.StepTicks(20);
+        Assert.Equal(1, adapter.CallCount);
+    }
+
+    [Fact]
     public void AlreadyFullCanSatisfiesRefillWithoutVisitingOtherSourcesOrInventingAnEffect()
     {
         var (machine, actor, observer, adapter) = CreateHarness();
@@ -781,6 +808,9 @@ public class NativeActionStateMachineTests
         Assert.Equal(ExecutionState.Cancelled, result.FinalState);
         Assert.Equal("CANCELLED", result.ErrorCode);
         Assert.Equal(268f, actor.Stamina);
+        Assert.Single(result.Effects);
+        Assert.Equal(1, result.ToTransportPayload().CompletedCount);
+        Assert.Equal(1, adapter.CallCount);
         Assert.Equal(2f, result.StaminaUsed); // the real deduction is reported, not 0
     }
 
@@ -807,6 +837,9 @@ public class NativeActionStateMachineTests
         Assert.Equal(ExecutionState.Failed, result.FinalState);
         Assert.Equal("TIMEOUT", result.ErrorCode);
         Assert.Equal(268f, actor.Stamina);
+        Assert.Single(result.Effects);
+        Assert.Equal(1, result.ToTransportPayload().CompletedCount);
+        Assert.Equal(1, adapter.CallCount);
         Assert.Equal(2f, result.StaminaUsed);
     }
 
@@ -824,9 +857,12 @@ public class NativeActionStateMachineTests
         machine.Update(null, 7);  // budget fires while the result is still pending
 
         var result = machine.FinalResult!;
-        Assert.Equal(ExecutionState.Failed, result.FinalState);
+        Assert.Equal(ExecutionState.PartiallySucceeded, result.FinalState);
         Assert.Equal("BUDGET_EXCEEDED", result.ErrorCode);
         Assert.Equal(268f, actor.Stamina);
+        Assert.Single(result.Effects);
+        Assert.Equal(1, result.ToTransportPayload().CompletedCount);
+        Assert.Equal(1, adapter.CallCount);
         Assert.Equal(2f, result.StaminaUsed);
     }
 }

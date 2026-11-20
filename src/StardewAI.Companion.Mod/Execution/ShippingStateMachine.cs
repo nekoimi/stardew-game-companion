@@ -31,6 +31,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
     private readonly Action<string, LogLevel>? _log;
 
     private readonly object _stateLock = new();
+    private readonly ActionPathPlanning _pathPlanning = new();
 
     private ShippingRequest? _currentRequest;
     private List<ShippingItemRequest> _pendingItems = new();
@@ -52,6 +53,8 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
     private readonly ExecutionProgressWatchdog _progressWatchdog = new();
     private readonly WalkingProgress _walkingProgress = new();
     private int _startClock;
+    private int? _pauseStartedClock;
+    private int _pausedGameMinutes;
 
     private volatile bool _cancelRequested;
     private volatile string? _cancelReason;
@@ -101,6 +104,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
 
         lock (_stateLock)
         {
+            _pathPlanning.Dispose();
             _currentRequest = request;
             _pendingItems = request.Items.ToList();
             _currentItemIndex = 0;
@@ -115,6 +119,8 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
             _walkingProgress.Reset();
             _replanCount = 0;
             _startClock = _observer.TimeOfDay;
+            _pauseStartedClock = null;
+            _pausedGameMinutes = 0;
             _cancelRequested = false;
             _cancelReason = null;
             _pauseRequested = false;
@@ -243,6 +249,8 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
             {
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Paused;
+                _pauseStartedClock = _observer.TimeOfDay;
+                _pathPlanning.Dispose();
                 _actor.Halt();
                 _avatar?.SetAnimation("idle");
                 NotifyPlayer("AI Companion: Shipping task paused.");
@@ -269,7 +277,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
             _elapsedTicks++;
 
             // 4. Actual game clock delta measurement & budget check
-            int gameMinutesElapsed = IWorldObserver.CalculateGameMinutesElapsed(_startClock, _observer.TimeOfDay);
+            int gameMinutesElapsed = Math.Max(0, IWorldObserver.CalculateGameMinutesElapsed(_startClock, _observer.TimeOfDay) - _pausedGameMinutes);
             if (_currentRequest.MaxGameMinutes > 0 && gameMinutesElapsed > _currentRequest.MaxGameMinutes)
             {
                 _actor.Halt();
@@ -296,6 +304,12 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
             // State Dispatch
             try
             {
+                if (_pathPlanning.IsPending && CurrentState != ExecutionState.Cancelling)
+                {
+                    _pathPlanning.Advance();
+                    return;
+                }
+
                 switch (CurrentState)
                 {
                     case ExecutionState.Navigating:
@@ -324,44 +338,46 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
     private void PlanPathToShippingBin()
     {
         if (_currentRequest is null) return;
-
-        // Check if already standing adjacent to any footprint tile
-        var alreadyAdjacent = _shippingBinFootprint.FirstOrDefault(t => _actor.Tile.IsAdjacentTo(t));
-        if (alreadyAdjacent != default)
+        foreach (var tile in _shippingBinFootprint)
         {
-            _targetFootprintTile = alreadyAdjacent;
+            if (!_actor.Tile.IsAdjacentTo(tile)) continue;
+            _pathPlanning.Dispose();
+            _targetFootprintTile = tile;
             CurrentState = ExecutionState.Facing;
             return;
         }
+        CurrentState = ExecutionState.Navigating;
+        _pathPlanning.Start(_actor, () => new NavigationSearch<PathResult>(SearchShippingBin), path =>
+        {
+            if (!path.Success)
+            {
+                FinishExecution(ExecutionState.Failed,
+                    "Shipping bin is unreachable from current position.", "SHIPPING_BIN_UNREACHABLE");
+                return;
+            }
+            _currentPath = path.Steps.ToList();
+            _currentPathIndex = 0;
+            CurrentState = ExecutionState.Navigating;
+        });
+    }
 
-        // Find shortest path to interact with any tile in the footprint
-        IReadOnlyList<PathStep>? bestSteps = null;
+    private IEnumerable<NavigationSearch?> SearchShippingBin(NavigationSearch<PathResult> search)
+    {
+        PathResult? best = null;
         TileCoordinate? bestTile = null;
-
         foreach (var footprintTile in _shippingBinFootprint)
         {
-            var pathResult = _navigator.FindPathToInteract(_actor, _currentRequest.LocationId, footprintTile);
-            if (pathResult.Success && pathResult.Steps.Count > 0)
+            var path = _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
+                _currentRequest!.LocationId, footprintTile);
+            yield return path;
+            if (path.Result.Success && path.Result.Steps.Count > 0 && (best is null || path.Result.Steps.Count < best.Steps.Count))
             {
-                if (bestSteps is null || pathResult.Steps.Count < bestSteps.Count)
-                {
-                    bestSteps = pathResult.Steps;
-                    bestTile = footprintTile;
-                }
+                best = path.Result;
+                bestTile = footprintTile;
             }
         }
-
-        if (bestSteps is null || !bestTile.HasValue)
-        {
-            FinishExecution(ExecutionState.Failed,
-                "Shipping bin is unreachable from current position.", "SHIPPING_BIN_UNREACHABLE");
-            return;
-        }
-
-        _targetFootprintTile = bestTile.Value;
-        _currentPath = bestSteps.ToList();
-        _currentPathIndex = 0;
-        CurrentState = ExecutionState.Navigating;
+        _targetFootprintTile = bestTile;
+        search.Result = best ?? PathResult.Failed("Shipping bin is unreachable from current position.");
     }
 
     private void TickNavigating()
@@ -450,6 +466,8 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pauseStartedClock = _observer.TimeOfDay;
+            _pathPlanning.Dispose();
             _actor.Halt();
             _avatar?.SetAnimation("idle");
             return;
@@ -478,6 +496,8 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pauseStartedClock = _observer.TimeOfDay;
+            _pathPlanning.Dispose();
             _actor.Halt();
             _avatar?.SetAnimation("idle");
             return;
@@ -545,6 +565,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
         string? errorMessage = null,
         string? errorCode = null)
     {
+        _pathPlanning.Dispose();
         CurrentState = terminalState;
         _actor.SetActiveTask(null);
         _avatar?.SetAnimation("idle");
@@ -604,9 +625,10 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
         {
             if (CurrentState == ExecutionState.Paused)
             {
-                CurrentState = _currentPathIndex < _currentPath.Count
-                    ? ExecutionState.Navigating
-                    : ExecutionState.Facing;
+                if (_pauseStartedClock is { } pauseClock)
+                    _pausedGameMinutes += IWorldObserver.CalculateGameMinutesElapsed(pauseClock, _observer.TimeOfDay);
+                _pauseStartedClock = null;
+                PlanPathToShippingBin();
                 NotifyPlayer("AI Companion: Shipping task resumed.");
             }
         }

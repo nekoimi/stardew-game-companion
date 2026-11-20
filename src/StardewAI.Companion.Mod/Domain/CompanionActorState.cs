@@ -5,7 +5,7 @@ namespace StardewAI.Companion.Mod.Domain;
 /// </summary>
 public sealed class CompanionActorState
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     public const float DefaultMaxStamina = 270.0f;
     public const int DefaultMaxWater = 40;
 
@@ -48,6 +48,10 @@ public sealed class CompanionActorState
     /// Independent inventory items.
     /// </summary>
     public List<InventoryItem> Inventory { get; set; } = new();
+
+    /// <summary>Full native item state, separate from observation summaries.
+    /// Null identifies a legacy summary-only save; an empty list is an empty inventory.</summary>
+    public List<NativeInventorySlot>? NativeInventory { get; set; }
 
     /// <summary>
     /// Timestamp of last save in UTC ISO 8601.

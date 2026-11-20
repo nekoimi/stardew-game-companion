@@ -101,7 +101,8 @@ public sealed class BoundedMessageQueue
                     for (var node = _normalQueue.First; node != null; node = node.Next)
                     {
                         var queuedCmdId = ExtractTargetCommandId(node.Value.Envelope);
-                        if (string.Equals(queuedCmdId, targetCommandId, StringComparison.Ordinal))
+                        if (string.Equals(node.Value.Envelope.MessageType, "skill.execute", StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(queuedCmdId, targetCommandId, StringComparison.Ordinal))
                         {
                             _normalQueue.Remove(node);
                             purgedQueuedCommand = true;
@@ -130,9 +131,10 @@ public sealed class BoundedMessageQueue
                 return true;
             }
 
-            // Normal messages: reject if command has already been tombstoned by an earlier cancel
+            // Tombstones prevent execution, never observation/reconciliation of the command.
             string? cmdId = ExtractTargetCommandId(envelope);
-            if (!string.IsNullOrEmpty(cmdId) && _cancelledCommandTombstones.Contains(cmdId))
+            if (string.Equals(envelope.MessageType, "skill.execute", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(cmdId) && _cancelledCommandTombstones.Contains(cmdId))
             {
                 purgedQueuedCommand = true;
                 return false;

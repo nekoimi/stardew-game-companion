@@ -5,6 +5,26 @@ namespace StardewAI.Companion.Mod.Transport.Tests;
 
 public class BoundedMessageQueueTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CancelDoesNotPurgeOrBlockResultQueries(bool queryArrivesFirst)
+    {
+        var queue = new BoundedMessageQueue();
+        var query = CreateEnvelope("skill.result.query", "query", "command");
+        if (queryArrivesFirst) Assert.True(queue.TryEnqueue(query, out _));
+        Assert.True(queue.TryEnqueue(CreateEnvelope("skill.execute", "execute", "command"), out _));
+        Assert.True(queue.TryEnqueue(CreateEnvelope("skill.cancel", "cancel", "command"), out bool purged));
+        Assert.True(purged);
+        if (!queryArrivesFirst) Assert.True(queue.TryEnqueue(query, out _));
+        Assert.True(queue.TryDequeue(out var cancel));
+        Assert.Equal("skill.cancel", cancel!.MessageType);
+        Assert.True(queue.TryDequeue(out var remaining));
+        Assert.Same(query, remaining);
+        Assert.False(queue.TryDequeue(out _));
+        Assert.False(queue.TryEnqueue(CreateEnvelope("skill.execute", "retry", "command"), out _));
+    }
+
     private static EnvelopeDto CreateEnvelope(string messageType, string messageId, string? commandId = null)
     {
         var payload = new JsonObject();

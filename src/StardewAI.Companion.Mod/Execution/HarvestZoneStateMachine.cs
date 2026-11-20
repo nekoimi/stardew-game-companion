@@ -32,6 +32,7 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
     private readonly Action<string, LogLevel>? _log;
 
     private readonly object _stateLock = new();
+    private readonly ActionPathPlanning _pathPlanning = new();
 
     // Active execution context
     private HarvestZoneRequest? _currentRequest;
@@ -113,6 +114,7 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
 
         lock (_stateLock)
         {
+            _pathPlanning.Dispose();
             _currentRequest = request;
             _harvestedTiles.Clear();
             _skippedTiles.Clear();
@@ -282,6 +284,7 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
             {
                 _pauseRequested = false;
                 CurrentState = ExecutionState.Paused;
+                _pathPlanning.Dispose();
                 _pauseStartedClock = _observer.TimeOfDay;
                 _actor.Halt();
                 _avatar?.SetAnimation("idle");
@@ -335,6 +338,12 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
             // State Dispatch
             try
             {
+                if (_pathPlanning.IsPending && CurrentState != ExecutionState.Cancelling)
+                {
+                    _pathPlanning.Advance();
+                    return;
+                }
+
                 switch (CurrentState)
                 {
                     case ExecutionState.Navigating:
@@ -368,19 +377,22 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
     private void PlanPathToCurrentTarget()
     {
         if (_currentRequest is null) return;
-
-        var pathResult = _navigator.FindPathToInteract(_actor, _currentRequest.LocationId, _currentTargetTile);
-        if (!pathResult.Success)
-        {
-            Log($"Navigation to tile ({_currentTargetTile.X}, {_currentTargetTile.Y}) failed: {pathResult.ErrorMessage ?? "Navigation failed"}", LogLevel.Warn);
-            _failedTiles.Add(new FailedTileInfo(_currentTargetTile, pathResult.ErrorMessage ?? "Navigation failed"));
-            AdvanceToNextTarget();
-            return;
-        }
-
-        _currentPath = pathResult.Steps.ToList();
-        _currentPathIndex = 0;
         CurrentState = ExecutionState.Navigating;
+        _pathPlanning.Start(_actor, () => _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
+                _currentRequest.LocationId, _currentTargetTile), pathResult =>
+        {
+            if (!pathResult.Success)
+            {
+                Log($"Navigation to tile ({_currentTargetTile.X}, {_currentTargetTile.Y}) failed: {pathResult.ErrorMessage ?? "Navigation failed"}", LogLevel.Warn);
+                _failedTiles.Add(new FailedTileInfo(_currentTargetTile, pathResult.ErrorMessage ?? "Navigation failed"));
+                AdvanceToNextTarget();
+                return;
+            }
+
+            _currentPath = pathResult.Steps.ToList();
+            _currentPathIndex = 0;
+            CurrentState = ExecutionState.Navigating;
+        });
     }
 
     private void TickNavigating()
@@ -416,16 +428,7 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
             }
 
             // Replan from current tile
-            var replanResult = _navigator.FindPathToInteract(_actor, _currentRequest!.LocationId, _currentTargetTile);
-            if (!replanResult.Success)
-            {
-                _failedTiles.Add(new FailedTileInfo(_currentTargetTile, replanResult.ErrorMessage ?? "Navigation replan failed"));
-                AdvanceToNextTarget();
-                return;
-            }
-
-            _currentPath = replanResult.Steps.ToList();
-            _currentPathIndex = 0;
+            PlanPathToCurrentTarget();
             return;
         }
 
@@ -478,6 +481,7 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pathPlanning.Dispose();
             _pauseStartedClock = _observer.TimeOfDay;
             _actor.Halt();
             _avatar?.SetAnimation("idle");
@@ -719,6 +723,7 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
         {
             _pauseRequested = false;
             CurrentState = ExecutionState.Paused;
+            _pathPlanning.Dispose();
             _pauseStartedClock = _observer.TimeOfDay;
             _actor.Halt();
             _avatar?.SetAnimation("idle");
@@ -755,6 +760,7 @@ public sealed class HarvestZoneStateMachine : ISkillExecutionMachine
         bool retryRecommended = false,
         bool inventoryFull = false)
     {
+        _pathPlanning.Dispose();
         EndCompanionScytheAnimation();
         CurrentState = state;
         _actor.Halt();
