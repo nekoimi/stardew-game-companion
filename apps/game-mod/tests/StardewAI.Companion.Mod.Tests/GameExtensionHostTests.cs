@@ -5,6 +5,11 @@ using StardewAI.Companion.Mod.Extensions;
 using StardewAI.Companion.Mod.Domain;
 using Xunit;
 namespace StardewAI.Companion.Mod.Tests;
+
+[CollectionDefinition("Loaded assembly discovery", DisableParallelization = true)]
+public sealed class LoadedAssemblyDiscoveryCollection { }
+
+[Collection("Loaded assembly discovery")]
 public class GameExtensionHostTests
 {
     [Fact]
@@ -82,11 +87,16 @@ public class GameExtensionHostTests
     {
         string root=Path.Combine(Path.GetTempPath(),"star-isolated-api-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        Exercise(root);
-        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        var unloaded = Exercise(root);
+        for (int attempt = 0; unloaded.IsAlive && attempt < 10; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+        Assert.False(unloaded.IsAlive, "The isolated Mod assembly must be released before removing its DLL.");
         Directory.Delete(root,true);
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        static void Exercise(string root)
+        static WeakReference Exercise(string root)
         {
         var modContext=new System.Runtime.Loader.AssemblyLoadContext("independent-mod",isCollectible:true);
         var adapterContext=new GameExtensionHost.AdapterContext();
@@ -109,6 +119,7 @@ public class GameExtensionHostTests
                 var requested=assembly.GetName(); requested.Version=new Version(9,0,0,0);
                 Assert.Throws<System.IO.FileNotFoundException>(()=>wrongVersion.LoadFromAssemblyName(requested));
             } finally { wrongVersion.Unload(); }
+            return new WeakReference(modContext, trackResurrection: true);
         } finally { adapterContext.Unload(); modContext.Unload(); }
         }
     }
