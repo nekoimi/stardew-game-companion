@@ -10,7 +10,7 @@
 ## 快速开始
 
 1. 准备 Windows x64、《星露谷物语》、[SMAPI](https://smapi.io/) 和已登录的模型客户端。项目的游戏和 SMAPI 基线为 1.6.15 和 4.2.1。
-2. 解压 Release 中的 `StardewGameCompanion-版本号-windows-x64.zip`，双击根目录的 **星露谷游戏伴侣.exe**。绿色包随附 .NET、Python 和配套 Mod。
+2. 完整解压 Release 中的 `StardewGameCompanion-版本号-windows-x64.zip`，双击根目录的 **星露谷游戏伴侣.exe**。桌面运行库已打包到 EXE 中，Python 和配套 Mod 位于 `Mods/`，更新日志和许可在 `docs/`。
 3. 在「设置」选择游戏目录、游玩方式和伙伴来源，再点击「启动游戏」。进入单人存档后，回到桌面「指令」发送第一条要求。
 
 若 Releases 中还没有绿色包，可[从源码构建](CONTRIBUTING.md#从源码构建)。旧安装的数据可在「设置 → 从原安装导入」迁移。

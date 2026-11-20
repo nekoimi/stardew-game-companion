@@ -91,24 +91,15 @@ def build(args) -> Path:
     if stage.exists() or archive.exists():
         raise ValueError(f"Output already exists; select a fresh --output directory: {stage}")
     launcher = "星露谷游戏伴侣.exe"
-    for name in (launcher, "coreclr.dll", "PresentationFramework.dll"):
-        if not (desktop / name).is_file():
-            raise ValueError(f"Desktop source must be a self-contained WPF publish: missing {name}")
+    if not (desktop / launcher).is_file() or any(desktop.glob("*.dll")):
+        raise ValueError("Desktop source must be a self-contained single-file WPF publish. Use a fresh publish folder.")
     package.mkdir(parents=True)
-    for path in sorted(desktop.rglob("*")):
-        relative = path.relative_to(desktop)
-        if (
-            len(relative.parts) == 1 and (
-                path.name in {launcher, "DotNet-LICENSE.txt", "DotNet-ThirdPartyNotices.txt"}
-                or path.suffix.lower() in {".dll", ".json"}
-            )
-            or len(relative.parts) == 2 and path.name.endswith(".resources.dll")
-        ):
-            copy_file(path, stage / relative)
+    copy_file(desktop / launcher, stage / launcher)
     copy_file(ROOT / "docs/desktop-portable.md", stage / "使用说明.md")
-    copy_file(ROOT / "LICENSE", stage / "LICENSE")
-    copy_file(ROOT / "NOTICE", stage / "NOTICE")
-    copy_file(ROOT / "CHANGELOG.md", stage / "CHANGELOG.md")
+    for name in ("LICENSE", "NOTICE", "CHANGELOG.md"):
+        copy_file(ROOT / name, stage / "docs" / name)
+    for name in ("DotNet-LICENSE.txt", "DotNet-ThirdPartyNotices.txt"):
+        copy_file(desktop / name, stage / "docs" / name)
     for name in MOD_FILES:
         copy_file(source / name, package / name)
     # PDBs can embed developer source paths; they are intentionally not shipped.
@@ -218,7 +209,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--mod-source", type=Path, default=ROOT / "artifacts/dist/StardewAI.Companion.Mod")
-    parser.add_argument("--desktop-source", type=Path, required=True, help="Self-contained win-x64 WPF publish folder")
+    parser.add_argument("--desktop-source", type=Path, required=True, help="Self-contained single-file win-x64 WPF publish folder")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/releases/windows")
     parser.add_argument("--cache", type=Path, default=ROOT / ".local/release-cache")
     parser.add_argument("--python-version", default=PYTHON_VERSION)

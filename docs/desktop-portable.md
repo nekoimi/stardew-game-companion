@@ -4,6 +4,8 @@
 
 从本项目的 Releases 下载 `StardewGameCompanion-版本号-windows-x64.zip`，解压到可写目录，双击根目录的 **星露谷游戏伴侣.exe**。在「设置」选择含 `StardewModdingAPI.exe` 的游戏目录和伙伴来源，再点击「启动游戏」。[下载页面](https://github.com/nekoimi/star/releases)
 
+绿色包根目录的「使用说明.md」与 EXE 并排。桌面 .NET 运行库随 EXE 提供，首次启动会将原生库解压到系统临时缓存。`Mods/` 存放配套 Mod 与 Python 运行时，`docs/` 存放更新日志与许可。移动程序时请保留整个解压目录。
+
 桌面程序启动随包提供的伙伴运行时和本机 SMAPI。此时使用绿色包内的独立 `Mods` 目录，游戏原目录的其他 Mod 不会随这次启动加载。修改游玩方式、伙伴来源或客户端配置后，保存设置并重启游戏。
 
 ## 接入模型

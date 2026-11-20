@@ -5,6 +5,8 @@
     <UseWPF>true</UseWPF>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>星露谷游戏伴侣</AssemblyName>
     <RootNamespace>StardewAI.Companion.Desktop</RootNamespace>
@@ -13,8 +15,10 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(MSBuildToolsPath)/../../LICENSE.txt" Link="DotNet-LICENSE.txt"
-          CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MSBuildToolsPath)/../../LICENSE.txt')" />
+          CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"
+          Condition="Exists('$(MSBuildToolsPath)/../../LICENSE.txt')" />
     <None Include="$(MSBuildToolsPath)/../../ThirdPartyNotices.txt" Link="DotNet-ThirdPartyNotices.txt"
-          CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MSBuildToolsPath)/../../ThirdPartyNotices.txt')" />
+          CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"
+          Condition="Exists('$(MSBuildToolsPath)/../../ThirdPartyNotices.txt')" />
   </ItemGroup>
 </Project>

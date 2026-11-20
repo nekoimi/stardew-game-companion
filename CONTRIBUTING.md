@@ -15,11 +15,11 @@ uv sync --project runtime --locked
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-mod.ps1 -Configuration Release
-dotnet publish src/StardewAI.Companion.Desktop -c Release -o artifacts/desktop/win-x64
-uv run --project runtime python tools/build-release.py --version 0.3.22 --desktop-source artifacts/desktop/win-x64
+dotnet publish src/StardewAI.Companion.Desktop -c Release -o artifacts/desktop/win-x64-single-file
+uv run --project runtime python tools/build-release.py --version 0.3.22 --desktop-source artifacts/desktop/win-x64-single-file
 ```
 
-解压后运行 `星露谷游戏伴侣.exe`。需要调试 Mod 内的原生界面或手动 MCP 接入时，源码开发脚本可同步 DLL 与本地配对清单，见[接入指南](docs/mcp.md#源码开发接入)。
+桌面项目默认发布为自包含单文件。请使用新的发布目录，避免上次构建的散装 DLL 混在里面。解压后运行 `星露谷游戏伴侣.exe`。需要调试 Mod 内的原生界面或手动 MCP 接入时，源码开发脚本可同步 DLL 与本地配对清单，见[接入指南](docs/mcp.md#源码开发接入)。
 
 ## 代码结构
 
