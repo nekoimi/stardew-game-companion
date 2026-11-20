@@ -9,4 +9,4 @@
 - 移除原项目的游戏内更新器、独立 Mod 安装脚本和旧版用量查看器。
 - 桌面运行库打包进启动程序，更新日志与许可文件移入 `docs/`，解压后可直接从根目录找到 EXE。
 
-本项目基于原项目 0.3.22 的源码独立维护。[历史版本记录](https://github.com/nekoimi/star/tree/cd05c4f1b0fdd93717e4f4070be863a275056882/docs) · [来源和许可声明](NOTICE)
+本项目基于原项目 0.3.22 的源码独立维护。[历史版本记录](https://github.com/nekoimi/stardew-game-companion/tree/cd05c4f1b0fdd93717e4f4070be863a275056882/docs) · [来源和许可声明](NOTICE)

@@ -2,7 +2,7 @@
 
 ## 启动
 
-从本项目的 Releases 下载 `StardewGameCompanion-版本号-windows-x64.zip`，解压到可写目录，双击根目录的 **星露谷游戏伴侣.exe**。在「设置」选择含 `StardewModdingAPI.exe` 的游戏目录和伙伴来源，再点击「启动游戏」。[下载页面](https://github.com/nekoimi/star/releases)
+从本项目的 Releases 下载 `StardewGameCompanion-版本号-windows-x64.zip`，解压到可写目录，双击根目录的 **星露谷游戏伴侣.exe**。在「设置」选择含 `StardewModdingAPI.exe` 的游戏目录和伙伴来源，再点击「启动游戏」。[下载页面](https://github.com/nekoimi/stardew-game-companion/releases)
 
 绿色包根目录的「使用说明.md」与 EXE 并排。桌面 .NET 运行库随 EXE 提供，首次启动会将原生库解压到系统临时缓存。`Mods/` 存放配套 Mod 与 Python 运行时，`docs/` 存放更新日志与许可。移动程序时请保留整个解压目录。
 
@@ -50,4 +50,4 @@
 - **模型无法启动**：确认该客户端能独立登录和对话，再核对桌面的客户端路径、模型与推理档位。错误详情见「诊断」。
 - **画面或游戏时钟停顿**：桌面会标明 AI 思考或保护机制是否暂停了游戏时钟。画面与输入同时停顿时，在「诊断」检查对应时段的 `[游戏帧耗时]` 和最慢处理阶段。
 
-在 Pull Request 中附上项目版本、模型后端、复现过程和相关诊断片段，并去掉密钥、私人路径和对话内容。[参与贡献](https://github.com/nekoimi/star/pulls)
+在 Pull Request 中附上项目版本、模型后端、复现过程和相关诊断片段，并去掉密钥、私人路径和对话内容。[参与贡献](https://github.com/nekoimi/stardew-game-companion/pulls)

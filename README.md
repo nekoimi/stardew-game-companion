@@ -5,7 +5,7 @@
 
 星露谷游戏伴侣是《星露谷物语》的开源桌面工具。用自然语言和 AI 伙伴商量农活、改派任务，或把单人存档交给 AI 操作。项目源自 [CSXizhang/star](https://github.com/CSXizhang/star)，由 nekoimi 和贡献者独立维护和发布。
 
-[下载绿色包](https://github.com/nekoimi/star/releases) · [使用指南](docs/desktop-portable.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
+[下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases) · [使用指南](docs/desktop-portable.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
 ## 快速开始
 

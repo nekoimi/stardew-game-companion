@@ -1,6 +1,6 @@
 # 参与开发
 
-欢迎提交修复和验证结果。星露谷游戏伴侣在 `nekoimi/star` 独立开发和发布，游戏版本基线为 Stardew Valley 1.6.15、SMAPI 4.2.1。[Pull Requests](https://github.com/nekoimi/star/pulls)
+欢迎提交修复和验证结果。星露谷游戏伴侣在 `nekoimi/stardew-game-companion` 独立开发和发布，游戏版本基线为 Stardew Valley 1.6.15、SMAPI 4.2.1。[Pull Requests](https://github.com/nekoimi/stardew-game-companion/pulls)
 
 ## 从源码构建
 

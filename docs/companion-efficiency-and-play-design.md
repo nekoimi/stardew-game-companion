@@ -576,7 +576,7 @@ flowchart TD
 
 ### 本项目
 
-- [0.3.21 历史更新说明](https://github.com/nekoimi/star/blob/cd05c4f1b0fdd93717e4f4070be863a275056882/docs/release-notes-0.3.21.md)
+- [0.3.21 历史更新说明](https://github.com/nekoimi/stardew-game-companion/blob/cd05c4f1b0fdd93717e4f4070be863a275056882/docs/release-notes-0.3.21.md)
 - [可重复伙伴实机验收](repeatable-companion-acceptance.md)：三组场景与隔离验证方法。
 - [桌面使用指南](desktop-portable.md)和[自主生活与农场改造](farm-projects.md)涵盖当前入口、持续经营与能力范围。
 - [游戏工具](../runtime/src/stardew_ai_runtime/game_tools.py)、[读档核对](../runtime/src/stardew_ai_runtime/game_reload.py)、[增量送达](../runtime/src/stardew_ai_runtime/prompt_delivery.py)：固定入口、即时执行与状态一致性。
