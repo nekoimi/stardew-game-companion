@@ -99,6 +99,7 @@ public partial class MainWindow : Window
     private async Task EndSessionAsync(DesktopSession session, string message)
     {
         if (_session != session) return;
+        _partnerServiceReady = false;
         _gameSessionId = null;
         ResetSaveViews();
         ApplyDecisions(default);
@@ -108,6 +109,7 @@ public partial class MainWindow : Window
         if (_session != session) return;
         _session = null;
         ResetPartnerConnection();
+        ResetUsageView();
         ConnectionText.Text = "等待启动游戏";
         ActivityText.Text = message;
         RefreshControls();
@@ -214,10 +216,13 @@ public partial class MainWindow : Window
 
     private void ApplyStatus(JsonElement payload)
     {
+        bool hadService = _partnerServiceReady;
         ApplyPartnerStatus(payload);
         var previous = _gameSessionId;
         _gameSessionId = Flag(payload, "ready") ? Text(payload, "gameSessionId") : null;
-        if (previous != _gameSessionId)
+        bool saveChanged = previous != _gameSessionId;
+        bool usageChanged = saveChanged || hadService != _partnerServiceReady;
+        if (usageChanged)
         {
             ResetSaveViews();
             ApplyDecisions(default);
@@ -232,6 +237,7 @@ public partial class MainWindow : Window
             if (previous is not null) ConnectionText.Text = "等待游戏重新连接";
             ApplyDecisions(default);
             RefreshControls();
+            if (usageChanged && Pages.SelectedItem == UsagePage) _ = ReadUsageAsync();
             return;
         }
         ConnectionText.Text = _playerMode ? "游戏已连接 · AI 自己玩" : "游戏已连接 · 伙伴模式";
@@ -253,7 +259,8 @@ public partial class MainWindow : Window
         if (payload.TryGetProperty("work", out var work)) ApplyWork(work);
         ApplyInboxStatus(payload);
         RefreshControls();
-        if (previous != _gameSessionId) _ = LoadSelectedSaveViewAsync();
+        if (usageChanged && Pages.SelectedItem == UsagePage) _ = ReadUsageAsync();
+        if (saveChanged) _ = LoadSelectedSaveViewAsync();
     }
 
     private void ApplyDecisions(JsonElement decisions)

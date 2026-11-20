@@ -2804,7 +2804,7 @@ class ChatBridge:
         overview = self._latest_work_overview(save_id) or {}
         if self._autonomy is not None:
             try:
-                payload = self._autonomy_state_payload(save_id, self._autonomy.state(save_id), overview=overview)
+                payload = self._autonomy_state_payload(save_id, self._autonomy.state(save_id), overview=overview, include_usage=False)
             except Exception:
                 payload = {}
         preferences = payload.get("preferences") if isinstance(payload.get("preferences"), dict) else {}
@@ -4681,7 +4681,8 @@ class ChatBridge:
             return None
         return "计划状态：" + "；".join(parts)
 
-    def _autonomy_state_payload(self, save_id: str, state: Any, *, overview: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _autonomy_state_payload(self, save_id: str, state: Any, *, overview: dict[str, Any] | None = None,
+                                include_usage: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "mode": state.mode, "paused": state.paused,
             "preferences": {"goal": state.goal,
@@ -4697,10 +4698,9 @@ class ChatBridge:
             "breaker_cooldown_until": state.breaker_cooldown_until,
             "breakerReason": state.breaker_reason,
             "breaker_reason": state.breaker_reason,
-            "usageTodayText": self._usage_display.today_text(),
-            "usageSaveTodayText": self._usage_display.today_text(save_id=save_id),
-            "usageSaveTotalText": self._usage_display.summary_text(save_id=save_id, today=False),
         }
+        if include_usage:
+            payload.update(self._usage_display.overview(save_id))
         # F8 visibility: the last plan action and why the worker is waiting.
         worker = self._plan_worker
         if worker is not None:

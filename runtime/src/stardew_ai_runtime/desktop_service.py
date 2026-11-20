@@ -507,6 +507,14 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
         try:
             if path == "/v1/partner":
                 return JSONResponse(await bridge.external_partner(body))
+            if path == "/v1/usage":
+                game = body.get("gameSessionId")
+                save = None
+                if game is not None:
+                    save, session, _ = bridge.binding()
+                    if game != session:
+                        raise DesktopError("存档已变化，请刷新用量。")
+                return JSONResponse(bridge._usage_display.overview(save), headers={"Cache-Control": "no-store"})
             binding = bridge.binding()
             if body.get("gameSessionId") != binding[1]:
                 raise DesktopError("请等待桌面状态刷新后再提交。")
@@ -622,6 +630,7 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
         Route("/v1/partner", api, methods=["POST"]),
         Route("/v1/messages", api, methods=["POST"]), Route("/v1/notices", api, methods=["POST"]),
         Route("/v1/milestones", api, methods=["POST"]),
+        Route("/v1/usage", api, methods=["POST"]),
     ])
 
 

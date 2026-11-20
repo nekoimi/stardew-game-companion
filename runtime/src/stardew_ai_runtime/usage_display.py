@@ -131,6 +131,14 @@ class UsageDisplay:
     def today_text(self, now: datetime | None = None, save_id: str | None = None) -> str:
         return self.summary_text(now, save_id=save_id)
 
+    def overview(self, save_id: str | None = None) -> dict[str, str | None]:
+        now = datetime.now().astimezone()
+        return {
+            "usageTodayText": self.today_text(now),
+            "usageSaveTodayText": self.today_text(now, save_id=save_id) if save_id else None,
+            "usageSaveTotalText": self.summary_text(now, save_id=save_id, today=False) if save_id else None,
+        }
+
     def turn_response_usage(self, request_id: str, save_id: str, provider: str = "dsh") -> dict[str, Any] | None:
         if self._responses is None or not self._responses._read():
             return None

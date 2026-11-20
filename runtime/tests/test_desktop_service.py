@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -46,6 +47,42 @@ class ReplySocket:
 
     async def send_text(self, text):
         self.sent.append(json.loads(text))
+
+
+def test_desktop_usage_shares_receipts_and_only_projects_the_current_game_session(tmp_path):
+    bridge = DesktopHarness(tmp_path)
+    today = datetime.now(UTC)
+    base = {"provider": "codex", "saveId": bridge.save, "model": "fixture", "timestamp": today.isoformat()}
+    first = {**base, "requestId": "here", "usage": {"input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 60,
+                                                    "cost_usd": 0.25}}
+    rows = [first, first, {**base, "requestId": "unknown", "usage": None},
+            {**base, "requestId": "older", "timestamp": (today - timedelta(days=2)).isoformat(),
+             "usage": {"input_tokens": 200, "output_tokens": 20, "cache_read_tokens": 120}},
+            {**base, "requestId": "elsewhere", "saveId": "OtherFarm", "usage": {"input_tokens": 300, "output_tokens": 30,
+                                                                          "cache_read_tokens": 0, "estimated_api_cost_usd": 0.5}}]
+    bridge._commands_file.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    async def verify():
+        transport = httpx.ASGITransport(app=create_app(bridge, "token"))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+            body = {"gameSessionId": "session-a", "saveId": "OtherFarm"}
+            assert (await client.post("/v1/usage", json=body)).status_code == 401
+            headers = {"Authorization": "Bearer token"}
+            summary = (await client.post("/v1/usage", json=body, headers=headers)).json()
+            assert "440+未记录 token" in summary["usageTodayText"]
+            assert "API 等价估算 $0.5000" in summary["usageTodayText"]
+            assert "110+未记录 token" in summary["usageSaveTodayText"]
+            assert "已提供费用 $0.2500" in summary["usageSaveTodayText"]
+            assert "330+未记录 token" in summary["usageSaveTotalText"]
+
+            bridge.save = None
+            assert (await client.post("/v1/usage", json=body, headers=headers)).status_code == 409
+            all_saves = (await client.post("/v1/usage", json={}, headers=headers)).json()
+            assert all_saves["usageTodayText"] == summary["usageTodayText"]
+            assert all_saves["usageSaveTodayText"] is None and all_saves["usageSaveTotalText"] is None
+
+    asyncio.run(verify())
+    assert bridge.calls == []
 
 
 def test_desktop_api_authenticates_binds_session_and_admits_one_request(tmp_path):

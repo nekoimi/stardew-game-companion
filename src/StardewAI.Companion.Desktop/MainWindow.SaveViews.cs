@@ -17,6 +17,7 @@ public partial class MainWindow
     private int? _historyBefore;
     private bool _savingPreferences;
     private int? _profileRevision;
+    private bool _loadingUsage;
 
     private void InitializeSaveViews()
     {
@@ -42,6 +43,7 @@ public partial class MainWindow
         Initiative.IsChecked = false;
         ResetMemoryView();
         ResetInboxViews();
+        ResetUsageView();
     }
 
     private void RefreshSaveViewControls()
@@ -55,12 +57,60 @@ public partial class MainWindow
         CompanionIdentityFields.Visibility = _activeSource == "external" ? Visibility.Collapsed : Visibility.Visible;
         RefreshMemoryControls(connected);
         RefreshInboxControls(connected);
+        RefreshUsageButton.IsEnabled = _partnerServiceReady && !_closing && !_loadingUsage;
     }
 
     private async void SaveViewSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (_gameSessionId is not null && ReferenceEquals(e.Source, sender))
-            await LoadSelectedSaveViewAsync();
+        if (!ReferenceEquals(e.Source, sender)) return;
+        if (UsagePage is not null && Pages.SelectedItem == UsagePage) await ReadUsageAsync();
+        else if (_gameSessionId is not null) await LoadSelectedSaveViewAsync();
+    }
+
+    private void ResetUsageView()
+    {
+        _loadingUsage = false;
+        UsageEntries.ItemsSource = null;
+        UsageStatus.Text = _partnerServiceReady ? "等待刷新用量。" : "启动游戏后可读取本安装的模型用量。";
+    }
+
+    private async void RefreshUsageClicked(object sender, RoutedEventArgs e) => await ReadUsageAsync();
+
+    private async Task ReadUsageAsync()
+    {
+        if (_loadingUsage || !_partnerServiceReady || _closing || _session is not { } session) return;
+        int view = _saveViewGeneration;
+        string? game = _gameSessionId;
+        _loadingUsage = true;
+        UsageStatus.Text = "正在读取用量…";
+        RefreshUsageButton.IsEnabled = false;
+        try
+        {
+            var summary = await session.PostAsync("/v1/usage", new { gameSessionId = game });
+            if (_session != session || view != _saveViewGeneration) return;
+            var entries = new List<TimelineEntry> { new("今日 · 全部存档", Text(summary, "usageTodayText")) };
+            if (game is not null)
+            {
+                entries.Add(new TimelineEntry("今日 · 当前存档", Text(summary, "usageSaveTodayText")));
+                entries.Add(new TimelineEntry("累计 · 当前存档", Text(summary, "usageSaveTotalText")));
+            }
+            UsageEntries.ItemsSource = entries;
+            UsageStatus.Text = game is null ? "进入存档后可查看该存档的今日和累计用量。" : "";
+        }
+        catch (Exception ex)
+        {
+            if (_session != session || view != _saveViewGeneration) return;
+            UsageEntries.ItemsSource = null;
+            UsageStatus.Text = ex.Message;
+        }
+        finally
+        {
+            if (_session == session && view == _saveViewGeneration)
+            {
+                _loadingUsage = false;
+                RefreshUsageButton.IsEnabled = _partnerServiceReady && !_closing;
+            }
+        }
     }
 
     private async Task LoadSelectedSaveViewAsync()

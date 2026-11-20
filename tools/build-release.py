@@ -131,6 +131,8 @@ def build(args) -> Path:
         copy_file(ROOT / "docs" / name, package / "docs" / name)
     for path in sorted((ROOT / "docs/agent-guidance").glob("*.md")):
         copy_file(path, package / path.relative_to(ROOT))
+    if desktop:
+        copy_file(ROOT / "config/usage-prices.example.json", package / "docs/usage-prices.example.json")
     for name in ("设置星露谷伙伴.cmd", "启动伙伴服务.cmd", "LICENSE"):
         copy_file(ROOT / name, package / name)
     guide = (ROOT / "docs/release-guide.md").read_text(encoding="utf-8-sig")
