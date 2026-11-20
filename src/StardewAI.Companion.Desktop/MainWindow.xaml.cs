@@ -58,7 +58,7 @@ public partial class MainWindow : Window
 
     private async void LaunchClicked(object sender, RoutedEventArgs e)
     {
-        if (_session is not null || _closing) return;
+        if (_session is not null || _closing || _importing) return;
         var settings = Settings();
         if (!DesktopSession.IsGameDirectory(settings.GameDirectory))
         {
@@ -334,8 +334,9 @@ public partial class MainWindow : Window
     private void RefreshControls()
     {
         bool connected = _gameSessionId is not null && !_closing;
-        LaunchHeader.IsEnabled = _session is null && !_closing;
+        LaunchHeader.IsEnabled = _session is null && !_closing && !_importing;
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
+        RefreshImportControls();
         SendButton.IsEnabled = Input.IsEnabled = connected;
         InterruptButton.IsEnabled = connected && !_paused && !_interrupting && (!_playerMode || _owner == "agent");
         PauseButton.IsEnabled = connected && !_paused && !_interrupting;
@@ -372,6 +373,11 @@ public partial class MainWindow : Window
     protected override async void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
+        if (_importing)
+        {
+            e.Cancel = true;
+            return;
+        }
         if (_closed || _session is not { } session) return;
         e.Cancel = true;
         if (_closing) return;

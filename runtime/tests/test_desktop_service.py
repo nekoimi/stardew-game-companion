@@ -202,3 +202,41 @@ def test_history_reply_after_save_switch_is_not_returned_to_desktop(tmp_path):
             assert bridge.native_state == {"paused": True}
 
     asyncio.run(verify())
+
+
+def test_desktop_memory_edits_share_revision_and_stay_in_the_loaded_save(tmp_path):
+    bridge = DesktopHarness(tmp_path)
+    ws = bridge._chat_ws = ReplySocket()
+    bridge._memory_store.add("OtherFarm", kind="agreement", text="保留原来的约定", source="player",
+                             game_date="unknown", expected_revision=0)
+
+    async def verify():
+        transport = httpx.ASGITransport(app=create_app(bridge, "token"))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1",
+                                     headers={"Authorization": "Bearer token"}) as client:
+            scope = {"gameSessionId": "session-a"}
+
+            async def edit(**changes):
+                return await client.post("/v1/memory", json={**scope, **changes})
+
+            assert (await edit()).json() == {"memoryRevision": 0, "entries": []}
+            assert (await edit(gameSessionId="old", op="add", expectedRevision=0,
+                               kind="agreement", text="旧存档会话")).status_code == 409
+            response = await edit(op="add", expectedRevision=0, kind="agreement", text="保留幼树")
+            assert response.status_code == 200
+            memory = response.json()
+            item = memory["entries"][0]
+            assert item["source"] == "player"
+            assert ws.sent[-1]["messageType"] == "life.memory.state"
+            assert ws.sent[-1]["payload"]["memoryRevision"] == memory["memoryRevision"]
+
+            stale = await edit(op="correct", expectedRevision=0, id=item["id"], text="旧版本")
+            assert stale.status_code == 409
+            response = await edit(op="correct", expectedRevision=memory["memoryRevision"], id=item["id"], text="门口保留幼树")
+            assert response.status_code == 200
+            assert response.json()["entries"][0]["text"] == "门口保留幼树"
+            response = await edit(op="delete", expectedRevision=response.json()["memoryRevision"], id=item["id"])
+            assert response.status_code == 200 and response.json()["entries"] == []
+
+    asyncio.run(verify())
+    assert bridge._memory_store.list("OtherFarm")["entries"][0]["text"] == "保留原来的约定"

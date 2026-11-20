@@ -133,6 +133,46 @@
                     </TabControl>
                 </Grid>
             </TabItem>
+            <TabItem x:Name="MemoryPage" Header="记忆与约定">
+                <Grid Margin="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="3*" />
+                        <ColumnDefinition Width="2*" />
+                    </Grid.ColumnDefinitions>
+                    <DockPanel Margin="0,0,14,0">
+                        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <Button x:Name="ReadMemoryButton" Content="读取记忆" Click="ReadMemoryClicked" />
+                            <Button x:Name="NewMemoryButton" Content="新增记忆" Click="NewMemoryClicked" />
+                        </WrapPanel>
+                        <ListBox x:Name="MemoryPicker" AutomationProperties.Name="当前存档的记忆"
+                                 SelectionChanged="MemorySelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="3,4">
+                                        <TextBlock Text="{Binding Label}" Foreground="#537261" />
+                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                    <StackPanel Grid.Column="1">
+                        <TextBlock x:Name="MemoryFeedback" TextWrapping="Wrap" Margin="0,0,0,12" />
+                        <TextBlock Text="记忆类型" Margin="0,0,0,4" />
+                        <ComboBox x:Name="MemoryKind" SelectedValuePath="Tag" AutomationProperties.Name="记忆类型" Margin="0,0,0,8">
+                            <ComboBoxItem Content="偏好" Tag="preference" />
+                            <ComboBoxItem Content="约定" Tag="agreement" />
+                            <ComboBoxItem Content="共同经历" Tag="event" IsEnabled="False" />
+                        </ComboBox>
+                        <TextBox x:Name="MemoryText" AutomationProperties.Name="记忆内容" TextWrapping="Wrap"
+                                 AcceptsReturn="True" MinHeight="80" MaxHeight="166" MaxLength="200" VerticalScrollBarVisibility="Auto" />
+                        <WrapPanel Margin="0,8,0,0">
+                            <Button x:Name="SaveMemoryButton" Content="保存记忆" Click="SaveMemoryClicked" />
+                            <Button x:Name="DeleteMemoryButton" Content="删除所选记忆" Click="DeleteMemoryClicked" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
             <TabItem x:Name="SettingsPage" Header="设置">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8" MaxWidth="670">
@@ -157,6 +197,11 @@
                             </DockPanel>
                             <TextBlock Text="留空自动检测。请先完成 Pi 登录。" Foreground="#537261" Margin="0,3,0,16" />
                             <Button Content="保存启动设置" Click="SaveClicked" HorizontalAlignment="Left" />
+                            <Separator Margin="0,13" />
+                            <TextBlock Text="旧安装数据" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
+                            <TextBlock x:Name="ImportFeedback" Text="退出游戏后，可从原伙伴 Mod 目录导入数据。" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <CheckBox x:Name="ImportDataOnly" Content="仅导入数据，下次使用本机 Pi 会话" Margin="0,0,0,8" />
+                            <Button x:Name="ImportButton" Content="从原安装导入…" Click="ImportClicked" HorizontalAlignment="Left" />
                         </StackPanel>
                         <Separator Margin="0,13" />
                         <TextBlock Text="当前存档的伙伴设置" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />

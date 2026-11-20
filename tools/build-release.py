@@ -198,7 +198,7 @@ def build(args) -> Path:
     # Exercise stdlib, native wheels and actual app imports before writing hashes.
     smoke = "import sqlite3,ssl,ctypes,win32api,win32job,mcp,pydantic_core,cryptography;import stardew_ai_runtime.chat_bridge,stardew_ai_runtime.mcp_server;print('portable-runtime-ok')"
     if desktop:
-        smoke += ";import stardew_ai_runtime.desktop_service"
+        smoke += ";import stardew_ai_runtime.desktop_service,stardew_ai_runtime.desktop_import"
     clean_env = {key: value for key, value in os.environ.items() if not key.startswith(("PYTHON", "STARDEW_"))}
     run([str(python), "-B", "-c", smoke], env=clean_env, cwd=str(output))
     # All bytecode is disposable, may encode build paths, and must not be shipped.

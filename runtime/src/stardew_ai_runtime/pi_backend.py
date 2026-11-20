@@ -21,17 +21,42 @@ from .agent_backends import BackendProgress, BackendResult, KimiBackend
 from .agent_instructions import runtime_instructions
 
 
+def resolve_pi_session(run_dir: Path, session_id: str) -> Path:
+    """Resolve a migrated file while keeping the original binding as the conversation identity."""
+    sessions = run_dir / "data/pi/sessions"
+    imports = sessions.parent / "session-imports.json"
+    try:
+        aliases = json.loads(imports.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return Path(session_id)
+    except (OSError, ValueError) as ex:
+        raise FileNotFoundError("PI_SESSION_UNAVAILABLE") from ex
+    if not isinstance(aliases, dict):
+        raise FileNotFoundError("PI_SESSION_UNAVAILABLE")
+    if session_id not in aliases:
+        return Path(session_id)
+    relative = aliases[session_id]
+    if not isinstance(relative, str) or Path(relative).anchor:
+        raise FileNotFoundError("PI_SESSION_UNAVAILABLE")
+    path = (sessions / relative).resolve()
+    if not path.is_relative_to(sessions.resolve()) or path.suffix.casefold() != ".jsonl":
+        raise FileNotFoundError("PI_SESSION_UNAVAILABLE")
+    return path
+
+
 class PiBackend:
     name = "pi"
 
     def __init__(self, run_dir: Path, model: str = "", command: str | list[str] = "pi",
-                 progress=None, timeout_seconds: float = 600, effort: str | None = "default"):
+                 progress=None, timeout_seconds: float = 600, effort: str | None = "default",
+                 *, local_sessions_only: bool = False):
         self.run_dir = Path(run_dir).resolve()
         self.model, self.command = model, command
         self.progress, self.timeout_seconds = progress, timeout_seconds
         if effort not in {None, "default", "off", "minimal", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError("Unsupported pi thinking level")
         self.effort = effort
+        self.local_sessions_only = local_sessions_only
 
     @staticmethod
     def terminate(proc: Any) -> None:
@@ -64,11 +89,12 @@ class PiBackend:
             return [node, str(package / entry)]
         return [executable]
 
-    def _prepare(self, task, session_id: str | None) -> tuple[list[str], Path]:
+    def _prepare(self, task, session_file: Path | None) -> tuple[list[str], Path]:
         workspace = self.run_dir / "data" / "pi"
         sessions = workspace / "sessions"
         sessions.mkdir(parents=True, exist_ok=True)
-        if session_id and not Path(session_id).is_file():
+        if session_file is not None and (not session_file.is_file()
+                or self.local_sessions_only and not session_file.resolve().is_relative_to(sessions.resolve())):
             raise FileNotFoundError("PI_SESSION_UNAVAILABLE")
         python = self.run_dir / "runtime" / "python" / "python.exe"
         python = python if python.is_file() else Path(sys.executable)
@@ -92,8 +118,8 @@ class PiBackend:
         instructions.write_text(getattr(task, "instructions_text", None) or runtime_instructions(), encoding="utf-8")
         command = self._executable() + ["--mode", "rpc", "--approve", "--session-dir", str(sessions),
                                         "--append-system-prompt", str(instructions)]
-        if session_id:
-            command += ["--session", session_id]
+        if session_file is not None:
+            command += ["--session", str(session_file)]
         if self.model:
             command += ["--model", self.model]
         if self.effort not in {None, "default"}:
@@ -140,7 +166,8 @@ class PiBackend:
                 pass
 
         try:
-            command, workspace = self._prepare(active_task, session_id)
+            session_file = resolve_pi_session(self.run_dir, session_id) if session_id else None
+            command, workspace = self._prepare(active_task, session_file)
             if active_task.cancelled:
                 raise InterruptedError
             proc = subprocess.Popen(command, cwd=workspace, env=dict(os.environ), stdin=subprocess.PIPE,
@@ -181,7 +208,7 @@ class PiBackend:
                         raise RuntimeError("PI_RPC_REJECTED")
                     if event.get("id") == "get_state":
                         actual = (event.get("data") or {}).get("sessionFile")
-                        if not actual or (session_id and Path(actual).resolve() != Path(session_id).resolve()):
+                        if not actual or (session_file is not None and Path(actual).resolve() != session_file.resolve()):
                             raise RuntimeError("PI_SESSION_CHANGED")
                         if not session_id and not Path(actual).resolve().is_relative_to(workspace / "sessions"):
                             raise RuntimeError("PI_SESSION_CHANGED")
@@ -190,7 +217,7 @@ class PiBackend:
                         # if the provider exits before saving that input.
                         actual_file = Path(actual).resolve()
                         if session_id or actual_file.is_file():
-                            cid = str(actual_file)
+                            cid = session_id or str(actual_file)
                             active_task.provider_conversation_id = cid
                         send("prompt", message=prompt)
                         prompted = True
@@ -204,7 +231,7 @@ class PiBackend:
                         if text == prompt:
                             active_task.provider_input_delivered = True
                             if actual_file is not None and actual_file.is_file():
-                                cid = str(actual_file)
+                                cid = session_id or str(actual_file)
                                 active_task.provider_conversation_id = cid
                     if msg.get("role") == "assistant":
                         reply = "".join(p.get("text", "") for p in msg.get("content", []) if p.get("type") == "text")

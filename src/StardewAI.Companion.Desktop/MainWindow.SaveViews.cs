@@ -40,6 +40,7 @@ public partial class MainWindow
         CompanionName.Clear();
         PlayStyle.SelectedIndex = Personality.SelectedIndex = CareFrequency.SelectedIndex = Bedtime.SelectedIndex = IdlePreference.SelectedIndex = -1;
         Initiative.IsChecked = false;
+        ResetMemoryView();
     }
 
     private void RefreshSaveViewControls()
@@ -50,6 +51,7 @@ public partial class MainWindow
         HistoryOlderButton.IsEnabled = HistoryRefreshButton.IsEnabled && _historyBefore.HasValue;
         ReadProfileButton.IsEnabled = connected && !_savingPreferences;
         ProfileFields.IsEnabled = ReadProfileButton.IsEnabled && _profileRevision.HasValue;
+        RefreshMemoryControls(connected);
     }
 
     private async void SaveViewSelected(object sender, SelectionChangedEventArgs e)
@@ -62,6 +64,8 @@ public partial class MainWindow
     {
         if (Pages.SelectedItem == SettingsPage && !_profileRevision.HasValue)
             await ReadPreferencesAsync();
+        if (Pages.SelectedItem == MemoryPage && !_memoryRevision.HasValue)
+            await ChangeMemoryAsync(null);
         if (Pages.SelectedItem == CommandPage && CommandViews.SelectedItem == HistoryPage && !_hasHistoryPage)
             await RefreshHistoryAsync(null);
     }

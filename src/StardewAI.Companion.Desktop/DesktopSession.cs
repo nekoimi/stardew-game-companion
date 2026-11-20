@@ -33,7 +33,7 @@ internal sealed class DesktopSession
     public DesktopSession(string root, Action<string> log)
     {
         _root = root;
-        _mod = Path.Combine(root, "Mods", "StardewAI.Companion.Mod");
+        _mod = ModDirectory(root);
         _log = log;
     }
 
@@ -49,9 +49,8 @@ internal sealed class DesktopSession
         if (!File.Exists(python) || !File.Exists(Path.Combine(_mod, "release-manifest.json")))
             throw new FileNotFoundException("发行包文件不完整，请完整解压 ZIP 后再打开程序。");
 
-        Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
-        try { _packageLease = File.Open(Path.Combine(_root, "data", "desktop.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-        catch (IOException ex) { throw new InvalidOperationException("同一绿色包已有桌面窗口正在运行。", ex); }
+        _packageLease = AcquirePackageLease(_root);
+        if (ImportPending(_root)) throw new InvalidOperationException("请在「设置」完成上次导入后再启动游戏。");
         var configPath = Path.Combine(_mod, "config.json");
         var config = File.Exists(configPath) ? JsonNode.Parse(File.ReadAllText(configPath))?.AsObject() : new JsonObject();
         if (config is null) throw new InvalidDataException("伙伴设置文件无效。");
@@ -215,6 +214,56 @@ internal sealed class DesktopSession
         string pending = path + ".tmp";
         File.WriteAllText(pending, JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
         File.Move(pending, path, overwrite: true);
+    }
+
+    internal static string ModDirectory(string root) => Path.Combine(root, "Mods", "StardewAI.Companion.Mod");
+
+    internal static bool ImportPending(string root) => Directory.Exists(Path.Combine(ModDirectory(root), ".desktop-import-pending"));
+
+    internal static async Task<JsonElement> ImportAsync(string root, string? source, bool dataOnly)
+    {
+        if (AnyGameRunning()) throw new InvalidOperationException("请先在游戏中保存并退出，再导入旧数据。");
+        string target = ModDirectory(root);
+        string python = Path.Combine(target, "runtime", "python", "python.exe");
+        if (!File.Exists(python)) throw new FileNotFoundException("绿色包不完整，请完整解压后再导入。");
+        using var lease = AcquirePackageLease(root);
+        string? sourceRoot = source is null ? null : Directory.GetParent(source)?.Parent?.FullName;
+        using var sourceLease = sourceRoot is not null && File.Exists(Path.Combine(sourceRoot, "星露谷游戏伴侣.exe"))
+            ? AcquirePackageLease(sourceRoot) : null;
+        if (AnyGameRunning()) throw new InvalidOperationException("游戏正在运行，请保存并退出后重试。");
+
+        var start = new ProcessStartInfo(python)
+        {
+            WorkingDirectory = target, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8,
+        };
+        foreach (var argument in new[] { "-B", "-m", "stardew_ai_runtime.desktop_import", "--target", target })
+            start.ArgumentList.Add(argument);
+        if (source is not null)
+        {
+            start.ArgumentList.Add("--source");
+            start.ArgumentList.Add(source);
+        }
+        if (dataOnly) start.ArgumentList.Add("--data-only");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("无法启动数据导入。");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var errors = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var json = await output;
+        var stderr = await errors;
+        if (string.IsNullOrWhiteSpace(json)) throw new InvalidOperationException($"数据导入进程未确认结果。{stderr.Trim()}");
+        using var result = JsonDocument.Parse(json);
+        if (result.RootElement.TryGetProperty("error", out var error)) throw new InvalidOperationException(error.GetString());
+        if (process.ExitCode != 0) throw new InvalidOperationException("数据导入进程未确认结果。");
+        return result.RootElement.Clone();
+    }
+
+    private static FileStream AcquirePackageLease(string root)
+    {
+        var directory = Path.Combine(root, "data");
+        Directory.CreateDirectory(directory);
+        try { return File.Open(Path.Combine(directory, "desktop.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        catch (IOException ex) { throw new InvalidOperationException("所选绿色包已在运行，请退出后重试。", ex); }
     }
 
     private static bool AnyGameRunning() => new[] { "StardewModdingAPI", "Stardew Valley" }.Any(name =>

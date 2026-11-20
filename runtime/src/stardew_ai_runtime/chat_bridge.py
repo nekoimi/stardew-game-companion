@@ -1376,7 +1376,8 @@ class ChatBridge:
                 if self.run_dir is None:
                     raise ValueError("pi backend requires a game run directory")
                 self._backend = PiBackend(self.run_dir, model=self.model, command=self.pi_cmd,
-                    effort=self.effort, progress=getattr(self, "_backend_progress_callback", None))
+                    effort=self.effort, progress=getattr(self, "_backend_progress_callback", None),
+                    local_sessions_only=getattr(self, "_local_pi_sessions_only", False))
             elif self.backend_name == "mcode":
                 if self.run_dir is None:
                     raise ValueError("mcode backend requires a game run directory")

@@ -26,7 +26,7 @@ from starlette.routing import Route
 from .chat_bridge import ChatBridge, Envelope
 from .owner_process import OwnerProcessGuard
 from .pi_backend import PiBackend
-from .protocol import LifeProfileSetPayload, ProtocolError
+from .protocol import LifeMemoryEditPayload, LifeProfileSetPayload, ProtocolError
 from .release_package import verify_release
 from .websocket_client import WebSocketError
 
@@ -38,6 +38,8 @@ class DesktopError(RuntimeError):
 
 
 class DesktopBridge(ChatBridge):
+    _local_pi_sessions_only = True
+
     def __init__(self, run_dir: Path, model: str, pi: str):
         super().__init__(run_dir=str(run_dir), backend="pi", model=model, effort="default",
                          pi_cmd=pi, enable_plan_worker=False)
@@ -236,6 +238,24 @@ class DesktopBridge(ChatBridge):
         state = self._autonomy.state(save)
         return {**self._profile_store.get(save), "initiativeMode": state.mode, "idlePreference": state.idle_preference}
 
+    async def edit_memory(self, binding, body: dict) -> dict:
+        async with self.operation:
+            if binding != self.binding():
+                raise DesktopError("游戏会话已变化，请重新读取记忆与约定。")
+            save, _, ws = binding
+            payload = LifeMemoryEditPayload.from_mapping({**body, "requestId": uuid.uuid4().hex, "saveId": save})
+            status, result, entries, revision = self._apply_life_memory_edit(payload, save)
+            if status != "confirmed":
+                message = {"STALE_REVISION": "记忆已变化，请重新读取后再编辑。", "NOT_FOUND": "这条记忆已不存在。",
+                           "CANNOT_EDIT_EVENT": "共同经历的原文来自游戏结果，可删除该条记录。"}
+                raise DesktopError(message.get(result.get("reason"), "记忆未保存，请检查输入。"))
+            reply = Envelope.create_life_memory_state(self.instance_id, payload.request_id, save,
+                                                      entries, revision, status=status)
+            await self._send_reply(ws, reply)
+            if binding != self.binding():
+                raise DesktopError("游戏会话已变化，请重新读取记忆与约定。")
+            return {"entries": entries, "memoryRevision": revision}
+
     async def save_profile(self, binding, revision: int, patch: dict) -> dict:
         async with self.operation:
             if binding != self.binding():
@@ -392,6 +412,24 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
                         or any(type(value) is not fields.get(key) for key, value in patch.items())):
                     return JSONResponse({"error": "伙伴设置格式无效。"}, status_code=400)
                 return JSONResponse(await bridge.save_profile(binding, revision, patch))
+            if path == "/v1/memory":
+                if "op" not in body:
+                    return JSONResponse(bridge._memory_store.list(binding[0]))
+                op, entry, kind, text = (body.get(key) for key in ("op", "id", "kind", "text"))
+                revision = body.get("expectedRevision")
+                if (type(revision) is not int or revision < 0 or op not in ("add", "correct", "delete")
+                        or op == "add" and kind not in ("preference", "agreement")
+                        or op != "add" and (not isinstance(entry, str) or not 1 <= len(entry) <= 120)
+                        or op != "delete" and (not isinstance(text, str) or not 1 <= len(text.strip()) <= 200)):
+                    return JSONResponse({"error": "记忆内容或操作无效。"}, status_code=400)
+                edit = {"op": op, "expectedRevision": revision}
+                if op == "add":
+                    edit["kind"] = kind
+                else:
+                    edit["id"] = entry
+                if op != "delete":
+                    edit["text"] = text.strip()
+                return JSONResponse(await bridge.edit_memory(binding, edit))
             if path == "/v1/initiative":
                 mode, preference = body.get("mode"), body.get("preference")
                 if mode not in ("command", "free") or preference not in ("autonomous", "clear", "forage", "wood", "wait"):
@@ -427,7 +465,7 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
         except DesktopError as ex:
             return JSONResponse({"error": str(ex)}, status_code=409)
         except ProtocolError:
-            return JSONResponse({"error": "伙伴设置包含无效的值。"}, status_code=400)
+            return JSONResponse({"error": "请求包含无效的值。"}, status_code=400)
         except (OSError, WebSocketError, TimeoutError):
             return JSONResponse({"error": "游戏连接中断，操作结果尚未确认。"}, status_code=503)
 
@@ -436,6 +474,7 @@ def create_app(bridge: DesktopBridge, token: str) -> Starlette:
         Route("/v1/commands/{request_id}", api),
         Route("/v1/commands", api, methods=["POST"]), Route("/v1/control", api, methods=["POST"]),
         Route("/v1/history", api, methods=["POST"]), Route("/v1/profile", api, methods=["POST"]),
+        Route("/v1/memory", api, methods=["POST"]),
         Route("/v1/initiative", api, methods=["POST"]),
     ])
 
