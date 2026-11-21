@@ -6,7 +6,7 @@ using System.Text.Json;
 
 namespace StardewAI.Companion.Desktop;
 
-internal readonly record struct RuntimeEndpoint(int Port, string Credential);
+internal readonly record struct RuntimeEndpoint(int Port, string Credential, bool Node = false);
 
 internal sealed class DesktopProcesses(string root, Action<string> log)
 {
@@ -34,6 +34,8 @@ internal sealed class DesktopProcesses(string root, Action<string> log)
         gameStart.ArgumentList.Add("--mods-path");
         gameStart.ArgumentList.Add(Path.Combine(root, "Mods"));
         gameStart.Environment["STARDEW_DESKTOP_MODE"] = "1";
+        if (DesktopInstallation.UsesNode(root)) gameStart.Environment["STARDEW_AGENT_PROTOCOL"] = "2";
+        else gameStart.Environment.Remove("STARDEW_AGENT_PROTOCOL");
         _game = new Process { StartInfo = gameStart, EnableRaisingEvents = true };
         _game.OutputDataReceived += (_, args) => { if (args.Data is { } line) log(line); };
         _game.ErrorDataReceived += (_, args) => { if (args.Data is { } line) log(line); };
@@ -44,9 +46,10 @@ internal sealed class DesktopProcesses(string root, Action<string> log)
     }
 
     internal async Task<RuntimeEndpoint> StartRuntimeAsync(string python, DesktopSettings settings,
-        int generation, CancellationToken runtimeToken)
+        int generation, CancellationToken runtimeToken, bool modelTestOnly = false)
     {
         var credential = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        bool node = DesktopInstallation.UsesNode(root);
         var runtimeStart = new ProcessStartInfo(python)
         {
             WorkingDirectory = _mod, UseShellExecute = false, CreateNoWindow = true,
@@ -54,12 +57,17 @@ internal sealed class DesktopProcesses(string root, Action<string> log)
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
         };
         var client = settings.Clients?.GetValueOrDefault(settings.Backend) ?? new(settings.Model, settings.PiPath);
-        foreach (string argument in new[] { "-B", "-m", "stardew_ai_runtime.desktop_service", "--run-dir", _mod,
+        var arguments = node ? new[] { "--disable-warning=ExperimentalWarning", Path.Combine(root, "runtime", "dist", "bootstrap.js"),
+            "--desktop", _mod, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) }
+            : new[] { "-B", "-m", "stardew_ai_runtime.desktop_service", "--run-dir", _mod,
             "--owner-pid", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--backend", settings.Backend, "--model", client.Model, "--client", client.Path, "--effort", client.Effort })
+            "--backend", settings.Backend, "--model", client.Model, "--client", client.Path, "--effort", client.Effort };
+        foreach (string argument in arguments)
             runtimeStart.ArgumentList.Add(argument);
         runtimeStart.Environment["STARDEW_DESKTOP_TOKEN"] = credential;
         runtimeStart.Environment["STARDEW_BRIDGE_STOP_FILE"] = _stopFile;
+        if (modelTestOnly) runtimeStart.Environment["STARDEW_MODEL_TEST_ONLY"] = "1";
+        else runtimeStart.Environment.Remove("STARDEW_MODEL_TEST_ONLY");
         runtimeStart.Environment["STARDEW_CONNECTION_SOURCE"] = settings.ConnectionSource;
         runtimeStart.Environment["PYTHONUTF8"] = "1";
         // The desktop starts a portable runtime next to its own Mod.
@@ -75,7 +83,10 @@ internal sealed class DesktopProcesses(string root, Action<string> log)
                 using var json = JsonDocument.Parse(line);
                 if (json.RootElement.TryGetProperty("port", out var port) && port.TryGetInt32(out int number) && number is > 0 and <= 65535)
                 {
-                    ready.TrySetResult(number);
+                    if (node && (!json.RootElement.TryGetProperty("protocolVersion", out var version)
+                        || !version.TryGetInt32(out int actual) || actual != 2))
+                        ready.TrySetException(new InvalidOperationException("桌面与运行时的协议版本不匹配。"));
+                    else ready.TrySetResult(number);
                     return;
                 }
                 if (json.RootElement.TryGetProperty("error", out var error))
@@ -95,7 +106,7 @@ internal sealed class DesktopProcesses(string root, Action<string> log)
         _runtime.BeginErrorReadLine();
         int endpoint = await ready.Task.WaitAsync(TimeSpan.FromSeconds(35), runtimeToken);
         if (!IsRunning(_runtime)) throw new InvalidOperationException("伴侣服务提前退出，请查看诊断。");
-        return new RuntimeEndpoint(endpoint, credential);
+        return new RuntimeEndpoint(endpoint, credential, node);
     }
 
     internal async Task StopRuntimeAsync()

@@ -31,6 +31,7 @@ export type ModelErrorCode = "authentication" | "model-unavailable" | "rate-limi
 
 export type ModelEvent =
   | { type: "text"; delta: string }
+  | { type: "activity" }
   | { type: "done"; reason: "stop" | "tool-calls" | "length"; text: string; calls: ToolCall[]; usage?: ModelUsage }
   | { type: "error"; code: ModelErrorCode; message: string };
 

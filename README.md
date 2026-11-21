@@ -7,6 +7,8 @@
 
 [下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases) · [使用指南](docs/desktop-portable.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
+下一代运行时将内置 Node 和 Pi 模型 SDK，通过 API Key 直连模型服务。[改造方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)
+
 ## 快速开始
 
 1. 准备 Windows x64、《星露谷物语》、[SMAPI](https://smapi.io/) 和已登录的模型客户端。项目的游戏和 SMAPI 基线为 1.6.15 和 4.2.1。

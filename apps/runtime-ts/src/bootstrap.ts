@@ -1,6 +1,7 @@
 import { PI_AI_VERSION } from "@earendil-works/pi-ai";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { DatabaseSync } from "node:sqlite";
+import { startDesktopService } from "./adapters/desktop/desktop-service.js";
 
 export function checkRuntime(): { node: string; sqlite: string; sdk: string } {
   const database = new DatabaseSync(":memory:");
@@ -21,4 +22,9 @@ export function checkRuntime(): { node: string; sqlite: string; sdk: string } {
 
 if (process.argv[2] === "--check") {
   process.stdout.write(JSON.stringify(checkRuntime()) + "\n");
+} else if (process.argv[2] === "--desktop") {
+  const runDirectory = process.argv[3];
+  if (!runDirectory) throw new Error("Missing Mod directory");
+  await startDesktopService(runDirectory, process.env.STARDEW_DESKTOP_TOKEN ?? "",
+    process.env.STARDEW_BRIDGE_STOP_FILE ?? "", Number(process.argv[4]), process.env.STARDEW_MODEL_TEST_ONLY === "1");
 }

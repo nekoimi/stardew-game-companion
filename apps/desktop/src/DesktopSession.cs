@@ -45,7 +45,7 @@ internal sealed class DesktopSession
                 throw new FileNotFoundException("请选择包含星露谷和 StardewModdingAPI.exe 的游戏目录。");
             string python = DesktopInstallation.ResolveRuntime(_root);
             _packageLease = DesktopInstallation.AcquirePackageLease(_root);
-            if (DesktopInstallation.ImportPending(_root))
+            if (!DesktopInstallation.UsesNode(_root) && DesktopInstallation.ImportPending(_root))
                 throw new InvalidOperationException("请在「设置」完成上次导入后再启动游戏。");
             DesktopInstallation.ConfigureGame(_root, settings);
 
@@ -85,12 +85,36 @@ internal sealed class DesktopSession
         var endpoint = await _processes.StartRuntimeAsync(python, settings, generation, token);
         token.ThrowIfCancellationRequested();
         _api = new DesktopRuntimeApi(endpoint, token);
+        if (endpoint.Node)
+        {
+            var selected = settings.ApiModel ?? new();
+            string key = ModelCredential.Read(_root, selected.Provider);
+            await _api.PostAsync("/v2/model/configure", ModelRequest(selected, key));
+        }
         _api.StartEvents(message => EventReceived?.Invoke(generation, message),
             () => generation == _runtimeGeneration && _processes.RuntimeRunning, _log);
     }
 
     public Task<JsonElement> PostAsync(string route, object body, int timeoutSeconds = 25)
         => (_api ?? throw new InvalidOperationException("伴侣服务尚未启动。")).PostAsync(route, body, timeoutSeconds);
+
+    internal static async Task TestModelAsync(string root, ApiModelSettings selected, string key, Action<string> log)
+    {
+        var processes = new DesktopProcesses(root, log);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        try
+        {
+            var endpoint = await processes.StartRuntimeAsync(DesktopInstallation.ResolveRuntime(root), new(), 0, cancellation.Token, modelTestOnly: true);
+            using var api = new DesktopRuntimeApi(endpoint, cancellation.Token);
+            await api.PostAsync("/v2/model/test", ModelRequest(selected, key));
+        }
+        finally { await processes.StopRuntimeAsync(); }
+    }
+
+    private static object ModelRequest(ApiModelSettings selected, string key) => new {
+        selection = new { provider = selected.Provider, model = selected.Model, reasoning = selected.Reasoning },
+        apiKey = key,
+    };
 
     public Task StopAsync() => _stopTask ??= StopCoreAsync();
 

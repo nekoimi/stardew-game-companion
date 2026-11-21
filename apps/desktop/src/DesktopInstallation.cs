@@ -9,9 +9,11 @@ using Microsoft.Win32;
 namespace StardewAI.Companion.Desktop;
 
 internal sealed record ClientPreferences(string Model = "", string Path = "", string Effort = "");
+internal sealed record ApiModelSettings(string Provider = "deepseek", string Model = "deepseek-flash", string Reasoning = "");
 internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "player", string Model = "", string PiPath = "",
     string Backend = "pi", string ConnectionSource = "builtin", Dictionary<string, ClientPreferences>? Clients = null,
-    string OriginalWorkspace = "", string OriginalDataDirectory = "", string OriginalClient = "", string OriginalName = "");
+    string OriginalWorkspace = "", string OriginalDataDirectory = "", string OriginalClient = "", string OriginalName = "",
+    ApiModelSettings? ApiModel = null);
 
 internal static class DesktopInstallation
 {
@@ -25,8 +27,14 @@ internal static class DesktopInstallation
 
     internal static void SaveSettings(string root, DesktopSettings settings) => WriteJson(SettingsFile(root), settings);
 
+    internal static string NodeRuntime(string root) => Path.Combine(root, "runtime", "node.exe");
+    internal static bool UsesNode(string root) => File.Exists(Path.Combine(root, "runtime", "dist", "bootstrap.js"));
+
     internal static string ResolveRuntime(string root)
     {
+        if (UsesNode(root))
+            return File.Exists(NodeRuntime(root)) ? NodeRuntime(root)
+                : throw new FileNotFoundException("缺少随包 Node 运行时，请完整解压绿色包。");
         var mod = ModDirectory(root);
         var python = Path.Combine(mod, "runtime", "python", "python.exe");
         if (!File.Exists(python) || !File.Exists(Path.Combine(mod, "release-manifest.json")))
@@ -40,7 +48,7 @@ internal static class DesktopInstallation
         var config = File.Exists(configPath) ? JsonNode.Parse(File.ReadAllText(configPath))?.AsObject() : new JsonObject();
         if (config is null) throw new InvalidDataException("伙伴设置文件无效。");
         config["Mode"] = settings.ActorMode;
-        config["ConnectionSource"] = settings.ConnectionSource;
+        config["ConnectionSource"] = UsesNode(root) ? "builtin" : settings.ConnectionSource;
         config["ConnectionSourceChosen"] = true;
         WriteJson(configPath, config);
         SaveSettings(root, settings);

@@ -219,8 +219,8 @@ public partial class MainWindow
 
     private void RefreshPartnerControls()
     {
-        BuiltinFields.Visibility = SelectedSource == "builtin" ? Visibility.Visible : Visibility.Collapsed;
-        OriginalFields.Visibility = (_activeSource ?? SelectedSource) == "external" ? Visibility.Visible : Visibility.Collapsed;
+        BuiltinFields.Visibility = !NodeRuntime && SelectedSource == "builtin" ? Visibility.Visible : Visibility.Collapsed;
+        OriginalFields.Visibility = !NodeRuntime && (_activeSource ?? SelectedSource) == "external" ? Visibility.Visible : Visibility.Collapsed;
         bool service = _activeSource == "external" && _partnerServiceReady && !_partnerChangePending && !_closing;
         bool free = service && !_adapterOwned && !_partnerReady;
         ListSessionsButton.IsEnabled = free;

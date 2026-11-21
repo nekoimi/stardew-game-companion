@@ -30,7 +30,7 @@ public sealed class DiscoveryService
     /// <summary>
     /// Publishes discovery file for external runtime without logging secret token.
     /// </summary>
-    public void Publish(string saveId, string gameSessionId, int port, string sessionToken)
+    public void Publish(string saveId, string gameSessionId, int port, string sessionToken, string protocolVersion = "0.1")
     {
         lock (_lock)
         {
@@ -38,7 +38,7 @@ public sealed class DiscoveryService
             {
                 var discoveryObj = new
                 {
-                    protocolVersion = "0.1",
+                    protocolVersion,
                     endpoint = $"ws://127.0.0.1:{port}/",
                     host = "127.0.0.1",
                     port = port,

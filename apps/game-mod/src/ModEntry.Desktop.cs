@@ -264,9 +264,10 @@ public sealed partial class ModEntry
                 }
                 break;
             case "record" when payload["text"]?.GetValue<string>() is { Length: > 0 and <= 500 } message:
-                if (!_lifeMenuUiState.BeginChat(requestId, "chat")) error = "CHAT_BUSY";
+                string conversationRequest = payload["conversationRequestId"]?.GetValue<string>() ?? requestId;
+                if (!_lifeMenuUiState.BeginChat(conversationRequest, "chat")) error = "CHAT_BUSY";
                 else
-                    _lifeMenuUiState.RecordConversation(requestId + ":player", "你", message, GetCurrentGameDate(),
+                    _lifeMenuUiState.RecordConversation(conversationRequest + ":player", "你", message, GetCurrentGameDate(),
                         isPlayer: true, replyToDecisionId: payload["decisionId"]?.GetValue<string>());
                 break;
             default: error = "CONTROL_UNAVAILABLE"; break;

@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _logTimer;
     private DesktopSession? _session;
     private string? _gameSessionId;
+    private string? _saveId;
     private string? _lastGameSessionId;
     private string? _owner;
     private bool _playerMode;
@@ -57,6 +58,8 @@ public partial class MainWindow : Window
         }
         Mode.SelectedIndex = settings.ActorMode == "player" ? 1 : 0;
         InitializePartnerSettings(settings);
+        InitializeApiModel(settings.ApiModel ?? new());
+        if (NodeRuntime) Pages.SelectedItem = SettingsPage;
         if (string.IsNullOrWhiteSpace(GameFolder.Text)) Pages.SelectedItem = SettingsPage;
         RefreshControls();
         InitializeTray();
@@ -65,11 +68,12 @@ public partial class MainWindow : Window
     private DesktopSettings Settings() => new(GameFolder.Text.Trim(), Mode.SelectedIndex == 1 ? "player" : "companion",
         Backend: _backend, ConnectionSource: SelectedSource, Clients: ReadClientPreferences(),
         OriginalWorkspace: OriginalWorkspace.Text.Trim(), OriginalDataDirectory: OriginalData.Text.Trim(),
-        OriginalClient: OriginalClient.Text.Trim(), OriginalName: OriginalName.Text.Trim());
+        OriginalClient: OriginalClient.Text.Trim(), OriginalName: OriginalName.Text.Trim(),
+        ApiModel: NodeRuntime ? ApiSelection() : null);
 
     private async void LaunchClicked(object sender, RoutedEventArgs e)
     {
-        if (_session is not null || _closing || _importing) return;
+        if (_session is not null || _closing || _importing || _testingModel) return;
         SettingsFeedback.Text = GameFolderError.Text = BackendError.Text = "";
         var settings = Settings();
         if (!DesktopInstallation.IsGameDirectory(settings.GameDirectory))
@@ -77,14 +81,23 @@ public partial class MainWindow : Window
             ShowSettingsError(GameFolder, GameFolderError, "请选择包含 StardewModdingAPI.exe 的游戏目录。");
             return;
         }
-        if (SelectedSource == "builtin" && BackendPicker.SelectedItem is null)
+        if (NodeRuntime)
+        {
+            try { SaveApiCredential(); }
+            catch (Exception error) when (error is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
+            {
+                ShowSettingsError(ApiModel.Text.Trim().Length == 0 ? ApiModel : ApiKey, ApiModelFeedback, error.Message);
+                return;
+            }
+        }
+        else if (SelectedSource == "builtin" && BackendPicker.SelectedItem is null)
         {
             ShowSettingsError(BackendPicker, BackendError, "请选择一个可用的模型客户端。");
             return;
         }
         var session = new DesktopSession(_root, Log);
         _session = session;
-        _activeSource = settings.ConnectionSource;
+        _activeSource = NodeRuntime ? "builtin" : settings.ConnectionSource;
         _partnerReady = false;
         session.EventReceived += (generation, message) => Dispatcher.BeginInvoke(() =>
         {
@@ -161,6 +174,7 @@ public partial class MainWindow : Window
         if (_session != session) return;
         _partnerServiceReady = false;
         _gameSessionId = null;
+        _saveId = null;
         ResetSaveViews();
         ApplyDecisions(default);
         RefreshControls();
@@ -204,8 +218,13 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (NodeRuntime) SaveApiCredential();
             DesktopInstallation.SaveSettings(_root, Settings());
             SettingsFeedback.Text = "启动设置已保存，下次启动生效。";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
+        {
+            ShowSettingsError(ApiModel.Text.Trim().Length == 0 ? ApiModel : ApiKey, ApiModelFeedback, ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -239,7 +258,7 @@ public partial class MainWindow : Window
         try
         {
             await session.PostAsync("/v1/commands", new {
-                gameSessionId = game, requestId, text,
+                gameSessionId = game, saveId = _saveId, requestId, text,
                 mode = interrupt ? "interrupt" : "send", decisionId,
             });
         }
@@ -278,7 +297,7 @@ public partial class MainWindow : Window
         if (_session is not { } session || _gameSessionId is not { } game) return;
         int view = _saveViewGeneration;
         WorkFeedback.Text = "";
-        try { await session.PostAsync("/v1/control", new { gameSessionId = game, action }); }
+        try { await session.PostAsync("/v1/control", new { gameSessionId = game, saveId = _saveId, action }); }
         catch (Exception ex)
         {
             if (view != _saveViewGeneration) return;
@@ -331,6 +350,7 @@ public partial class MainWindow : Window
         ApplyPartnerStatus(payload);
         var previous = _gameSessionId;
         _gameSessionId = payload.ValueKind == JsonValueKind.Object && Flag(payload, "ready") ? Text(payload, "gameSessionId") : null;
+        _saveId = _gameSessionId is null ? null : Text(payload, "saveId");
         bool saveChanged = previous != _gameSessionId;
         bool usageChanged = saveChanged || hadService != _partnerServiceReady;
         if (usageChanged)
@@ -492,7 +512,7 @@ public partial class MainWindow : Window
         TimelineHint.Text = !connected ? (_session is null ? "点右上角「启动游戏」，然后在游戏窗口选择单人存档。"
             : "选择单人存档后，就可以和伙伴聊天。")
             : _partnerReady ? "可以请伙伴照料农场，也可以和它聊聊。" : "连接伙伴后即可发送消息。";
-        LaunchHeader.IsEnabled = _session is null && !_closing && !_importing;
+        LaunchHeader.IsEnabled = _session is null && !_closing && !_importing && !_testingModel;
         bool reconnect = _session?.CanReconnect == true;
         LaunchHeader.Visibility = reconnect || _reconnecting ? Visibility.Collapsed : Visibility.Visible;
         ReconnectHeader.Visibility = reconnect || _reconnecting ? Visibility.Visible : Visibility.Collapsed;

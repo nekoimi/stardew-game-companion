@@ -92,6 +92,7 @@ public sealed class WebSocketTransportServer : ITransportServer
     public event Action<string, JsonObject>? OnPlayerMessage;
     public event Action<JsonObject>? OnDesktopControl;
     public bool DesktopClientEnabled { get; set; }
+    public string ProtocolVersion { get; init; } = "0.1";
     private long _desktopDisconnectRevision;
     internal long DesktopDisconnectRevision => Interlocked.Read(ref _desktopDisconnectRevision);
     public Task<bool> SendDesktopStateAsync(string type, JsonObject payload, long? expectedGeneration = null) =>
@@ -459,9 +460,9 @@ public sealed class WebSocketTransportServer : ITransportServer
             return;
         }
 
-        if (envelope.ProtocolVersion != "0.1")
+        if (envelope.ProtocolVersion != ProtocolVersion)
         {
-            _ = SendProtocolErrorAsync("UNSUPPORTED_PROTOCOL", "Protocol version must be 0.1.", envelope.MessageId);
+            _ = SendProtocolErrorAsync("UNSUPPORTED_PROTOCOL", $"Protocol version must be {ProtocolVersion}.", envelope.MessageId);
             return;
         }
 
@@ -513,7 +514,7 @@ public sealed class WebSocketTransportServer : ITransportServer
             _logger?.Invoke($"Received runtime.hello in generation {_socketGeneration} (sender={helloEnvelope.SenderInstanceId}, protocolVersion={helloEnvelope.ProtocolVersion}).", "Info");
 
             var welcomePayload = new ModWelcomePayload(
-                SelectedProtocolVersion: "0.1",
+                SelectedProtocolVersion: ProtocolVersion,
                 ModVersion: "0.1.0",
                 GameVersion: "1.6.15",
                 SmapiVersion: "4.2.1",
@@ -1561,7 +1562,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         string? idempotencyKey = null)
     {
         return new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: messageType,
             MessageId: $"msg-{Guid.NewGuid():N}"[..16],
             SenderInstanceId: _senderInstanceId,
@@ -1668,6 +1669,12 @@ public sealed class WebSocketTransportServer : ITransportServer
                     {
                         using var doc = JsonDocument.Parse(jsonString);
                         var root = doc.RootElement;
+                        if (ProtocolVersion == AgentProtocol.Version &&
+                            (!root.TryGetProperty("protocolVersion", out var version) || version.GetString() != ProtocolVersion
+                            || !root.TryGetProperty("saveId", out var originSave) || originSave.GetString() != _saveId
+                            || !root.TryGetProperty("gameSessionId", out var originSession) || originSession.GetString() != _gameSessionId
+                            || gen != ChatGeneration))
+                            continue;
                         ChatReplyPayload? reply = null;
                         var playerType = root.TryGetProperty("messageType",out var pt) ? pt.GetString() : null;
                         if (playerType is "agent.thinking" or "player.control") {
@@ -1820,7 +1827,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         }
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "chat.submit",
             MessageId: $"chat-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
@@ -1847,7 +1854,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         lock (_chatLock) socket = _chatSocket;
         if (socket == null || socket.State != WebSocketState.Open) return false;
         var envelope = new EnvelopeDto(
-            "0.1", "autonomy.control", $"autonomy-{Guid.NewGuid():N}"[..12],
+            ProtocolVersion, "autonomy.control", $"autonomy-{Guid.NewGuid():N}"[..12],
             _senderInstanceId, 0, 0, DateTimeOffset.UtcNow,
             JsonSerializer.SerializeToNode(payload, JsonOptions)!.AsObject(),
             SaveId: payload.SaveId, GameSessionId: _gameSessionId);
@@ -1868,7 +1875,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         }
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "chat.cancel",
             MessageId: $"cancel-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
@@ -1923,7 +1930,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         }
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "life.chat.submit",
             MessageId: $"lcs-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
@@ -1947,7 +1954,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         if (socket == null || socket.State != WebSocketState.Open) return false;
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "life.profile.get",
             MessageId: $"lpg-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
@@ -1971,7 +1978,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         if (socket == null || socket.State != WebSocketState.Open) return false;
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "life.profile.set",
             MessageId: $"lps-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
@@ -1995,7 +2002,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         if (socket == null || socket.State != WebSocketState.Open) return false;
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "life.memory.list",
             MessageId: $"lml-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
@@ -2019,7 +2026,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         if (socket == null || socket.State != WebSocketState.Open) return false;
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "life.memory.edit",
             MessageId: $"lme-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
@@ -2043,7 +2050,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         if (socket == null || socket.State != WebSocketState.Open) return false;
 
         var envelope = new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: ProtocolVersion,
             MessageType: "life.milestones.get",
             MessageId: $"lmg-{Guid.NewGuid():N}"[..12],
             SenderInstanceId: _senderInstanceId,
