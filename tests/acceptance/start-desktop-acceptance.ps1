@@ -71,7 +71,9 @@ $start.WorkingDirectory = $desktop
 $start.Environment['PATH'] = "$env:SystemRoot/System32;$env:SystemRoot"
 $start.Environment['STARDEW_AI_SESSION_CONFIG'] = $session
 $start.Environment['STARDEW_AGENT_ACCEPTANCE_TRACE'] = Join-Path $evidence 'agent-runtime-events.jsonl'
-foreach ($name in 'DEEPSEEK_API_KEY','OPENAI_API_KEY','NODE_OPTIONS') { $null = $start.Environment.Remove($name) }
+foreach ($name in 'DEEPSEEK_API_KEY','OPENAI_API_KEY','OPENAI_COMPATIBLE_API_KEY','OPENAI_COMPATIBLE_BASE_URL','NODE_OPTIONS') {
+    $null = $start.Environment.Remove($name)
+}
 if ($Simulated) {
     $preload = [uri]::new((Join-Path $PSScriptRoot 'desktop-provider-preload.mjs')).AbsoluteUri
     $start.Environment['NODE_OPTIONS'] = "--import=$preload"

@@ -9,11 +9,15 @@ using Microsoft.Win32;
 namespace StardewAI.Companion.Desktop;
 
 internal sealed record ClientPreferences(string Model = "", string Path = "", string Effort = "");
-internal sealed record ApiModelSettings(string Provider = "deepseek", string Model = "deepseek-flash", string Reasoning = "");
+internal sealed record ApiModelSettings(string Provider = "deepseek", string Model = "deepseek-flash", string Reasoning = "", string BaseUrl = "")
+{
+    internal const string CompatibleProvider = "openai-compatible";
+    internal string CredentialScope => Provider == CompatibleProvider ? $"{Provider}/{BaseUrl}" : Provider;
+}
 internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "player", string Model = "", string PiPath = "",
     string Backend = "pi", string ConnectionSource = "builtin", Dictionary<string, ClientPreferences>? Clients = null,
     string OriginalWorkspace = "", string OriginalDataDirectory = "", string OriginalClient = "", string OriginalName = "",
-    ApiModelSettings? ApiModel = null);
+    ApiModelSettings? ApiModel = null, ApiModelSettings? CompatibleResponses = null);
 
 internal static class DesktopInstallation
 {
@@ -28,7 +32,7 @@ internal static class DesktopInstallation
     internal static void SaveSettings(string root, DesktopSettings settings)
     {
         if (UsesNode(root))
-            WriteJson(SettingsFile(root), new { settings.GameDirectory, settings.ActorMode, settings.ApiModel });
+            WriteJson(SettingsFile(root), new { settings.GameDirectory, settings.ActorMode, settings.ApiModel, settings.CompatibleResponses });
         else
             WriteJson(SettingsFile(root), settings);
     }

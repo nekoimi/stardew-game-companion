@@ -7,12 +7,15 @@ namespace StardewAI.Companion.Desktop;
 
 internal static class ModelCredential
 {
-    private static string Target(string root, string provider) =>
-        "StardewGameCompanion/" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root.ToUpperInvariant()))) + "/" + provider;
+    private static string Target(string root, ApiModelSettings selection) =>
+        "StardewGameCompanion/" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root.ToUpperInvariant()))) + "/" +
+        (selection.Provider == ApiModelSettings.CompatibleProvider
+            ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(selection.CredentialScope)))
+            : selection.Provider);
 
-    internal static string Read(string root, string provider)
+    internal static string Read(string root, ApiModelSettings selection)
     {
-        if (!CredRead(Target(root, provider), 1, 0, out var address))
+        if (!CredRead(Target(root, selection), 1, 0, out var address))
         {
             int error = Marshal.GetLastWin32Error();
             if (error == 1168) return "";
@@ -26,14 +29,14 @@ internal static class ModelCredential
         finally { CredFree(address); }
     }
 
-    internal static void Write(string root, string provider, string secret)
+    internal static void Write(string root, ApiModelSettings selection, string secret)
     {
         if (secret.Length is 0 or > 1200) throw new ArgumentException("请填写有效的 API Key。");
         var blob = Marshal.StringToCoTaskMemUni(secret);
         try
         {
-            var entry = new Credential { Type = 1, Target = Target(root, provider), Blob = blob,
-                BlobSize = (uint)(secret.Length * 2), Persist = 2, User = provider };
+            var entry = new Credential { Type = 1, Target = Target(root, selection), Blob = blob,
+                BlobSize = (uint)(secret.Length * 2), Persist = 2, User = selection.Provider };
             if (!CredWrite(ref entry, 0)) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法保存模型凭据。");
         }
         finally { Marshal.ZeroFreeCoTaskMemUnicode(blob); }

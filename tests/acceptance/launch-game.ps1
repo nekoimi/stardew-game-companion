@@ -13,7 +13,7 @@ param(
     [string]$ExpectedProdDllSha256 = '',
     [string]$CustomSavePath = '',
     [switch]$PresetAcceptance,
-    [ValidateSet('deepseek','openai')][string]$ApiProvider,
+    [ValidateSet('deepseek','openai','openai-compatible')][string]$ApiProvider,
     [string]$ApiModel,
     [switch]$ApiSimulated,
     # Optional child-process environment overrides (name => value). Used by sandboxed
@@ -565,7 +565,9 @@ try {
         foreach ($arg in @((Join-Path $PSScriptRoot 'run-api-runtime.mjs'), $runtime, $prodDest, $runEvidenceDir, [string]$PID, $ApiProvider, $ApiModel)) {
             $runtimeHost.ArgumentList.Add($arg)
         }
-        foreach ($key in 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'NODE_OPTIONS') { $psi.EnvironmentVariables.Remove($key) }
+        foreach ($key in 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'OPENAI_COMPATIBLE_API_KEY', 'OPENAI_COMPATIBLE_BASE_URL', 'NODE_OPTIONS') {
+            $psi.EnvironmentVariables.Remove($key)
+        }
         $psi.EnvironmentVariables['STARDEW_AGENT_PROTOCOL'] = '2'
         $versions = [ordered]@{
             gameVersion = (Get-Item -LiteralPath (Join-Path $gamePath 'Stardew Valley.dll')).VersionInfo.FileVersion

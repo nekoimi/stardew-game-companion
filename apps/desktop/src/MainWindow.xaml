@@ -422,11 +422,18 @@
                                 <TextBlock Text="模型服务商" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <ComboBox x:Name="ApiProvider" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="ApiProviderSelected"
                                           AutomationProperties.Name="模型服务商" Margin="0,0,0,13" />
+                                <StackPanel x:Name="ApiEndpointFields" Visibility="Collapsed">
+                                    <TextBlock Text="Base URL" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <TextBox x:Name="ApiBaseUrl" AutomationProperties.Name="Base URL" MaxLength="2048"
+                                             TextChanged="ApiBaseUrlChanged" Margin="0,0,0,13" />
+                                </StackPanel>
                                 <TextBlock Text="API Key" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <PasswordBox x:Name="ApiKey" AutomationProperties.Name="API Key" MaxLength="1200" Padding="9,6" Margin="0,0,0,13" />
                                 <TextBlock Text="模型" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <ComboBox x:Name="ApiModel" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="ApiModelSelected"
                                           AutomationProperties.Name="模型" Margin="0,0,0,13" />
+                                <TextBox x:Name="ApiCustomModel" AutomationProperties.Name="模型 ID" MaxLength="200"
+                                         Visibility="Collapsed" Margin="0,0,0,13" />
                                 <StackPanel x:Name="ApiReasoningFields" Visibility="Collapsed">
                                     <TextBlock Text="推理档位" FontWeight="SemiBold" Margin="0,0,0,6" />
                                     <ComboBox x:Name="ApiReasoning" SelectedValuePath="Tag"

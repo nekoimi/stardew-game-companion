@@ -20,6 +20,8 @@
 
 正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。使用 `-Provider openai -Model gpt-5-mini` 可选择 OpenAI。为任一服务商加 `-Simulated` 可用其本地流式协议跑相同的固定场景。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
 
+第三方 Responses 网关使用 `-Provider openai-compatible -Model <网关模型 ID>`。从当前进程读取 `OPENAI_COMPATIBLE_BASE_URL` 和 `OPENAI_COMPATIBLE_API_KEY`。结果以 `openai-compatible` 记录。
+
 每组结果在同一运行目录的 `evidence/<场景名>/`，总结果在 `.test-runs/presets-*/summary.md`。API 运行在启动游戏前测试模型工具调用以及根据工具回执生成确认文本。报告保留所用服务商、模型、游戏和 SMAPI 版本、包清单哈希、自然语言指令、状态采样和失败原因。画面观感、选项跨天、读档与执行中退出需单独核对。
 
 ## 桌面与同一存档切换

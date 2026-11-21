@@ -5,7 +5,7 @@ param(
     [ValidateSet('water-refill','harvest-store','rest-water','mature-trees','walk-pickup','walk-pickup-full','care-guidance','harvest-logistics','rest-forestry')]
     [string[]]$Cases = @('care-guidance','harvest-logistics','rest-forestry'),
     [ValidateRange(60,3600)][int]$TimeoutSeconds = 600,
-    [ValidateSet('deepseek','openai')][string]$Provider = 'deepseek',
+    [ValidateSet('deepseek','openai','openai-compatible')][string]$Provider = 'deepseek',
     [string]$Model,
     [switch]$Simulated,
     [string]$Python
@@ -20,9 +20,17 @@ if (!$Python) {
     if (!(Test-Path -LiteralPath $Python -PathType Leaf)) { $Python = 'python' }
 }
 if (!$apiRelease -and ($Simulated -or $Model -or $Provider -ne 'deepseek')) { throw 'API options require a v2 green package.' }
+if ($Provider -eq 'openai-compatible' -and ($Simulated -or !$Model -or
+        [string]::IsNullOrWhiteSpace($env:OPENAI_COMPATIBLE_BASE_URL))) {
+    throw 'The compatible Responses acceptance requires -Model and OPENAI_COMPATIBLE_BASE_URL.'
+}
 if ($apiRelease) {
     if (!$Model) { $Model = if ($Provider -eq 'openai') { 'gpt-5-mini' } else { 'deepseek-flash' } }
-    $required = if ($Provider -eq 'openai') { 'OPENAI_API_KEY' } else { 'DEEPSEEK_API_KEY' }
+    $required = switch ($Provider) {
+        'openai' { 'OPENAI_API_KEY' }
+        'openai-compatible' { 'OPENAI_COMPATIBLE_API_KEY' }
+        default { 'DEEPSEEK_API_KEY' }
+    }
     if (!$Simulated -and [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($required))) {
         throw "Set $required in the current process before starting formal acceptance."
     }

@@ -18,7 +18,7 @@ export class ModelError extends Error {
 }
 
 export function listModelProviders() {
-  return (Object.keys(providers) as (keyof typeof providers)[]).map(id => {
+  const catalogue = (Object.keys(providers) as (keyof typeof providers)[]).map(id => {
     const factory = providers[id];
     const provider = factory();
     return { id: provider.id, name: provider.name, models: provider.getModels().filter(model => enabledModels[id].has(model.id)).map(model => ({
@@ -26,6 +26,18 @@ export function listModelProviders() {
         ? thinkingLevels.filter(level => model.thinkingLevelMap?.[level] !== null) : [],
     })) };
   });
+  return [...catalogue, { id: "openai-compatible", name: "OpenAI 兼容（Responses）", models: [] }];
+}
+
+function responsesBaseUrl(value: string | undefined): string {
+  try {
+    const url = new URL(value ?? "");
+    if (url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash) {
+      const base = url.href.replace(/\/+$/, "");
+      if (!/\/(responses|chat\/completions)$/i.test(base)) return base;
+    }
+  } catch { /* Keep the address out of errors. */ }
+  throw new ModelError("unsupported", "请填写 HTTPS Base URL，保留接口前缀，例如 /v1，去掉 /responses。");
 }
 
 function classifyFailure(text: string | undefined, cancelled: boolean): ModelError {
@@ -45,16 +57,21 @@ function classifyFailure(text: string | undefined, cancelled: boolean): ModelErr
 
 export class PiModelAdapter implements ModelAdapter {
   open(selection: ModelSelection, apiKey: string): ModelContext {
-    const id = selection.provider as keyof typeof providers;
-    if (!Object.hasOwn(providers, id) || selection.baseUrl) throw new ModelError("unsupported", "该模型服务商或端点暂不支持。");
+    const compatible = selection.provider === "openai-compatible";
+    const id = (compatible ? "openai" : selection.provider) as keyof typeof providers;
+    if (!Object.hasOwn(providers, id) || (!compatible && selection.baseUrl)) throw new ModelError("unsupported", "该模型服务商或端点暂不支持。");
     if (!apiKey.trim()) throw new ModelError("authentication", "请填写 API Key。");
-    if (!enabledModels[id].has(selection.model)) throw new ModelError("model-unavailable", "模型不在当前服务商目录中。");
+    if (compatible ? !selection.model.trim() : !enabledModels[id].has(selection.model)) {
+      throw new ModelError("model-unavailable", "请填写或选择有效的模型 ID。");
+    }
     const provider = providers[id]();
     const credentials = new InMemoryCredentialStore();
     const models = createModels({ credentials });
     models.setProvider(provider);
-    const model = models.getModel(provider.id, selection.model);
-    if (!model) throw new ModelError("model-unavailable", "模型不在当前服务商目录中。");
+    const known = models.getModel(provider.id, compatible ? "gpt-5-mini" : selection.model);
+    if (!known) throw new ModelError("model-unavailable", "模型不在当前服务商目录中。");
+    const model = compatible ? { ...known, id: selection.model.trim(), name: selection.model.trim(),
+      baseUrl: responsesBaseUrl(selection.baseUrl), reasoning: false } : known;
     const reasoning = thinkingLevels.find(level => level === selection.reasoning);
     if (selection.reasoning && (!reasoning || !model.reasoning || model.thinkingLevelMap?.[reasoning] === null)) {
       throw new ModelError("unsupported", "该模型不支持所选推理档位。");

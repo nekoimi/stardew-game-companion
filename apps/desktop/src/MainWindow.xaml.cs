@@ -58,7 +58,7 @@ public partial class MainWindow : Window
         }
         Mode.SelectedIndex = settings.ActorMode == "player" ? 1 : 0;
         InitializePartnerSettings(settings);
-        InitializeApiModel(settings.ApiModel ?? new());
+        InitializeApiModel(settings.ApiModel ?? new(), settings.CompatibleResponses);
         if (NodeRuntime) Pages.SelectedItem = SettingsPage;
         if (string.IsNullOrWhiteSpace(GameFolder.Text)) Pages.SelectedItem = SettingsPage;
         RefreshControls();
@@ -69,7 +69,7 @@ public partial class MainWindow : Window
         Backend: _backend, ConnectionSource: SelectedSource, Clients: ReadClientPreferences(),
         OriginalWorkspace: OriginalWorkspace.Text.Trim(), OriginalDataDirectory: OriginalData.Text.Trim(),
         OriginalClient: OriginalClient.Text.Trim(), OriginalName: OriginalName.Text.Trim(),
-        ApiModel: NodeRuntime ? ApiSelection() : null);
+        ApiModel: NodeRuntime ? ApiSelection() : null, CompatibleResponses: NodeRuntime ? CompatibleResponsesSettings() : null);
 
     private async void LaunchClicked(object sender, RoutedEventArgs e)
     {
@@ -86,7 +86,7 @@ public partial class MainWindow : Window
             try { SaveApiCredential(); }
             catch (Exception error) when (error is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
             {
-                ShowSettingsError(ApiModel.SelectedItem is null ? ApiModel : ApiKey, ApiModelFeedback, error.Message);
+                ShowSettingsError(ApiSettingsErrorField(), ApiModelFeedback, error.Message);
                 return;
             }
         }
@@ -224,7 +224,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
         {
-            ShowSettingsError(ApiModel.SelectedItem is null ? ApiModel : ApiKey, ApiModelFeedback, ex.Message);
+            ShowSettingsError(ApiSettingsErrorField(), ApiModelFeedback, ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

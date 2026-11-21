@@ -85,6 +85,29 @@ test("OpenAI Responses reports cancellation while the response is still streamin
   } finally { restore(); await server.close(); }
 });
 
+test("OpenAI-compatible Responses uses the configured model ID and keeps the endpoint prefix", async () => {
+  const server = await createMockOpenAI();
+  const original = globalThis.fetch;
+  const redirected = [];
+  globalThis.fetch = (input, options) => {
+    const request = new Request(input, options);
+    const url = new URL(request.url);
+    assert.equal(url.hostname, "gateway.invalid");
+    assert.equal(request.headers.get("Authorization"), "Bearer gateway-fixture");
+    redirected.push(url.pathname);
+    return original(new Request(server.address + url.pathname, request));
+  };
+  try {
+    const adapter = new PiModelAdapter();
+    const selection = { provider: "openai-compatible", model: "custom-model", baseUrl: "https://gateway.invalid/tenant/v1/" };
+    await checkModelConnection(adapter.open(selection, "gateway-fixture"), AbortSignal.timeout(5000));
+    assert.deepEqual(redirected, ["/tenant/v1/responses", "/tenant/v1/responses"]);
+    assert.ok(server.requests.every(request => request.model === selection.model));
+    assert.throws(() => adapter.open({ ...selection, provider: "deepseek" }, "fixture"), { code: "unsupported" });
+    assert.throws(() => adapter.open({ ...selection, baseUrl: "http://gateway.invalid/v1" }, "fixture"), { code: "unsupported" });
+  } finally { globalThis.fetch = original; await server.close(); }
+});
+
 test("model connection check rejects a tool call with no confirmed tool result", async () => {
   const model = { async *generate({ messages }) {
     if (messages.length === 1) {

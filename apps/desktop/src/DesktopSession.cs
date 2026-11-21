@@ -88,7 +88,7 @@ internal sealed class DesktopSession
         if (endpoint.Node)
         {
             var selected = settings.ApiModel ?? new();
-            string key = ModelCredential.Read(_root, selected.Provider);
+            string key = ModelCredential.Read(_root, selected);
             await _api.PostAsync("/v2/model/configure", ModelRequest(selected, key));
         }
         _api.StartEvents(message => EventReceived?.Invoke(generation, message),
@@ -112,7 +112,7 @@ internal sealed class DesktopSession
     }
 
     private static object ModelRequest(ApiModelSettings selected, string key) => new {
-        selection = new { provider = selected.Provider, model = selected.Model, reasoning = selected.Reasoning },
+        selection = new { provider = selected.Provider, model = selected.Model, reasoning = selected.Reasoning, baseUrl = selected.BaseUrl },
         apiKey = key,
     };
 

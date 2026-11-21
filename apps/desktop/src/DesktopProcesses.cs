@@ -34,6 +34,8 @@ internal sealed class DesktopProcesses(string root, Action<string> log)
         gameStart.ArgumentList.Add("--mods-path");
         gameStart.ArgumentList.Add(Path.Combine(root, "Mods"));
         gameStart.Environment["STARDEW_DESKTOP_MODE"] = "1";
+        foreach (var name in new[] { "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL" })
+            gameStart.Environment.Remove(name);
         if (DesktopInstallation.UsesNode(root)) gameStart.Environment["STARDEW_AGENT_PROTOCOL"] = "2";
         else gameStart.Environment.Remove("STARDEW_AGENT_PROTOCOL");
         _game = new Process { StartInfo = gameStart, EnableRaisingEvents = true };
@@ -66,6 +68,11 @@ internal sealed class DesktopProcesses(string root, Action<string> log)
             runtimeStart.ArgumentList.Add(argument);
         runtimeStart.Environment["STARDEW_DESKTOP_TOKEN"] = credential;
         runtimeStart.Environment["STARDEW_BRIDGE_STOP_FILE"] = _stopFile;
+        if (node)
+        {
+            foreach (var name in new[] { "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL" })
+                runtimeStart.Environment.Remove(name);
+        }
         if (modelTestOnly) runtimeStart.Environment["STARDEW_MODEL_TEST_ONLY"] = "1";
         else runtimeStart.Environment.Remove("STARDEW_MODEL_TEST_ONLY");
         runtimeStart.Environment["STARDEW_CONNECTION_SOURCE"] = settings.ConnectionSource;

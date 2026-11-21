@@ -228,7 +228,9 @@ export async function startDesktopService(
       const body = await readBody(req);
       if (url === "/v2/model/test" || url === "/v2/model/configure") {
         const selection = object(body.selection);
-        if (typeof selection.provider !== "string" || typeof selection.model !== "string" || typeof body.apiKey !== "string") {
+        if (typeof selection.provider !== "string" || typeof selection.model !== "string" || typeof body.apiKey !== "string"
+          || (selection.baseUrl !== undefined && typeof selection.baseUrl !== "string")
+          || (selection.reasoning !== undefined && typeof selection.reasoning !== "string")) {
           return respond(res, 400, { error: "请填写服务商、API Key 和模型。" });
         }
         const model = provider.open(selection as unknown as ModelSelection, body.apiKey);
