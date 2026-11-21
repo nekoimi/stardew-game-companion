@@ -3,6 +3,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
@@ -11,9 +12,12 @@
     <AssemblyName>星露谷游戏伴侣</AssemblyName>
     <RootNamespace>StardewAI.Companion.Desktop</RootNamespace>
     <Product>星露谷游戏伴侣</Product>
+    <ApplicationIcon>Assets/companion.ico</ApplicationIcon>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
   <ItemGroup>
+    <Using Remove="System.Drawing;System.Windows.Forms" />
+    <Resource Include="Assets/*.png;Assets/companion.ico" />
     <None Include="$(MSBuildToolsPath)/../../LICENSE.txt" Link="DotNet-LICENSE.txt"
           CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"
           Condition="Exists('$(MSBuildToolsPath)/../../LICENSE.txt')" />

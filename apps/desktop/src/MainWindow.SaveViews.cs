@@ -37,6 +37,8 @@ public partial class MainWindow
         _historyBefore = _profileRevision = null;
         GoalPicker.ItemsSource = WorkDetails.ItemsSource = HistoryEntries.ItemsSource = null;
         WorkStatus.Text = HistoryStatus.Text = ProfileFeedback.Text = "进入存档后可查看。";
+        TodayGoalText.Text = WorkStatus.Text;
+        AgentNextStep.Text = "";
         WorkFeedback.Text = "";
         CompanionName.Clear();
         PlayStyle.SelectedIndex = Personality.SelectedIndex = CareFrequency.SelectedIndex = Bedtime.SelectedIndex = IdlePreference.SelectedIndex = -1;
@@ -63,6 +65,7 @@ public partial class MainWindow
     private async void SaveViewSelected(object sender, SelectionChangedEventArgs e)
     {
         if (!ReferenceEquals(e.Source, sender)) return;
+        if (CommandPage is not null && Pages.SelectedItem == CommandPage) TimelineScroll?.ScrollToBottom();
         if (UsagePage is not null && Pages.SelectedItem == UsagePage) await ReadUsageAsync();
         else if (_gameSessionId is not null) await LoadSelectedSaveViewAsync();
     }
@@ -119,7 +122,7 @@ public partial class MainWindow
             await ReadPreferencesAsync();
         if (Pages.SelectedItem == MemoryPage && !_memoryRevision.HasValue)
             await ChangeMemoryAsync(null);
-        if (Pages.SelectedItem == CommandPage && CommandViews.SelectedItem == HistoryPage && !_hasHistoryPage)
+        if (Pages.SelectedItem == HistoryPage && !_hasHistoryPage)
             await RefreshHistoryAsync(null);
         if (CarePageVisible && (!_hasMessages || _messagesChanged) && _messagesPageBefore is null)
             await ReadMessagesAsync(null);
@@ -150,12 +153,17 @@ public partial class MainWindow
         GoalPicker.ItemsSource = goals;
         GoalPicker.SelectedItem = goals.FirstOrDefault(goal => goal.Id == selected) ?? goals.FirstOrDefault();
         WorkStatus.Text = goals.Length == 0 ? "暂无进行中的目标。" : "";
+        var currentGoal = goals.FirstOrDefault(goal => goal.Id == current) ?? goals.FirstOrDefault();
+        TodayGoalText.Text = currentGoal?.Title ?? WorkStatus.Text;
+        AgentNextStep.Text = "";
 
         var details = new List<TimelineEntry>();
         if (work.TryGetProperty("activity", out var activity))
         {
             Add("当前进度", Text(activity, "summary"));
-            Add("下一步", Text(activity, "nextStep"));
+            var nextStep = Text(activity, "nextStep");
+            Add("下一步", nextStep);
+            if (!string.IsNullOrWhiteSpace(nextStep)) AgentNextStep.Text = $"下一步 · {nextStep}";
         }
         Add("暂停或等待", Text(work, "pauseReason"));
         foreach (var condition in Rows(work, "waitingConditions")) Add("等待条件", condition.GetString() ?? "");

@@ -3,22 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Padding" Value="13,7" />
-            <Setter Property="Margin" Value="0,0,8,0" />
-            <Setter Property="MinHeight" Value="34" />
-            <Setter Property="Foreground" Value="#254538" />
-            <Setter Property="Background" Value="#F0F5ED" />
-            <Setter Property="BorderBrush" Value="#B7CBB8" />
-            <Setter Property="Cursor" Value="Hand" />
-        </Style>
-        <Style TargetType="TextBox">
-            <Setter Property="Padding" Value="10,7" />
-            <Setter Property="BorderBrush" Value="#B7CBB8" />
-        </Style>
-        <Style TargetType="ComboBox">
-            <Setter Property="Padding" Value="8,6" />
-            <Setter Property="BorderBrush" Value="#B7CBB8" />
-        </Style>
+        <ResourceDictionary Source="FarmRoom.xaml" />
     </Application.Resources>
 </Application>

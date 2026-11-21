@@ -3,6 +3,8 @@
 ## 未发布
 
 - 新增 Windows x64 绿色桌面程序，统一启动游戏、配置模型、查看用量和管理伙伴。
+- 桌面首页改为像素农场与对话，左侧常驻 Agent 状态和页面导航。
+- 桌面新增 Windows 托盘菜单和关闭确认，支持隐藏窗口后继续运行。
 - 支持 Pi、DeepSeek（dsh）、Codex 和 MiniMax Code，并可在桌面接续已有 MiniMax Code 会话。
 - 新增持续目标、暂停与改派、存档级对话和记忆、旧安装导入与服务重连。
 - 独立发布 `StardewGameCompanion-版本号-windows-x64.zip`。升级时将新包解压到新目录，再从桌面导入旧数据。

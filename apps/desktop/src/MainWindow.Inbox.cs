@@ -158,8 +158,7 @@ public partial class MainWindow
 
     private void OpenMilestonesClicked(object sender, RoutedEventArgs e)
     {
-        Pages.SelectedItem = CommandPage;
-        CommandViews.SelectedItem = MilestonesPage;
+        Pages.SelectedItem = MilestonesPage;
     }
 
     private void RefreshInboxControls(bool connected)

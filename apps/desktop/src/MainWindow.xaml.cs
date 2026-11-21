@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -30,7 +29,6 @@ public partial class MainWindow : Window
     private bool _recoveryPending;
     private bool _reconnecting;
     private bool _closing;
-    private bool _closed;
     private string? _decisionSignature;
 
     public MainWindow()
@@ -56,6 +54,7 @@ public partial class MainWindow : Window
         InitializePartnerSettings(settings);
         if (string.IsNullOrWhiteSpace(GameFolder.Text)) Pages.SelectedItem = SettingsPage;
         RefreshControls();
+        InitializeTray();
     }
 
     private DesktopSettings Settings() => new(GameFolder.Text.Trim(), Mode.SelectedIndex == 1 ? "player" : "companion",
@@ -292,7 +291,11 @@ public partial class MainWindow : Window
         _recoveryPending = Flag(payload, "recoveryPending");
         if (_gameSessionId is null)
         {
-            if (previous is not null) ConnectionText.Text = "等待游戏重新连接";
+            if (previous is not null)
+            {
+                ConnectionText.Text = "等待游戏重新连接";
+                ActivityText.Text = "请在游戏中选择单人存档。";
+            }
             ApplyDecisions(default);
             RefreshControls();
             if (usageChanged && Pages.SelectedItem == UsagePage) _ = ReadUsageAsync();
@@ -302,15 +305,16 @@ public partial class MainWindow : Window
         var action = Text(payload, "activity");
         var progress = Text(payload, "progress");
         var clockPauseOwner = Text(payload, "clockPauseOwner");
-        ActivityText.Text = _recoveryPending ? "已重连。请先核对旧动作，工作保持暂停。"
-            : _paused ? "已暂停"
-            : _playerMode && _owner != "agent" ? "玩家控制中。点击「交给 AI」开始托管。"
-            : _interrupting ? "正在确认旧动作终态"
-            : Text(payload, "activeCommandId").Length > 0 ? $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}"
-            : clockPauseOwner == "program-protection" ? "保护暂停 · 游戏时钟已暂停"
-            : clockPauseOwner == "model-thinking" ? "伴侣正在规划或回复 · 游戏时钟已暂停"
-            : Flag(payload, "thinking") ? "伴侣正在规划或回复"
-            : action is "" or "idle" ? "等待指令" : StatusLabel(action);
+        (AgentStateText.Text, ActivityText.Text) = _recoveryPending ? ("待核对", "已重连。请先核对旧动作，工作保持暂停。")
+            : _paused ? ("已暂停", "可在「今天」继续当前工作。")
+            : _playerMode && _owner != "agent" ? ("玩家接管", "玩家控制中。点击「交给 AI」开始托管。")
+            : _interrupting ? ("交接中", "正在确认旧动作终态。")
+            : Text(payload, "activeCommandId").Length > 0 ? ("正在执行", $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}")
+            : clockPauseOwner == "program-protection" ? ("已暂停", "保护暂停 · 游戏时钟已暂停")
+            : clockPauseOwner == "model-thinking" ? ("正在思考", "伴侣正在规划或回复 · 游戏时钟已暂停")
+            : Flag(payload, "thinking") ? ("正在思考", "伴侣正在规划或回复")
+            : !_partnerReady ? ("等待伙伴", "请在「设置」检查伙伴连接。")
+            : action is "" or "idle" ? ("等待指令", "可以在「今天」和伙伴聊聊。") : ("正在工作", StatusLabel(action));
         if (_lastGameSessionId is not null && _lastGameSessionId != _gameSessionId)
         {
             _entries.Clear();
@@ -343,6 +347,7 @@ public partial class MainWindow : Window
         if (options.Length == 0) return;
         DecisionPicker.SelectedItem = options.FirstOrDefault(item => item.Id == previous?.Id) ?? options[0];
         if (previous?.Id == (DecisionPicker.SelectedItem as DesktopDecision)?.Id) DecisionInput.Text = draft;
+        TimelineScroll.ScrollToBottom();
     }
 
     private void DecisionSelected(object sender, SelectionChangedEventArgs e)
@@ -403,6 +408,9 @@ public partial class MainWindow : Window
     private void RefreshControls()
     {
         bool connected = _gameSessionId is not null && !_closing;
+        if (!connected) AgentStateText.Text = "未连接";
+        TimelineHint.Text = !connected ? "进入存档后，就可以在这里交代农活或和伙伴聊天。"
+            : _partnerReady ? "可以请伙伴照料农场，也可以和它聊聊。" : "连接伙伴后即可发送消息。";
         LaunchHeader.IsEnabled = _session is null && !_closing && !_importing;
         bool reconnect = _session?.CanReconnect == true;
         LaunchHeader.Visibility = reconnect || _reconnecting ? Visibility.Collapsed : Visibility.Visible;
@@ -433,6 +441,8 @@ public partial class MainWindow : Window
         TimelineScroll.ScrollToBottom();
     }
 
+    private void OpenWorkClicked(object sender, RoutedEventArgs e) => Pages.SelectedItem = WorkPage;
+
     private void Log(string line)
     {
         lock (_pendingLogs)
@@ -458,34 +468,10 @@ public partial class MainWindow : Window
         if (Diagnostics.IsVisible) Diagnostics.ScrollToEnd();
     }
 
-    protected override void OnClosed(EventArgs e)
-    {
-        _logTimer.Stop();
-        base.OnClosed(e);
-    }
-
     private static string Text(JsonElement data, string key) =>
         data.ValueKind == JsonValueKind.Object && data.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? "" : "";
 
     private static bool Flag(JsonElement data, string key) =>
         data.ValueKind == JsonValueKind.Object && data.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.True;
-
-    protected override async void OnClosing(CancelEventArgs e)
-    {
-        base.OnClosing(e);
-        if (_importing)
-        {
-            e.Cancel = true;
-            return;
-        }
-        if (_closed || _session is not { } session) return;
-        e.Cancel = true;
-        if (_closing) return;
-        _closing = true;
-        RefreshControls();
-        await EndSessionAsync(session, "伴侣服务已关闭。");
-        _closed = true;
-        Close();
-    }
 }

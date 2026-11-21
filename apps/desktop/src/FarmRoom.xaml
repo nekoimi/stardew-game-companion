@@ -1,0 +1,176 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <GridLength x:Key="RoomSidebarWidth">218</GridLength>
+    <GridLength x:Key="RoomAgentSlotHeight">152</GridLength>
+    <SolidColorBrush x:Key="RoomBackground" Color="#F2EBD8" />
+    <SolidColorBrush x:Key="SidebarBackground" Color="#F6EFDC" />
+    <SolidColorBrush x:Key="Paper" Color="#FFFAEF" />
+    <SolidColorBrush x:Key="PaperEdge" Color="#D7BF94" />
+    <SolidColorBrush x:Key="Ink" Color="#352C1E" />
+    <SolidColorBrush x:Key="MutedInk" Color="#69553C" />
+    <SolidColorBrush x:Key="Pine" Color="#214231" />
+    <SolidColorBrush x:Key="Gold" Color="#E5BA73" />
+    <SolidColorBrush x:Key="Leaf" Color="#E0E8D2" />
+
+    <Style TargetType="Button">
+        <Setter Property="Padding" Value="12,6" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="Foreground" Value="{StaticResource Pine}" />
+        <Setter Property="Background" Value="#F7EFDF" />
+        <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Surface" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="5" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter RecognizesAccessKey="True"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Surface" Property="BorderBrush" Value="#8A6B3C" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Surface" Property="BorderBrush" Value="#8A6B3C" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Surface" Property="Opacity" Value="0.78" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Surface" Property="Opacity" Value="0.55" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="Background" Value="#315D43" />
+        <Setter Property="BorderBrush" Value="#315D43" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style x:Key="HeaderButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Foreground" Value="{StaticResource Pine}" />
+        <Setter Property="Background" Value="{StaticResource Gold}" />
+        <Setter Property="BorderBrush" Value="#F7DBA5" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="16,6" />
+        <Setter Property="Margin" Value="0" />
+    </Style>
+    <Style TargetType="TextBox">
+        <Setter Property="Padding" Value="9,6" />
+        <Setter Property="Background" Value="#FFFFFB" />
+        <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+    <Style TargetType="ComboBox">
+        <Setter Property="Padding" Value="8,6" />
+        <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
+    </Style>
+    <Style TargetType="ListBox">
+        <Setter Property="Background" Value="#FFFFFB" />
+        <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="{StaticResource Paper}" />
+        <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
+    </Style>
+    <Style x:Key="PagePaper" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource Paper}" />
+        <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="9" />
+        <Setter Property="Padding" Value="14" />
+    </Style>
+    <Style x:Key="PageTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="21" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource Pine}" />
+        <Setter Property="Margin" Value="0,0,0,12" />
+    </Style>
+    <Style x:Key="RoomTabs" TargetType="TabControl">
+        <Setter Property="TabStripPlacement" Value="Left" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{StaticResource RoomSidebarWidth}" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Background="{StaticResource SidebarBackground}" BorderBrush="{StaticResource PaperEdge}"
+                                BorderThickness="0,0,1,0" Padding="12,14">
+                            <Grid KeyboardNavigation.TabNavigation="Local">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="{StaticResource RoomAgentSlotHeight}" />
+                                </Grid.RowDefinitions>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                    <TabPanel IsItemsHost="True" KeyboardNavigation.TabNavigation="Once" />
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
+                        <Border x:Name="PageSurface" Grid.Column="1" Margin="14" Style="{StaticResource PagePaper}">
+                            <DockPanel>
+                                <TextBlock x:Name="PageHeading" DockPanel.Dock="Top" Style="{StaticResource PageTitle}"
+                                           Text="{Binding SelectedItem.Header, RelativeSource={RelativeSource TemplatedParent}}" />
+                                <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="SelectedIndex" Value="0">
+                            <Setter TargetName="PageHeading" Property="Visibility" Value="Collapsed" />
+                            <Setter TargetName="PageSurface" Property="Padding" Value="0" />
+                            <Setter TargetName="PageSurface" Property="Background" Value="Transparent" />
+                            <Setter TargetName="PageSurface" Property="BorderThickness" Value="0" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="RoomPage" TargetType="TabItem">
+        <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
+        <Setter Property="Padding" Value="10,5" />
+        <Setter Property="MinHeight" Value="33" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="Surface" Padding="{TemplateBinding Padding}" Margin="0,0,0,2"
+                            Background="Transparent" BorderThickness="1" BorderBrush="Transparent" CornerRadius="6">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                       Width="23" VerticalAlignment="Center" />
+                            <ContentPresenter ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                        </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="#EEE4CC" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="{StaticResource Leaf}" />
+                            <Setter Property="Foreground" Value="{StaticResource Pine}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Surface" Property="BorderBrush" Value="#8A6B3C" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>
