@@ -29,8 +29,8 @@ export async function createMockDeepSeek(plan) {
     const user = String(body.messages.findLast(item => item.role === "user")?.content ?? "");
     const latestTool = body.messages.findLast(item => item.role === "tool");
     if (user.includes("等待接管")) {
-      chunk({ role: "assistant", content: "" });
-      await new Promise(resolve => { const timer = setTimeout(resolve, 9000); res.on("close", () => { clearTimeout(timer); resolve(); }); });
+      if (body.stream !== false) chunk({ role: "assistant", content: "" });
+      await new Promise(resolve => { const timer = setTimeout(resolve, 15000); res.on("close", () => { clearTimeout(timer); resolve(); }); });
       if (res.destroyed) return;
     }
     let name, args = {};

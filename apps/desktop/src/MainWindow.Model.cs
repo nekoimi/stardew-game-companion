@@ -11,39 +11,46 @@ public sealed record ApiModelOption(string Id, string Name, string[] Reasoning);
 
 public partial class MainWindow
 {
+    private static readonly ApiModelOption ManualModel = new("", "手填模型 ID…", []);
     private bool _testingModel;
-    private bool UsesCompatibleResponses => ApiProvider.SelectedValue as string == ApiModelSettings.CustomProvider;
-    private ApiModelSettings ApiSelection() => UsesCompatibleResponses
-        ? CompatibleResponsesSelection()
-        : new(ApiProvider.SelectedValue as string ?? "deepseek", ApiModel.SelectedValue as string ?? "", ApiReasoning.SelectedValue as string ?? "");
+    private bool _modelBusy;
+    private bool IsCustomProvider => ApiProvider.SelectedValue as string == ApiModelSettings.CustomProvider;
+    private bool IsManualModel => !IsCustomProvider && ReferenceEquals(ApiModel.SelectedItem, ManualModel);
 
-    private ApiModelSettings CompatibleResponsesSelection() => new(ApiModelSettings.CustomProvider,
-        ApiCustomModel.Text.Trim(), BaseUrl: ApiBaseUrl.Text.Trim().TrimEnd('/'), Protocol: "responses");
-
-    private ApiModelSettings? CompatibleResponsesSettings()
+    private ApiModelSettings ApiSelection()
     {
-        var selected = CompatibleResponsesSelection();
-        return ValidResponsesBaseUrl(selected.BaseUrl) && selected.Model.Length > 0 ? selected : null;
+        var provider = ApiProvider.SelectedItem as ApiProviderOption
+            ?? throw new InvalidOperationException("请选择模型服务商。");
+        if (IsCustomProvider)
+        {
+            return new(provider.Id, ApiCustomModel.Text.Trim(), BaseUrl: ApiBaseUrl.Text.Trim().TrimEnd('/'),
+                Protocol: ApiProtocol.SelectedValue as string, Stream: ApiCustomStream.IsChecked == true);
+        }
+        return new(provider.Id, IsManualModel ? ApiManualModel.Text.Trim() : ApiModel.SelectedValue as string ?? "",
+            ApiReasoning.SelectedValue as string ?? "", Protocol: provider.Protocol, Stream: ApiOfficialStream.IsChecked == true);
     }
 
-    private static bool ValidResponsesBaseUrl(string text) => Uri.TryCreate(text, UriKind.Absolute, out var uri)
-        && uri.Scheme == Uri.UriSchemeHttps && uri.Host.Length > 0 && uri.UserInfo.Length == 0
-        && uri.Query.Length == 0 && uri.Fragment.Length == 0
-        && !uri.AbsolutePath.EndsWith("/responses", StringComparison.OrdinalIgnoreCase)
-        && !uri.AbsolutePath.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase);
+    private static bool ValidBaseUrl(string text)
+        => text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            && !text.Any(character => char.IsWhiteSpace(character) || character is '\\' or '?' or '#')
+            && Uri.TryCreate(text, UriKind.Absolute, out var uri) && uri.Host.Length > 0 && uri.UserInfo.Length == 0
+            && !uri.AbsolutePath.EndsWith("/responses", StringComparison.OrdinalIgnoreCase)
+            && !uri.AbsolutePath.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase);
 
     private Control ApiSettingsErrorField()
     {
-        if (UsesCompatibleResponses)
+        if (ApiProvider.SelectedItem is null) return ApiProvider;
+        if (IsCustomProvider)
         {
-            if (!ValidResponsesBaseUrl(ApiBaseUrl.Text.Trim().TrimEnd('/'))) return ApiBaseUrl;
+            if (!ValidBaseUrl(ApiBaseUrl.Text.Trim().TrimEnd('/'))) return ApiBaseUrl;
+            if (ApiProtocol.SelectedItem is null) return ApiProtocol;
             if (string.IsNullOrWhiteSpace(ApiCustomModel.Text)) return ApiCustomModel;
         }
-        else if (ApiModel.SelectedItem is null) return ApiModel;
+        else if (IsManualModel && string.IsNullOrWhiteSpace(ApiManualModel.Text)) return ApiManualModel;
         return ApiKey;
     }
 
-    private void InitializeApiModel(ApiModelSettings settings, ApiModelSettings? compatible)
+    private void InitializeApiModel(ApiModelSettings settings, ApiModelSettings? custom)
     {
         try
         {
@@ -56,83 +63,125 @@ public partial class MainWindow
             Log(error.Message);
             return;
         }
+
         ApiProvider.SelectedValue = settings.Provider;
         if (ApiProvider.SelectedIndex < 0) ApiProvider.SelectedIndex = 0;
-        if (UsesCompatibleResponses)
-            compatible = settings;
-        if (compatible is not null)
+        if (settings.IsCustom) custom = settings;
+        if (custom is not null)
         {
-            ApiBaseUrl.Text = compatible.BaseUrl;
-            ApiCustomModel.Text = compatible.Model;
+            ApiBaseUrl.Text = custom.BaseUrl;
+            ApiCustomModel.Text = custom.Model;
+            ApiProtocol.SelectedValue = custom.Protocol ?? "responses";
+            ApiCustomStream.IsChecked = custom.Stream;
         }
-        if (ApiProvider.SelectedItem is ApiProviderOption selected && selected.Models.Any(model => model.Id == settings.Model))
-            ApiModel.SelectedValue = settings.Model;
-        if (ApiModel.SelectedItem is ApiModelOption model && model.Reasoning.Contains(settings.Reasoning))
-            ApiReasoning.SelectedValue = settings.Reasoning;
+        if (!IsCustomProvider && ApiProvider.SelectedItem is ApiProviderOption selected && settings.Provider == selected.Id)
+        {
+            if (selected.Models.Any(model => model.Id == settings.Model)) ApiModel.SelectedValue = settings.Model;
+            else
+            {
+                ApiModel.SelectedItem = ManualModel;
+                ApiManualModel.Text = settings.Model;
+            }
+            ApiOfficialStream.IsChecked = settings.Stream;
+            if (ApiModel.SelectedItem is ApiModelOption model && model.Reasoning.Contains(settings.Reasoning))
+                ApiReasoning.SelectedValue = settings.Reasoning;
+        }
+        ShowApiCredentialState();
     }
 
     private void ApiProviderSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (ApiCustomModel is null || ApiProvider.SelectedItem is not ApiProviderOption provider) return;
-        ApiEndpointFields.Visibility = ApiCustomModel.Visibility = UsesCompatibleResponses ? Visibility.Visible : Visibility.Collapsed;
-        ApiModel.Visibility = UsesCompatibleResponses ? Visibility.Collapsed : Visibility.Visible;
-        ApiModel.ItemsSource = provider.Models;
-        ApiModel.SelectedValue = provider.Models.FirstOrDefault(model => model.Id == provider.DefaultModel)?.Id
-            ?? provider.Models.FirstOrDefault()?.Id;
+        if (ApiModelFeedback is null || ApiProvider.SelectedItem is not ApiProviderOption provider) return;
+        var customVisibility = IsCustomProvider ? Visibility.Visible : Visibility.Collapsed;
+        ApiEndpointFields.Visibility = ApiCustomModel.Visibility = ApiCustomStream.Visibility = customVisibility;
+        ApiModel.Visibility = ApiAdvanced.Visibility = IsCustomProvider ? Visibility.Collapsed : Visibility.Visible;
+        ApiModel.ItemsSource = IsCustomProvider ? [] : provider.Models.Append(ManualModel).ToArray();
+        ApiModel.SelectedValue = provider.DefaultModel;
+        ApiOfficialStream.IsChecked = provider.Stream;
         ApiKey.Clear();
         ShowApiCredentialState();
     }
 
     private void ApiBaseUrlChanged(object sender, TextChangedEventArgs e)
     {
-        if (ApiCustomModel is null || !UsesCompatibleResponses) return;
+        if (ApiModelFeedback is null || !IsCustomProvider) return;
         ApiKey.Clear();
         ShowApiCredentialState();
     }
 
+    private void ApiOptionsChanged(object sender, RoutedEventArgs e)
+    {
+        if (ApiModelFeedback is not null) ShowApiCredentialState();
+    }
+
     private void ShowApiCredentialState()
     {
+        ApiModelFeedback.Text = "";
+        if (ApiProvider.SelectedItem is null || ApiKey.Password.Length > 0) return;
         try
         {
             var selected = ApiSelection();
-            if ((!UsesCompatibleResponses || ValidResponsesBaseUrl(selected.BaseUrl)) && ModelCredential.Read(_root, selected).Length > 0)
+            if ((!selected.IsCustom || ValidBaseUrl(selected.BaseUrl)) && ModelCredential.Read(_root, selected).Length > 0)
                 ApiModelFeedback.Text = "已保存 API Key。填写新值可替换。";
-            else ApiModelFeedback.Text = "";
         }
         catch (Win32Exception error) { ApiModelFeedback.Text = error.Message; }
     }
 
     private void ApiModelSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (ApiReasoning is null) return;
+        if (ApiModelFeedback is null) return;
+        ApiManualModel.Visibility = IsManualModel ? Visibility.Visible : Visibility.Collapsed;
         var reasoning = (ApiModel.SelectedItem as ApiModelOption)?.Reasoning ?? [];
         ApiReasoningFields.Visibility = reasoning.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         ApiReasoning.ItemsSource = new[] { "" }.Concat(reasoning)
             .Select(value => new ComboBoxItem { Tag = value, Content = value.Length == 0 ? "默认" : ReasoningLabel(value) }).ToArray();
         ApiReasoning.SelectedIndex = 0;
-    }
-
-    private string SaveApiCredential()
-    {
-        var selected = ApiSelection();
-        ValidateApiSelection(selected);
-        string key = ApiKey.Password.Trim();
-        if (key.Length > 0)
-        {
-            ModelCredential.Write(_root, selected, key);
-            ApiKey.Clear();
-            ApiModelFeedback.Text = "已保存 API Key。填写新值可替换。";
-            return key;
-        }
-        key = ModelCredential.Read(_root, selected);
-        return key.Length > 0 ? key : throw new InvalidOperationException("请填写 API Key。");
+        ShowApiCredentialState();
     }
 
     private static void ValidateApiSelection(ApiModelSettings selected)
     {
-        if (selected.IsCustom && !ValidResponsesBaseUrl(selected.BaseUrl))
-            throw new InvalidOperationException("请填写 HTTPS Base URL，保留接口前缀，例如 /v1，去掉 /responses。");
-        if (selected.Model.Length == 0) throw new InvalidOperationException("请填写模型名称。");
+        if (selected.IsCustom && !ValidBaseUrl(selected.BaseUrl))
+            throw new InvalidOperationException("请填写 HTTPS Base URL，保留接口前缀，例如 /v1，去掉具体接口路径。");
+        if (selected.IsCustom && selected.Protocol is not ("chat-completions" or "responses"))
+            throw new InvalidOperationException("请选择接口协议。");
+        if (selected.Model.Length == 0 || selected.Model.Any(char.IsControl))
+            throw new InvalidOperationException("请填写有效的模型 ID。");
+    }
+
+    private string ResolveApiKey(ApiModelSettings selected)
+    {
+        ValidateApiSelection(selected);
+        string key = ApiKey.Password.Trim();
+        if (key.Length == 0) key = ModelCredential.Read(_root, selected);
+        return key.Length > 0 ? key : throw new InvalidOperationException("请填写 API Key。");
+    }
+
+    private void SaveModelSettings(DesktopSettings settings, ApiModelSettings selected, string key)
+    {
+        if (ApiKey.Password.Trim().Length > 0) ModelCredential.Write(_root, selected, key);
+        SaveDesktopSettings(settings with { ApiModel = selected,
+            CustomModel = selected.IsCustom ? selected : settings.CustomModel });
+        ApiKey.Clear();
+    }
+
+    private void SaveModelClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var selected = ApiSelection();
+            SaveModelSettings(_savedSettings, selected, ResolveApiKey(selected));
+            ApiModelFeedback.Text = "模型设置已保存，下次启动生效。";
+        }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException or Win32Exception)
+        {
+            ShowSettingsError(ModelSettingsTab, ApiSettingsErrorField(), ApiModelFeedback, error.Message);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            ApiModelFeedback.Text = "模型设置保存失败，请检查解压目录是否可写。";
+            Log(error.Message);
+        }
     }
 
     private async void TestModelClicked(object sender, RoutedEventArgs e)
@@ -143,9 +192,7 @@ public partial class MainWindow
         try
         {
             var selected = ApiSelection();
-            ValidateApiSelection(selected);
-            string key = ApiKey.Password.Trim();
-            if (key.Length == 0) key = ModelCredential.Read(_root, selected);
+            string key = ResolveApiKey(selected);
             ApiModelFeedback.Text = "正在检测模型与工具调用…";
             await DesktopSession.TestModelAsync(_root, selected, key, Log);
             ApiModelFeedback.Text = "模型连接和工具调用均已通过。";
@@ -156,15 +203,14 @@ public partial class MainWindow
 
     private async void ApplyModelClicked(object sender, RoutedEventArgs e)
     {
-        if (_testingModel || _closing || _session is not { } session) return;
+        if (_testingModel || _closing || _modelBusy || _gameSessionId is null || _session is not { } session) return;
         _testingModel = true;
         RefreshControls();
         try
         {
-            string key = SaveApiCredential();
-            await session.ConfigureModelAsync(ApiSelection(), key);
-            DesktopInstallation.SaveSettings(_root, Settings());
-            ApiModelFeedback.Text = "模型已切换，继续使用当前存档的伙伴数据。";
+            var selected = ApiSelection();
+            await session.ConfigureModelAsync(selected, ResolveApiKey(selected));
+            ApiModelFeedback.Text = "当前游戏已应用模型。保存模型设置后，下次启动也会使用此配置。";
         }
         catch (Exception error) { ApiModelFeedback.Text = error.Message; }
         finally { _testingModel = false; RefreshControls(); }

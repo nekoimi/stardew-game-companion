@@ -353,125 +353,143 @@
                 </Grid>
             </TabItem>
             <TabItem x:Name="SettingsPage" Header="设置" Tag="&#xE713;" Style="{StaticResource RoomPage}">
-                <DockPanel>
-                    <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource PaperEdge}" BorderThickness="0,1,0,0" Padding="0,9,0,0" Margin="8,8,8,0">
-                        <DockPanel>
-                            <Button x:Name="SaveSettingsButton" DockPanel.Dock="Right" Content="保存启动设置" Click="SaveClicked"
-                                    Style="{StaticResource PrimaryButton}" IsEnabled="{Binding IsEnabled, ElementName=SettingsFields}"
-                                    Margin="10,0,0,0" VerticalAlignment="Top" />
-                            <TextBlock x:Name="SettingsFeedback" Style="{StaticResource InlineFeedback}"
-                                       VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
-                        </DockPanel>
-                    </Border>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel Margin="8" MaxWidth="670">
-                            <StackPanel x:Name="SettingsFields">
+                <TabControl x:Name="SettingsTabs" Style="{StaticResource SettingsTabsStyle}" SelectionChanged="SaveViewSelected">
+                    <TabItem x:Name="LaunchSettingsTab" Header="游戏启动" Style="{StaticResource SettingsTab}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="SettingsFields" Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock Text="游戏目录" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                <StackPanel Margin="0,0,0,15">
-                                    <DockPanel>
-                                        <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseGame" Margin="8,0,0,0"
-                                                AutomationProperties.Name="选择游戏目录" />
-                                        <TextBox x:Name="GameFolder" AutomationProperties.Name="游戏目录" TextChanged="GameFolderEdited"
-                                                 AutomationProperties.HelpText="{Binding Text, ElementName=GameFolderError}" />
-                                    </DockPanel>
-                                    <TextBlock x:Name="GameFolderError" Style="{StaticResource InlineFeedback}" Foreground="#923C25"
-                                               Margin="0,4,0,0" AutomationProperties.LiveSetting="Assertive" />
-                                </StackPanel>
-                                <TextBlock x:Name="ModeLabel" Text="游玩方式" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseGame" Margin="8,0,0,0"
+                                            AutomationProperties.Name="选择游戏目录" />
+                                    <TextBox x:Name="GameFolder" AutomationProperties.Name="游戏目录" TextChanged="GameFolderEdited"
+                                             AutomationProperties.HelpText="{Binding Text, ElementName=GameFolderError}" />
+                                </DockPanel>
+                                <TextBlock x:Name="GameFolderError" Style="{StaticResource InlineFeedback}" Foreground="#923C25"
+                                           Margin="0,4,0,0" AutomationProperties.LiveSetting="Assertive" />
+                                <TextBlock x:Name="ModeLabel" Text="游玩方式" FontWeight="SemiBold" Margin="0,15,0,6" />
                                 <ComboBox x:Name="Mode" AutomationProperties.LabeledBy="{Binding ElementName=ModeLabel}"
-                                          Width="220" HorizontalAlignment="Left" Margin="0,0,0,15">
+                                          Width="220" HorizontalAlignment="Left" Margin="0,0,0,6">
                                     <ComboBoxItem Content="伙伴模式" Tag="companion" />
                                     <ComboBoxItem Content="AI 自己玩（单人）" Tag="player" />
                                 </ComboBox>
+                                <TextBlock Text="更改游玩方式后，重启游戏生效。" Style="{StaticResource InlineFeedback}" Margin="0,0,0,16" />
+                                <Button x:Name="SaveSettingsButton" Content="保存启动设置" Click="SaveClicked"
+                                        HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" />
+                                <TextBlock x:Name="SettingsFeedback" Style="{StaticResource InlineFeedback}"
+                                           AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
-                            <StackPanel x:Name="ApiModelFields">
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem x:Name="ModelSettingsTab" Header="模型连接" Style="{StaticResource SettingsTab}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="ApiModelFields" Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock Text="模型服务商" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <ComboBox x:Name="ApiProvider" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="ApiProviderSelected"
                                           AutomationProperties.Name="模型服务商" Margin="0,0,0,13" />
                                 <StackPanel x:Name="ApiEndpointFields" Visibility="Collapsed">
+                                    <TextBlock Text="接口协议" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <ComboBox x:Name="ApiProtocol" SelectedValuePath="Tag" SelectedIndex="0" SelectionChanged="ApiOptionsChanged"
+                                              AutomationProperties.Name="接口协议" Margin="0,0,0,13">
+                                        <ComboBoxItem Content="Responses" Tag="responses" />
+                                        <ComboBoxItem Content="Chat Completions" Tag="chat-completions" />
+                                    </ComboBox>
                                     <TextBlock Text="Base URL" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                    <TextBox x:Name="ApiBaseUrl" AutomationProperties.Name="Base URL" MaxLength="2048"
-                                             TextChanged="ApiBaseUrlChanged" Margin="0,0,0,13" />
+                                    <TextBox x:Name="ApiBaseUrl" AutomationProperties.Name="Base URL" MaxLength="2048" TextChanged="ApiBaseUrlChanged" />
+                                    <TextBlock Text="例如 https://gateway.example.com/v1" Style="{StaticResource InlineFeedback}" Margin="0,4,0,13" />
                                 </StackPanel>
-                                <TextBlock Text="API Key" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                <PasswordBox x:Name="ApiKey" AutomationProperties.Name="API Key" MaxLength="1200" Padding="9,6" Margin="0,0,0,13" />
                                 <TextBlock Text="模型" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <ComboBox x:Name="ApiModel" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="ApiModelSelected"
                                           AutomationProperties.Name="模型" Margin="0,0,0,13" />
-                                <TextBox x:Name="ApiCustomModel" AutomationProperties.Name="模型 ID" MaxLength="200"
+                                <TextBox x:Name="ApiCustomModel" AutomationProperties.Name="模型 ID" MaxLength="200" TextChanged="ApiOptionsChanged"
                                          Visibility="Collapsed" Margin="0,0,0,13" />
-                                <StackPanel x:Name="ApiReasoningFields" Visibility="Collapsed">
-                                    <TextBlock Text="推理档位" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                    <ComboBox x:Name="ApiReasoning" SelectedValuePath="Tag"
-                                              AutomationProperties.Name="推理档位" Margin="0,0,0,13" />
-                                </StackPanel>
+                                <TextBox x:Name="ApiManualModel" AutomationProperties.Name="手填模型 ID" MaxLength="200" TextChanged="ApiOptionsChanged"
+                                         Visibility="Collapsed" Margin="0,0,0,13" />
+                                <TextBlock Text="API Key" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <PasswordBox x:Name="ApiKey" AutomationProperties.Name="API Key" MaxLength="1200" Padding="9,6"
+                                             PasswordChanged="ApiOptionsChanged" Margin="0,0,0,13" />
+                                <CheckBox x:Name="ApiCustomStream" Content="流式输出" IsChecked="True" Visibility="Collapsed"
+                                          Checked="ApiOptionsChanged" Unchecked="ApiOptionsChanged" Margin="0,0,0,13" />
+                                <Expander x:Name="ApiAdvanced" Header="高级设置" Margin="0,0,0,13">
+                                    <StackPanel Margin="12,8,0,0">
+                                        <CheckBox x:Name="ApiOfficialStream" Content="流式输出" IsChecked="True"
+                                                  Checked="ApiOptionsChanged" Unchecked="ApiOptionsChanged" Margin="0,0,0,10" />
+                                        <StackPanel x:Name="ApiReasoningFields" Visibility="Collapsed">
+                                            <TextBlock Text="推理档位" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                            <ComboBox x:Name="ApiReasoning" SelectedValuePath="Tag" SelectionChanged="ApiOptionsChanged"
+                                                      AutomationProperties.Name="推理档位" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Expander>
                                 <WrapPanel>
                                     <Button x:Name="TestModelButton" Content="测试连接" Click="TestModelClicked" />
+                                    <Button x:Name="SaveModelButton" Content="保存模型设置" Click="SaveModelClicked" Style="{StaticResource PrimaryButton}" />
                                     <Button x:Name="ApplyModelButton" Content="应用模型" Click="ApplyModelClicked" Visibility="Collapsed" />
                                 </WrapPanel>
                                 <TextBlock x:Name="ApiModelFeedback" Style="{StaticResource InlineFeedback}"
                                            AutomationProperties.LiveSetting="Polite" Margin="0,4,0,0" />
                             </StackPanel>
-                            <Separator Margin="0,13" />
-                            <TextBlock Text="当前存档的伙伴设置" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
-                            <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
-                            <Button x:Name="ReadProfileButton" Content="重新读取伙伴设置" HorizontalAlignment="Left" Click="ReadProfileClicked" />
-                            <StackPanel x:Name="ProfileFields" Margin="0,8,0,0">
-                                <StackPanel x:Name="CompanionIdentityFields">
-                                <UniformGrid Columns="2">
-                                    <StackPanel Margin="0,0,12,10">
-                                        <TextBlock Text="伙伴名字" Margin="0,0,0,4" />
-                                        <TextBox x:Name="CompanionName" MaxLength="12" AutomationProperties.Name="伙伴名字" />
-                                    </StackPanel>
-                                    <StackPanel Margin="0,0,0,10">
-                                        <TextBlock Text="相处方向" Margin="0,0,0,4" />
-                                        <ComboBox x:Name="PlayStyle" SelectedValuePath="Tag" AutomationProperties.Name="相处方向">
-                                            <ComboBoxItem Content="赚钱" Tag="earn" />
-                                            <ComboBoxItem Content="干活" Tag="workhorse" />
-                                            <ComboBoxItem Content="社区" Tag="community" />
-                                            <ComboBoxItem Content="布置" Tag="decor" />
-                                        </ComboBox>
-                                    </StackPanel>
-                                    <StackPanel Margin="0,0,12,10">
-                                        <TextBlock Text="性格" Margin="0,0,0,4" />
-                                        <ComboBox x:Name="Personality" SelectedValuePath="Tag" AutomationProperties.Name="性格">
-                                            <ComboBoxItem Content="温柔" Tag="gentle" />
-                                            <ComboBoxItem Content="活泼" Tag="lively" />
-                                            <ComboBoxItem Content="沉稳" Tag="calm" />
-                                            <ComboBoxItem Content="嘴硬心软" Tag="tsundere" />
-                                        </ComboBox>
-                                    </StackPanel>
-                                    <StackPanel Margin="0,0,0,10">
-                                        <TextBlock Text="交流频率" Margin="0,0,0,4" />
-                                        <ComboBox x:Name="CareFrequency" SelectedValuePath="Tag" AutomationProperties.Name="交流频率">
-                                            <ComboBoxItem Content="安静" Tag="quiet" />
-                                            <ComboBoxItem Content="适中" Tag="moderate" />
-                                            <ComboBoxItem Content="健谈" Tag="chatty" />
-                                        </ComboBox>
-                                    </StackPanel>
-                                    <StackPanel Margin="0,0,12,10">
-                                        <TextBlock Text="就寝时间" Margin="0,0,0,4" />
-                                        <ComboBox x:Name="Bedtime" AutomationProperties.Name="就寝时间" />
-                                    </StackPanel>
-                                </UniformGrid>
-                                <Button x:Name="SaveProfileButton" Content="保存伙伴设置" HorizontalAlignment="Left" Click="SaveProfileClicked" />
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem x:Name="ProfileSettingsTab" Header="存档偏好" Style="{StaticResource SettingsTab}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="8,16,8,8" MaxWidth="670">
+                                <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <Button x:Name="ReadProfileButton" Content="重新读取伙伴设置" HorizontalAlignment="Left" Click="ReadProfileClicked" Visibility="Collapsed" />
+                                <StackPanel x:Name="ProfileFields" Margin="0,8,0,0">
+                                    <UniformGrid Columns="2">
+                                        <StackPanel Margin="0,0,12,10">
+                                            <TextBlock Text="伙伴名字" Margin="0,0,0,4" />
+                                            <TextBox x:Name="CompanionName" MaxLength="12" AutomationProperties.Name="伙伴名字" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10">
+                                            <TextBlock Text="相处方向" Margin="0,0,0,4" />
+                                            <ComboBox x:Name="PlayStyle" SelectedValuePath="Tag" AutomationProperties.Name="相处方向">
+                                                <ComboBoxItem Content="赚钱" Tag="earn" />
+                                                <ComboBoxItem Content="干活" Tag="workhorse" />
+                                                <ComboBoxItem Content="社区" Tag="community" />
+                                                <ComboBoxItem Content="布置" Tag="decor" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,12,10">
+                                            <TextBlock Text="性格" Margin="0,0,0,4" />
+                                            <ComboBox x:Name="Personality" SelectedValuePath="Tag" AutomationProperties.Name="性格">
+                                                <ComboBoxItem Content="温柔" Tag="gentle" />
+                                                <ComboBoxItem Content="活泼" Tag="lively" />
+                                                <ComboBoxItem Content="沉稳" Tag="calm" />
+                                                <ComboBoxItem Content="嘴硬心软" Tag="tsundere" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10">
+                                            <TextBlock Text="交流频率" Margin="0,0,0,4" />
+                                            <ComboBox x:Name="CareFrequency" SelectedValuePath="Tag" AutomationProperties.Name="交流频率">
+                                                <ComboBoxItem Content="安静" Tag="quiet" />
+                                                <ComboBoxItem Content="适中" Tag="moderate" />
+                                                <ComboBoxItem Content="健谈" Tag="chatty" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,12,10">
+                                            <TextBlock Text="就寝时间" Margin="0,0,0,4" />
+                                            <ComboBox x:Name="Bedtime" AutomationProperties.Name="就寝时间" />
+                                        </StackPanel>
+                                    </UniformGrid>
+                                    <Button x:Name="SaveProfileButton" Content="保存伙伴设置" HorizontalAlignment="Left" Click="SaveProfileClicked" />
+                                    <Separator Margin="0,12" />
+                                    <CheckBox x:Name="Initiative" Content="空闲时主动帮忙" Margin="0,0,0,8" />
+                                    <TextBlock Text="主动帮忙时的偏好" Margin="0,0,0,4" />
+                                    <ComboBox x:Name="IdlePreference" Width="200" HorizontalAlignment="Left" SelectedValuePath="Tag"
+                                              AutomationProperties.Name="主动帮忙时的偏好" Margin="0,0,0,9">
+                                        <ComboBoxItem Content="由伙伴安排" Tag="autonomous" />
+                                        <ComboBoxItem Content="清理障碍" Tag="clear" />
+                                        <ComboBoxItem Content="采集" Tag="forage" />
+                                        <ComboBoxItem Content="采木" Tag="wood" />
+                                        <ComboBoxItem Content="原地等待" Tag="wait" />
+                                    </ComboBox>
+                                    <Button x:Name="SaveInitiativeButton" Content="保存主动帮忙设置" HorizontalAlignment="Left" Click="SaveInitiativeClicked" />
                                 </StackPanel>
-                                <Separator Margin="0,12" />
-                                <CheckBox x:Name="Initiative" Content="空闲时主动帮忙" Margin="0,0,0,8" />
-                                <TextBlock Text="主动帮忙时的偏好" Margin="0,0,0,4" />
-                                <ComboBox x:Name="IdlePreference" Width="200" HorizontalAlignment="Left" SelectedValuePath="Tag"
-                                          AutomationProperties.Name="主动帮忙时的偏好" Margin="0,0,0,9">
-                                    <ComboBoxItem Content="由伙伴安排" Tag="autonomous" />
-                                    <ComboBoxItem Content="清理障碍" Tag="clear" />
-                                    <ComboBoxItem Content="采集" Tag="forage" />
-                                    <ComboBoxItem Content="采木" Tag="wood" />
-                                    <ComboBoxItem Content="原地等待" Tag="wait" />
-                                </ComboBox>
-                                <Button x:Name="SaveInitiativeButton" Content="保存主动帮忙设置" HorizontalAlignment="Left" Click="SaveInitiativeClicked" />
                             </StackPanel>
-                        </StackPanel>
-                    </ScrollViewer>
-                </DockPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                </TabControl>
             </TabItem>
             <TabItem x:Name="UsagePage" Header="用量" Tag="&#xE9D9;" Style="{StaticResource RoomPage}">
                 <DockPanel Margin="4">

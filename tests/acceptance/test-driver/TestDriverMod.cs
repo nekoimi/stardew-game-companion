@@ -8661,8 +8661,12 @@ public sealed class TestDriverMod : Mod
                 var saves = SaveIsolationPatcher.TargetIsolatedSavesPath;
                 if (_testMode != "interactive" || Game1.activeClickableMenu is not TitleMenu || Context.IsWorldReady || saves == null)
                     throw new InvalidOperationException("Initial load requires the isolated interactive title screen.");
-                var save = Directory.GetDirectories(saves).Single();
-                SaveGame.Load(Path.GetFileName(save));
+                string? requested = request.RootElement.TryGetProperty("saveName", out var selection) ? selection.GetString() : null;
+                var available = new DirectoryInfo(saves).EnumerateDirectories()
+                    .Where(folder => !folder.Attributes.HasFlag(FileAttributes.ReparsePoint) &&
+                        File.Exists(Path.Combine(folder.FullName, folder.Name)));
+                var save = requested is null ? available.Single() : available.Single(folder => folder.Name == requested);
+                SaveGame.Load(save.Name);
                 Game1.exitActiveMenu();
             }
             else if (action != "snapshot") throw new ArgumentException("Unknown lifecycle action.");

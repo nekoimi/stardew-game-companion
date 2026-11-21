@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly string _root = AppContext.BaseDirectory;
     private readonly Queue<string> _pendingLogs = new();
     private readonly DispatcherTimer _logTimer;
+    private DesktopSettings _savedSettings = new();
     private DesktopSession? _session;
     private string? _gameSessionId;
     private string? _saveId;
@@ -45,41 +46,62 @@ public partial class MainWindow : Window
         _logTimer.Start();
         Timeline.ItemsSource = _entries;
         InitializeSaveViews();
-        DesktopSettings settings = new();
         try
         {
-            settings = DesktopInstallation.LoadSettings(_root);
-            GameFolder.Text = DesktopInstallation.IsGameDirectory(settings.GameDirectory)
-                ? settings.GameDirectory : DesktopInstallation.DetectGame();
+            _savedSettings = DesktopInstallation.LoadSettings(_root);
+            GameFolder.Text = DesktopInstallation.IsGameDirectory(_savedSettings.GameDirectory)
+                ? _savedSettings.GameDirectory : DesktopInstallation.DetectGame();
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
             Log($"读取桌面设置失败：{ex.Message}");
         }
-        Mode.SelectedIndex = settings.ActorMode == "player" ? 1 : 0;
-        InitializeApiModel(settings.ApiModel ?? new(), settings.CompatibleResponses);
+        Mode.SelectedIndex = _savedSettings.ActorMode == "player" ? 1 : 0;
+        InitializeApiModel(_savedSettings.ApiModel ?? new(), _savedSettings.CustomModel);
         Pages.SelectedItem = SettingsPage;
+        SettingsTabs.SelectedItem = LaunchSettingsTab;
         RefreshControls();
         InitializeTray();
     }
 
-    private DesktopSettings Settings() => new(GameFolder.Text.Trim(), Mode.SelectedIndex == 1 ? "player" : "companion",
-        ApiModel: ApiSelection(), CompatibleResponses: CompatibleResponsesSettings());
+    private DesktopSettings LaunchSettings() => _savedSettings with
+    {
+        GameDirectory = GameFolder.Text.Trim(),
+        ActorMode = Mode.SelectedIndex == 1 ? "player" : "companion",
+    };
+
+    private void SaveDesktopSettings(DesktopSettings settings)
+    {
+        DesktopInstallation.SaveSettings(_root, settings);
+        _savedSettings = settings;
+    }
 
     private async void LaunchClicked(object sender, RoutedEventArgs e)
     {
         if (_session is not null || _closing || _testingModel) return;
         SettingsFeedback.Text = GameFolderError.Text = "";
-        var settings = Settings();
+        var settings = LaunchSettings();
         if (!DesktopInstallation.IsGameDirectory(settings.GameDirectory))
         {
-            ShowSettingsError(GameFolder, GameFolderError, "请选择包含 StardewModdingAPI.exe 的游戏目录。");
+            ShowSettingsError(LaunchSettingsTab, GameFolder, GameFolderError, "请选择包含 StardewModdingAPI.exe 的游戏目录。");
             return;
         }
-        try { SaveApiCredential(); }
+        string key;
+        try
+        {
+            var selected = ApiSelection();
+            key = ResolveApiKey(selected);
+            SaveModelSettings(settings, selected, key);
+        }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
         {
-            ShowSettingsError(ApiSettingsErrorField(), ApiModelFeedback, error.Message);
+            ShowSettingsError(ModelSettingsTab, ApiSettingsErrorField(), ApiModelFeedback, error.Message);
+            return;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            ShowSettingsError(LaunchSettingsTab, GameFolder, SettingsFeedback, "保存失败，请检查解压目录是否可写。");
+            Log(error.Message);
             return;
         }
         var session = new DesktopSession(_root, Log);
@@ -101,7 +123,7 @@ public partial class MainWindow : Window
         RefreshControls();
         try
         {
-            await session.StartAsync(settings);
+            await session.StartAsync(_savedSettings, key);
             if (_session == session && _gameSessionId is null)
             {
                 ConnectionText.Text = "等待进入存档";
@@ -117,6 +139,7 @@ public partial class MainWindow : Window
                 await EndSessionAsync(session, "游戏未启动，请查看设置。");
                 if (_closing || _session is not null) return;
                 Pages.SelectedItem = SettingsPage;
+                SettingsTabs.SelectedItem = LaunchSettingsTab;
                 SettingsFeedback.Text = ex.Message;
             }
         }
@@ -187,13 +210,14 @@ public partial class MainWindow : Window
         if (GameFolderError is not null) GameFolderError.Text = "";
     }
 
-    private void ShowSettingsError(Control field, TextBlock error, string message)
+    private void ShowSettingsError(TabItem tab, Control field, TextBlock error, string message)
     {
         error.Text = message;
         Pages.SelectedItem = SettingsPage;
+        SettingsTabs.SelectedItem = tab;
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
-            if (Pages.SelectedItem != SettingsPage) return;
+            if (Pages.SelectedItem != SettingsPage || SettingsTabs.SelectedItem != tab) return;
             field.BringIntoView();
             field.Focus();
             error.BringIntoView();
@@ -202,15 +226,16 @@ public partial class MainWindow : Window
 
     private void SaveClicked(object sender, RoutedEventArgs e)
     {
+        var settings = LaunchSettings();
+        if (!DesktopInstallation.IsGameDirectory(settings.GameDirectory))
+        {
+            ShowSettingsError(LaunchSettingsTab, GameFolder, GameFolderError, "请选择包含 StardewModdingAPI.exe 的游戏目录。");
+            return;
+        }
         try
         {
-            SaveApiCredential();
-            DesktopInstallation.SaveSettings(_root, Settings());
+            SaveDesktopSettings(settings);
             SettingsFeedback.Text = "启动设置已保存，下次启动生效。";
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
-        {
-            ShowSettingsError(ApiSettingsErrorField(), ApiModelFeedback, ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -350,6 +375,7 @@ public partial class MainWindow : Window
         _paused = Flag(payload, "paused");
         _interrupting = Flag(payload, "interrupting");
         _recoveryPending = Flag(payload, "recoveryPending");
+        _modelBusy = Flag(payload, "modelBusy");
         if (_gameSessionId is null)
         {
             if (previous is not null)
@@ -372,7 +398,9 @@ public partial class MainWindow : Window
         var progress = Text(payload, "progress");
         var clockPauseOwner = Text(payload, "clockPauseOwner");
         var execution = $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}";
-        var thinking = clockPauseOwner == "model-thinking" ? "伴侣正在规划或回复 · 游戏时钟已暂停" : "伴侣正在规划或回复";
+        var thinking = payload.TryGetProperty("modelStreaming", out var streaming) && streaming.ValueKind == JsonValueKind.False
+            ? "等待模型响应" : "伴侣正在规划或回复";
+        if (clockPauseOwner == "model-thinking") thinking += " · 游戏时钟已暂停";
         bool isThinking = clockPauseOwner == "model-thinking" || Flag(payload, "thinking");
         _chatActivity = _recoveryPending ? "请先核对旧动作。"
             : _interrupting ? "正在等待旧动作停止并核对结果。"
@@ -505,8 +533,8 @@ public partial class MainWindow : Window
         ReconnectHeader.IsEnabled = reconnect && !_reconnecting && !_closing;
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
         ApiModelFields.IsEnabled = !_testingModel && !_closing && !_reconnecting;
-        ApplyModelButton.Visibility = _session is not null ? Visibility.Visible : Visibility.Collapsed;
-        ApplyModelButton.IsEnabled = _partnerServiceReady && !_interrupting;
+        ApplyModelButton.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        ApplyModelButton.IsEnabled = _partnerServiceReady && !_interrupting && !_modelBusy;
         TodayOverview.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         ComposerPanel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         AuthorityButton.Visibility = connected && _playerMode ? Visibility.Visible : Visibility.Collapsed;

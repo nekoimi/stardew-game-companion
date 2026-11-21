@@ -85,6 +85,7 @@ export class TurnRunner {
       progress: this.game.state.progress ?? "", clockPauseOwner: this.game.state.clockPauseOwner ?? null,
       thinking: !!this.active && !this.active.nativeAction && !this.active.abort.signal.aborted,
       modelStreaming: this.selection?.stream !== false,
+      modelBusy: !!this.active || this.transition,
       connection: { ready: !!this.model && !!binding && !this.uncertain && this.game.state.recoveryPending !== true,
         status: this.model ? "connected" : "waiting", clientName: this.selection?.model ?? "模型 API" },
       work: save ? this.work(save) : {}, decisions: decisions.filter(row => row.status === "pending"),

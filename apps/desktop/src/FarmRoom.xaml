@@ -150,6 +150,52 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <Style x:Key="SettingsTabsStyle" TargetType="TabControl">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Border BorderBrush="{StaticResource PaperEdge}" BorderThickness="0,0,0,1" Padding="0,0,0,6">
+                            <TabPanel IsItemsHost="True" KeyboardNavigation.TabNavigation="Once" />
+                        </Border>
+                        <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" ContentSource="SelectedContent" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="SettingsTab" TargetType="TabItem">
+        <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
+        <Setter Property="Padding" Value="14,6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="Surface" Padding="{TemplateBinding Padding}" Margin="0,0,4,0"
+                            Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6">
+                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="#EEE4CC" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="{StaticResource Leaf}" />
+                            <Setter Property="Foreground" Value="{StaticResource Pine}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Surface" Property="BorderBrush" Value="#8A6B3C" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
     <Style x:Key="RoomPage" TargetType="TabItem">
         <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
         <Setter Property="Padding" Value="10,5" />

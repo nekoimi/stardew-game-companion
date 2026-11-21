@@ -12,6 +12,7 @@ internal sealed class DesktopSession
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private CancellationTokenSource? _runtimeLifetime;
     private DesktopSettings? _settings;
+    private string _modelKey = "";
     private volatile int _runtimeGeneration;
     private DesktopRuntimeApi? _api;
     private FileStream? _packageLease;
@@ -33,7 +34,7 @@ internal sealed class DesktopSession
         _processes.GameExited += () => GameExited?.Invoke();
     }
 
-    public async Task StartAsync(DesktopSettings settings)
+    public async Task StartAsync(DesktopSettings settings, string key)
     {
         await _lifecycle.WaitAsync(_lifetime.Token);
         try
@@ -48,6 +49,7 @@ internal sealed class DesktopSession
             DesktopInstallation.ConfigureGame(_root, settings);
 
             _settings = settings;
+            _modelKey = key;
             await StartRuntimeAsync(node, settings);
             _lifetime.Token.ThrowIfCancellationRequested();
             if (!_processes.RuntimeRunning)
@@ -84,8 +86,7 @@ internal sealed class DesktopSession
         token.ThrowIfCancellationRequested();
         _api = new DesktopRuntimeApi(endpoint, token);
         var selected = settings.ApiModel ?? new();
-        string key = ModelCredential.Read(_root, selected);
-        await _api.PostAsync("/v2/model/configure", ModelRequest(selected, key));
+        await _api.PostAsync("/v2/model/configure", ModelRequest(selected, _modelKey));
         _api.StartEvents(message => EventReceived?.Invoke(generation, message),
             () => generation == _runtimeGeneration && _processes.RuntimeRunning, _log);
     }
@@ -117,6 +118,7 @@ internal sealed class DesktopSession
         if (_settings is not { } settings) throw new InvalidOperationException("伴侣服务尚未启动。");
         await PostAsync("/v2/model/configure", ModelRequest(selected, key));
         _settings = settings with { ApiModel = selected };
+        _modelKey = key;
     }
 
     public Task StopAsync() => _stopTask ??= StopCoreAsync();
@@ -129,6 +131,7 @@ internal sealed class DesktopSession
         try { await StopRuntimeAsync(); }
         finally
         {
+            _modelKey = "";
             _processes.ReleaseGameHandle();
             _packageLease?.Dispose();
             _lifecycle.Release();

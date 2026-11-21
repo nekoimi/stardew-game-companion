@@ -39,7 +39,8 @@ public partial class MainWindow
         _withdrawingGoal = _readingHistory = _hasHistoryPage = _savingPreferences = false;
         _historyBefore = _profileRevision = null;
         GoalPicker.ItemsSource = WorkDetails.ItemsSource = HistoryEntries.ItemsSource = null;
-        WorkStatus.Text = HistoryStatus.Text = ProfileFeedback.Text = "进入存档后可查看。";
+        WorkStatus.Text = HistoryStatus.Text = "进入存档后可查看。";
+        ProfileFeedback.Text = "进入存档后可编辑。";
         TodayGoalText.Text = WorkStatus.Text;
         AgentNextStep.Text = "";
         WorkFeedback.Text = "";
@@ -63,6 +64,7 @@ public partial class MainWindow
         HistoryRefreshButton.IsEnabled = connected && !_readingHistory;
         HistoryOlderButton.IsEnabled = HistoryRefreshButton.IsEnabled && _historyBefore.HasValue;
         ReadProfileButton.IsEnabled = connected && !_savingPreferences;
+        ReadProfileButton.Visibility = ProfileFields.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         ProfileFields.IsEnabled = ReadProfileButton.IsEnabled && _profileRevision.HasValue;
         RefreshMemoryControls(connected);
         RefreshInboxControls(connected);
@@ -125,7 +127,7 @@ public partial class MainWindow
 
     private async Task LoadSelectedSaveViewAsync()
     {
-        if (Pages.SelectedItem == SettingsPage && !_profileRevision.HasValue)
+        if (Pages.SelectedItem == SettingsPage && SettingsTabs.SelectedItem == ProfileSettingsTab && !_profileRevision.HasValue)
             await ReadPreferencesAsync();
         if (Pages.SelectedItem == MemoryPage && !_memoryRevision.HasValue)
             await ChangeMemoryAsync(null);

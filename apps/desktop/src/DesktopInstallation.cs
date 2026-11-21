@@ -22,7 +22,8 @@ internal sealed record ApiModelSettings(string Provider = "deepseek", string Mod
         ? this with { Provider = CustomProvider, Protocol = "responses" } : this;
 }
 internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "player",
-    ApiModelSettings? ApiModel = null, ApiModelSettings? CompatibleResponses = null);
+    ApiModelSettings? ApiModel = null, ApiModelSettings? CustomModel = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ApiModelSettings? CompatibleResponses = null);
 
 internal static class DesktopInstallation
 {
@@ -32,7 +33,8 @@ internal static class DesktopInstallation
     {
         var path = SettingsFile(root);
         var settings = File.Exists(path) ? JsonSerializer.Deserialize<DesktopSettings>(File.ReadAllText(path)) ?? new() : new();
-        return settings with { ApiModel = settings.ApiModel?.Upgrade(), CompatibleResponses = settings.CompatibleResponses?.Upgrade() };
+        return settings with { ApiModel = settings.ApiModel?.Upgrade(),
+            CustomModel = (settings.CustomModel ?? settings.CompatibleResponses)?.Upgrade(), CompatibleResponses = null };
     }
 
     internal static void SaveSettings(string root, DesktopSettings settings) => WriteJson(SettingsFile(root), settings);
@@ -52,7 +54,6 @@ internal static class DesktopInstallation
         if (config is null) throw new InvalidDataException("伙伴设置文件无效。");
         config["Mode"] = settings.ActorMode;
         WriteJson(configPath, config);
-        SaveSettings(root, settings);
     }
 
     private static void WriteJson<T>(string path, T data)
