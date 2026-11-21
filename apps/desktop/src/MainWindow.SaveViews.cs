@@ -32,6 +32,9 @@ public partial class MainWindow
     private void ResetSaveViews()
     {
         _saveViewGeneration++;
+        _pendingChatRequests.Clear();
+        _submittingRequestId = null;
+        _activeCommandId = _chatActivity = "";
         _workSignature = null;
         _withdrawingGoal = _readingHistory = _hasHistoryPage = _savingPreferences = false;
         _historyBefore = _profileRevision = null;
@@ -51,6 +54,11 @@ public partial class MainWindow
     private void RefreshSaveViewControls()
     {
         bool connected = _gameSessionId is not null && !_closing;
+        bool hasGoals = GoalPicker.HasItems;
+        WorkGoalColumn.Width = hasGoals ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
+        WorkGoals.Visibility = hasGoals ? Visibility.Visible : Visibility.Collapsed;
+        GoToChatButton.Visibility = connected && !hasGoals ? Visibility.Visible : Visibility.Collapsed;
+        GoToChatButton.IsEnabled = connected && _partnerReady;
         WithdrawGoalButton.IsEnabled = connected && !_withdrawingGoal && !_interrupting && !_recoveryPending && GoalPicker.SelectedItem is DesktopGoal;
         HistoryRefreshButton.IsEnabled = connected && !_readingHistory;
         HistoryOlderButton.IsEnabled = HistoryRefreshButton.IsEnabled && _historyBefore.HasValue;
@@ -158,7 +166,7 @@ public partial class MainWindow
         AgentNextStep.Text = "";
 
         var details = new List<TimelineEntry>();
-        if (work.TryGetProperty("activity", out var activity))
+        if (work.TryGetProperty("activity", out var activity) && Text(activity, "phase") != "idle")
         {
             Add("当前进度", Text(activity, "summary"));
             var nextStep = Text(activity, "nextStep");
@@ -171,7 +179,7 @@ public partial class MainWindow
         foreach (var execution in Rows(work, "recentExecutions").Reverse())
         {
             var date = Text(execution, "gameDate");
-            var label = date.Length > 0 ? $"工作记录 · {date}" : "工作记录 · 日期未记录";
+            var label = date.Length > 0 ? $"工作记录 · {GameDateLabel(date)}" : "工作记录 · 日期未记录";
             Add(label, $"{Text(execution, "taskTitle")}\n{Text(execution, "summary")}");
         }
         WorkDetails.ItemsSource = details;
@@ -231,13 +239,14 @@ public partial class MainWindow
         {
             var page = await session.PostAsync("/v1/history", new { gameSessionId = game, before });
             if (view != _saveViewGeneration) return;
-            var rows = Rows(page, "entries").Select(HistoryEntry).ToArray();
+            // Each page arrives newest first. Preserve its cursor and show the entries in conversation order.
+            var rows = Rows(page, "entries").Reverse().Select(HistoryEntry).ToArray();
             _historyBefore = Number(page, "nextBefore");
             _hasHistoryPage = true;
             HistoryEntries.ItemsSource = rows;
             HistoryStatus.Text = rows.Length == 0 ? "当前存档暂无对话记录。"
                 : before.HasValue ? "较早的对话记录" : "当前存档的最新对话";
-            HistoryScroll.ScrollToTop();
+            HistoryScroll.ScrollToBottom();
         }
         catch (Exception ex) { if (view == _saveViewGeneration) HistoryStatus.Text = ex.Message; }
         finally
@@ -254,7 +263,7 @@ public partial class MainWindow
     {
         var label = Text(row, "speaker");
         var date = Text(row, "gameDate");
-        if (date.Length > 0) label += $" · {date}";
+        if (date.Length > 0) label += $" · {GameDateLabel(date)}";
         var state = Flag(row, "rolledBack") ? "已回滚" : Text(row, "decisionStatus") switch
         {
             "pending" => "待确认",

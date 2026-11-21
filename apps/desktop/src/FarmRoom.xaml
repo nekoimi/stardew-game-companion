@@ -98,6 +98,16 @@
         <Setter Property="Foreground" Value="{StaticResource Pine}" />
         <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
+    <Style x:Key="InlineFeedback" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Style.Triggers>
+            <Trigger Property="Text" Value="">
+                <Setter Property="Visibility" Value="Collapsed" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
     <Style x:Key="RoomTabs" TargetType="TabControl">
         <Setter Property="TabStripPlacement" Value="Left" />
         <Setter Property="Template">

@@ -77,7 +77,7 @@
                                 <TextBlock Text="今天一起照料农场" Foreground="#FFF7E4" FontSize="28" FontWeight="Bold" TextWrapping="Wrap" />
                                 <TextBlock Text="有什么想让伙伴帮忙？" Foreground="#FFF1CF" FontSize="13" Margin="0,6,0,0" TextWrapping="Wrap" />
                             </StackPanel>
-                            <Border Grid.Column="1" Style="{StaticResource PagePaper}" Padding="11,9" VerticalAlignment="Top">
+                            <Border x:Name="TodayOverview" Grid.Column="1" Style="{StaticResource PagePaper}" Padding="11,9" VerticalAlignment="Top">
                                 <StackPanel>
                                     <TextBlock Text="当前安排" Foreground="{StaticResource Pine}" FontWeight="SemiBold" />
                                     <TextBlock x:Name="TodayGoalText" Text="进入存档后可查看。" FontSize="12" Margin="0,5,0,3"
@@ -99,13 +99,12 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                         <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
                                     <TextBlock Text="和伙伴聊聊" Foreground="{StaticResource Pine}" FontWeight="SemiBold" Margin="0,0,0,7" />
                                     <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
                                                   HorizontalScrollBarVisibility="Disabled" Focusable="False">
                                         <StackPanel>
-                                            <TextBlock x:Name="TimelineHint" Text="进入存档后，就可以在这里交代农活或和伙伴聊天。"
+                                            <TextBlock x:Name="TimelineHint"
                                                        Foreground="{StaticResource MutedInk}" TextWrapping="Wrap" Margin="0,0,0,6">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
@@ -136,54 +135,68 @@
                                             </Border>
                                         </StackPanel>
                                     </ScrollViewer>
-                                    <Grid Grid.Row="2" Margin="0,8,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <Grid>
-                                            <TextBox x:Name="Input" AutomationProperties.Name="发送给伴侣的指令"
-                                                     MaxLength="500" MinHeight="39" MaxHeight="72" TextWrapping="Wrap"
-                                                     AcceptsReturn="True" VerticalScrollBarVisibility="Auto" PreviewKeyDown="InputKeyDown" />
-                                            <TextBlock Text="告诉伙伴接下来做什么" Foreground="{StaticResource MutedInk}"
-                                                       FontSize="12" Margin="10,8,6,0" IsHitTestVisible="False">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                        <Style.Triggers>
-                                                            <MultiDataTrigger>
-                                                                <MultiDataTrigger.Conditions>
-                                                                    <Condition Binding="{Binding Text, ElementName=Input}" Value="" />
-                                                                    <Condition Binding="{Binding IsKeyboardFocused, ElementName=Input}" Value="False" />
-                                                                </MultiDataTrigger.Conditions>
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                            </MultiDataTrigger>
-                                                        </Style.Triggers>
+                                    <StackPanel Grid.Row="2">
+                                        <DockPanel Margin="0,4,0,0">
+                                            <Button x:Name="AuthorityButton" DockPanel.Dock="Right" Click="AuthorityClicked" Content="交给 AI"
+                                                    FontSize="12" Padding="8,4" MinHeight="27" Margin="8,0,0,0" />
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock x:Name="OwnershipHint" Style="{StaticResource InlineFeedback}" />
+                                                <TextBlock x:Name="ChatStatus" Style="{StaticResource InlineFeedback}"
+                                                           AutomationProperties.LiveSetting="Polite" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <StackPanel x:Name="ComposerPanel">
+                                            <Grid Margin="0,6,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid>
+                                                    <TextBox x:Name="Input" AutomationProperties.Name="发送给伴侣的指令"
+                                                             MaxLength="500" MinHeight="39" MaxHeight="72" TextWrapping="Wrap"
+                                                             AcceptsReturn="True" VerticalScrollBarVisibility="Auto" PreviewKeyDown="InputKeyDown" />
+                                                    <TextBlock Text="告诉伙伴接下来做什么" Foreground="{StaticResource MutedInk}"
+                                                               FontSize="12" Margin="10,8,6,0" IsHitTestVisible="False">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding Text, ElementName=Input}" Value="" />
+                                                                            <Condition Binding="{Binding IsKeyboardFocused, ElementName=Input}" Value="False" />
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </MultiDataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Grid>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="9,0,0,0">
+                                                    <Button x:Name="SendButton" Content="发送" Click="SendClicked" ToolTip="Ctrl+Enter"
+                                                            Style="{StaticResource PrimaryButton}" />
+                                                    <Button x:Name="InterruptButton" Content="打断并执行" Click="InterruptClicked" Margin="0" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <WrapPanel Margin="0,6,0,0">
+                                                <WrapPanel.Resources>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                        <Setter Property="MinHeight" Value="27" />
+                                                        <Setter Property="FontSize" Value="12" />
+                                                        <Setter Property="Padding" Value="8,3" />
+                                                        <Setter Property="Margin" Value="0,0,6,3" />
                                                     </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </Grid>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="9,0,0,0">
-                                            <Button x:Name="SendButton" Content="发送" Click="SendClicked" ToolTip="Ctrl+Enter"
-                                                    Style="{StaticResource PrimaryButton}" />
-                                            <Button x:Name="InterruptButton" Content="打断并执行" Click="InterruptClicked" Margin="0" />
+                                                </WrapPanel.Resources>
+                                                <Button x:Name="PauseButton" Tag="pause" Click="ControlClicked" Content="暂停" />
+                                                <Button x:Name="ResumeButton" Tag="resume" Click="ControlClicked" Content="继续" />
+                                                <Button x:Name="CancelButton" Tag="cancel" Click="ControlClicked" Content="取消当前工作" />
+                                                <Button x:Name="RecoverButton" Tag="recover" Click="ControlClicked" Content="核对旧动作" Visibility="Collapsed" />
+                                                <TextBlock x:Name="SendShortcutHint" Text="Ctrl+Enter 发送" Style="{StaticResource InlineFeedback}"
+                                                           VerticalAlignment="Center" Margin="3,0,0,3" />
+                                            </WrapPanel>
                                         </StackPanel>
-                                    </Grid>
-                                    <WrapPanel Grid.Row="3" Margin="0,8,0,0">
-                                        <WrapPanel.Resources>
-                                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                                <Setter Property="MinHeight" Value="27" />
-                                                <Setter Property="FontSize" Value="12" />
-                                                <Setter Property="Padding" Value="8,3" />
-                                                <Setter Property="Margin" Value="0,0,6,3" />
-                                            </Style>
-                                        </WrapPanel.Resources>
-                                        <Button x:Name="AuthorityButton" Click="AuthorityClicked" Content="交给 AI" />
-                                        <Button x:Name="PauseButton" Tag="pause" Click="ControlClicked" Content="暂停" />
-                                        <Button x:Name="ResumeButton" Tag="resume" Click="ControlClicked" Content="继续" />
-                                        <Button x:Name="CancelButton" Tag="cancel" Click="ControlClicked" Content="取消当前工作" />
-                                        <Button x:Name="RecoverButton" Tag="recover" Click="ControlClicked" Content="核对旧动作" Visibility="Collapsed" />
-                                    </WrapPanel>
+                                    </StackPanel>
                                 </Grid>
                             </Border>
                         </Grid>
@@ -191,35 +204,39 @@
                 </Border>
             </TabItem>
             <TabItem x:Name="WorkPage" Header="农场工作" Tag="&#xE9F5;" Style="{StaticResource RoomPage}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="3*" />
-                    </Grid.ColumnDefinitions>
-                    <DockPanel Margin="0,0,14,0">
-                        <TextBlock DockPanel.Dock="Top" Text="进行中的目标" FontWeight="SemiBold" Margin="0,0,0,6" />
-                        <Button DockPanel.Dock="Bottom" x:Name="WithdrawGoalButton" Content="撤回所选目标" Margin="0,8,0,0"
-                                HorizontalAlignment="Left" IsEnabled="False" Click="WithdrawGoalClicked" />
-                        <ListBox x:Name="GoalPicker" AutomationProperties.Name="进行中的目标" SelectionChanged="GoalSelected"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Margin="3,4">
-                                        <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding Details}" TextWrapping="Wrap" Foreground="#537261" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </DockPanel>
-                    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0,0,7,0">
-                        <StackPanel>
-                            <TextBlock x:Name="WorkStatus" TextWrapping="Wrap" Margin="0,0,0,9" />
-                            <TextBlock x:Name="WorkFeedback" TextWrapping="Wrap" Foreground="#537261" />
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top">
+                        <TextBlock x:Name="WorkStatus" Style="{StaticResource InlineFeedback}" FontSize="14" Margin="0,0,0,8" />
+                        <Button x:Name="GoToChatButton" Content="去交代农活" Click="OpenChatClicked"
+                                HorizontalAlignment="Left" Margin="0,0,0,10" Style="{StaticResource PrimaryButton}" />
+                        <TextBlock x:Name="WorkFeedback" Style="{StaticResource InlineFeedback}" Margin="0,0,0,8" />
+                    </StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="WorkGoalColumn" Width="2*" />
+                            <ColumnDefinition Width="3*" />
+                        </Grid.ColumnDefinitions>
+                        <DockPanel x:Name="WorkGoals" Margin="0,0,14,0">
+                            <TextBlock DockPanel.Dock="Top" Text="进行中的目标" FontWeight="SemiBold" Margin="0,0,0,6" />
+                            <Button DockPanel.Dock="Bottom" x:Name="WithdrawGoalButton" Content="撤回所选目标" Margin="0,8,0,0"
+                                    HorizontalAlignment="Left" IsEnabled="False" Click="WithdrawGoalClicked" />
+                            <ListBox x:Name="GoalPicker" AutomationProperties.Name="进行中的目标" SelectionChanged="GoalSelected"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="3,4">
+                                            <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Details}" TextWrapping="Wrap" Foreground="#537261" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0,0,7,0">
                             <ItemsControl x:Name="WorkDetails" />
-                        </StackPanel>
-                    </ScrollViewer>
-                </Grid>
+                        </ScrollViewer>
+                    </Grid>
+                </DockPanel>
             </TabItem>
             <TabItem x:Name="MilestonesPage" Header="计划" Tag="&#xE787;" Style="{StaticResource RoomPage}">
                 <Grid>
@@ -260,12 +277,13 @@
                     <TabItem x:Name="CarePage" Header="提醒">
                         <DockPanel>
                             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                                <Button x:Name="RefreshMessagesButton" Content="读取最新" Click="RefreshMessagesClicked" />
+                                <Button x:Name="RefreshMessagesButton" Content="刷新提醒" Click="RefreshMessagesClicked" />
                                 <Button x:Name="OlderMessagesButton" Content="查看更早消息" Click="OlderMessagesClicked" />
-                                <Button x:Name="ReadMessageButton" Content="将所选消息标为已读" Click="ReadMessageClicked" />
                                 <Button Content="查看计划" Click="OpenMilestonesClicked" />
                             </WrapPanel>
-                            <TextBlock x:Name="MessagesStatus" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <TextBlock x:Name="MessagesStatus" DockPanel.Dock="Top" Style="{StaticResource InlineFeedback}" FontSize="14" Margin="0,0,0,8" />
+                            <Button x:Name="ReadMessageButton" DockPanel.Dock="Bottom" Content="标为已读" Click="ReadMessageClicked"
+                                    HorizontalAlignment="Left" Margin="0,8,0,0" />
                             <ListBox x:Name="MessagePicker" SelectionChanged="MessageSelected" AutomationProperties.Name="存档提醒"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
@@ -335,139 +353,160 @@
                 </Grid>
             </TabItem>
             <TabItem x:Name="SettingsPage" Header="设置" Tag="&#xE713;" Style="{StaticResource RoomPage}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="8" MaxWidth="670">
-                        <StackPanel x:Name="SettingsFields">
-                            <TextBlock Text="游戏目录" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <DockPanel Margin="0,0,0,15">
-                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseGame" Margin="8,0,0,0" />
-                                <TextBox x:Name="GameFolder" AutomationProperties.Name="游戏目录" />
-                            </DockPanel>
-                            <TextBlock Text="游玩方式" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <ComboBox x:Name="Mode" Width="220" HorizontalAlignment="Left" Margin="0,0,0,15">
-                                <ComboBoxItem Content="伙伴模式" Tag="companion" />
-                                <ComboBoxItem Content="AI 自己玩（单人）" Tag="player" />
-                            </ComboBox>
-                            <TextBlock Text="伙伴来源" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <ComboBox x:Name="PartnerSource" SelectedValuePath="Tag" SelectionChanged="PartnerSourceSelected"
-                                      AutomationProperties.Name="伙伴来源" Margin="0,0,0,13">
-                                <ComboBoxItem Content="启动本机模型客户端" Tag="builtin" />
-                                <ComboBoxItem Content="接续原 MiniMax Code 会话" Tag="external" />
-                            </ComboBox>
-                            <StackPanel x:Name="BuiltinFields">
-                                <TextBlock Text="模型客户端" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                <ComboBox x:Name="BackendPicker" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="BackendSelected"
-                                          AutomationProperties.Name="模型客户端" Margin="0,0,0,13" />
-                                <TextBlock Text="模型" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                <TextBox x:Name="Model" AutomationProperties.Name="模型" />
-                                <TextBlock x:Name="ModelHint" Foreground="#537261" Margin="0,3,0,13" TextWrapping="Wrap" />
-                                <TextBlock Text="推理档位" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                <ComboBox x:Name="ReasoningEffort" AutomationProperties.Name="推理档位" Margin="0,0,0,13" />
-                                <TextBlock Text="客户端路径" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                <DockPanel>
-                                    <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseClient" Margin="8,0,0,0" />
-                                    <TextBox x:Name="ClientPath" AutomationProperties.Name="客户端路径" />
+                <DockPanel>
+                    <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource PaperEdge}" BorderThickness="0,1,0,0" Padding="0,9,0,0" Margin="8,8,8,0">
+                        <DockPanel>
+                            <Button x:Name="SaveSettingsButton" DockPanel.Dock="Right" Content="保存启动设置" Click="SaveClicked"
+                                    Style="{StaticResource PrimaryButton}" IsEnabled="{Binding IsEnabled, ElementName=SettingsFields}"
+                                    Margin="10,0,0,0" VerticalAlignment="Top" />
+                            <TextBlock x:Name="SettingsFeedback" Style="{StaticResource InlineFeedback}"
+                                       VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+                        </DockPanel>
+                    </Border>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="8" MaxWidth="670">
+                            <StackPanel x:Name="SettingsFields">
+                                <TextBlock Text="游戏目录" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <StackPanel Margin="0,0,0,15">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseGame" Margin="8,0,0,0"
+                                                AutomationProperties.Name="选择游戏目录" />
+                                        <TextBox x:Name="GameFolder" AutomationProperties.Name="游戏目录" TextChanged="GameFolderEdited"
+                                                 AutomationProperties.HelpText="{Binding Text, ElementName=GameFolderError}" />
+                                    </DockPanel>
+                                    <TextBlock x:Name="GameFolderError" Style="{StaticResource InlineFeedback}" Foreground="#923C25"
+                                               Margin="0,4,0,0" AutomationProperties.LiveSetting="Assertive" />
+                                </StackPanel>
+                                <TextBlock x:Name="ModeLabel" Text="游玩方式" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <ComboBox x:Name="Mode" AutomationProperties.LabeledBy="{Binding ElementName=ModeLabel}"
+                                          Width="220" HorizontalAlignment="Left" Margin="0,0,0,15">
+                                    <ComboBoxItem Content="伙伴模式" Tag="companion" />
+                                    <ComboBoxItem Content="AI 自己玩（单人）" Tag="player" />
+                                </ComboBox>
+                                <TextBlock Text="伙伴来源" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <ComboBox x:Name="PartnerSource" SelectedValuePath="Tag" SelectionChanged="PartnerSourceSelected"
+                                          AutomationProperties.Name="伙伴来源" Margin="0,0,0,13">
+                                    <ComboBoxItem Content="启动本机模型客户端" Tag="builtin" />
+                                    <ComboBoxItem Content="接续原 MiniMax Code 会话" Tag="external" />
+                                </ComboBox>
+                                <StackPanel x:Name="BuiltinFields">
+                                    <TextBlock Text="模型客户端" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <StackPanel Margin="0,0,0,13">
+                                        <ComboBox x:Name="BackendPicker" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="BackendSelected"
+                                                  AutomationProperties.Name="模型客户端" AutomationProperties.HelpText="{Binding Text, ElementName=BackendError}" />
+                                        <TextBlock x:Name="BackendError" Style="{StaticResource InlineFeedback}" Foreground="#923C25"
+                                                   Margin="0,4,0,0" AutomationProperties.LiveSetting="Assertive" />
+                                    </StackPanel>
+                                    <TextBlock Text="模型" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <TextBox x:Name="Model" AutomationProperties.Name="模型" />
+                                    <TextBlock x:Name="ModelHint" Foreground="#537261" Margin="0,3,0,13" TextWrapping="Wrap" />
+                                    <TextBlock Text="推理档位" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <ComboBox x:Name="ReasoningEffort" AutomationProperties.Name="推理档位" Margin="0,0,0,13" />
+                                    <TextBlock Text="客户端路径" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseClient" Margin="8,0,0,0" />
+                                        <TextBox x:Name="ClientPath" AutomationProperties.Name="客户端路径" />
+                                    </DockPanel>
+                                    <TextBlock Text="留空自动检测。请先在原客户端登录。" Foreground="#537261" Margin="0,3,0,12" />
+                                </StackPanel>
+                                <Separator Margin="0,13" />
+                                <TextBlock Text="旧安装数据" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
+                                <TextBlock x:Name="ImportFeedback" Text="退出游戏后，可从原伙伴 Mod 目录导入数据。" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <CheckBox x:Name="ImportDataOnly" Content="仅导入数据，沿用此包的伙伴接入设置" Margin="0,0,0,8" />
+                                <Button x:Name="ImportButton" Content="从原安装导入…" Click="ImportClicked" HorizontalAlignment="Left" />
+                            </StackPanel>
+                            <StackPanel x:Name="OriginalFields" Visibility="Collapsed">
+                                <Separator Margin="0,13" />
+                                <TextBlock Text="原 MiniMax Code 会话" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
+                                <TextBlock x:Name="OriginalFeedback" Text="启动游戏后，可在这里列出并接续原会话。" TextWrapping="Wrap" Margin="0,0,0,9" />
+                                <TextBlock Text="原工作目录" Margin="0,0,0,4" />
+                                <DockPanel Margin="0,0,0,9">
+                                    <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalWorkspace" Margin="8,0,0,0" />
+                                    <TextBox x:Name="OriginalWorkspace" AutomationProperties.Name="原工作目录" TextChanged="OriginalLocationChanged" />
                                 </DockPanel>
-                                <TextBlock Text="留空自动检测。请先在原客户端登录。" Foreground="#537261" Margin="0,3,0,12" />
+                                <TextBlock Text="原数据目录（使用默认目录可留空）" Margin="0,0,0,4" />
+                                <DockPanel Margin="0,0,0,9">
+                                    <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalData" Margin="8,0,0,0" />
+                                    <TextBox x:Name="OriginalData" AutomationProperties.Name="原数据目录" TextChanged="OriginalLocationChanged" />
+                                </DockPanel>
+                                <TextBlock Text="MiniMax Code 客户端路径（可留空）" Margin="0,0,0,4" />
+                                <DockPanel Margin="0,0,0,9">
+                                    <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalClient" Margin="8,0,0,0" />
+                                    <TextBox x:Name="OriginalClient" AutomationProperties.Name="MiniMax Code 客户端路径" TextChanged="OriginalLocationChanged" />
+                                </DockPanel>
+                                <Button x:Name="ListSessionsButton" Content="列出原会话" Click="ListOriginalSessions" HorizontalAlignment="Left" />
+                                <ListBox x:Name="OriginalSessions" DisplayMemberPath="Label" AutomationProperties.Name="原会话"
+                                         SelectionChanged="OriginalSelectionChanged" Margin="0,6,0,9" MinHeight="32" MaxHeight="144" />
+                                <TextBlock Text="游戏显示名（可留空）" Margin="0,0,0,4" />
+                                <TextBox x:Name="OriginalName" AutomationProperties.Name="原伙伴显示名" MaxLength="80" Margin="0,0,0,9" />
+                                <CheckBox x:Name="OriginalIdle" Content="连接期间保持原聊天窗口闲置" Margin="0,0,0,9"
+                                          Checked="OriginalSelectionChanged" Unchecked="OriginalSelectionChanged" />
+                                <WrapPanel>
+                                    <Button x:Name="AttachPartner" Content="接续所选会话" Click="AttachOriginalPartner" />
+                                    <Button x:Name="DisconnectPartner" Content="断开桌面连接" Click="DisconnectOriginalPartner" />
+                                    <Button x:Name="SavePartnerLocation" Content="保存原会话目录" Click="SaveOriginalLocation" />
+                                </WrapPanel>
                             </StackPanel>
-                            <Button Content="保存启动设置" Click="SaveClicked" HorizontalAlignment="Left" />
                             <Separator Margin="0,13" />
-                            <TextBlock Text="旧安装数据" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
-                            <TextBlock x:Name="ImportFeedback" Text="退出游戏后，可从原伙伴 Mod 目录导入数据。" TextWrapping="Wrap" Margin="0,0,0,8" />
-                            <CheckBox x:Name="ImportDataOnly" Content="仅导入数据，沿用此包的伙伴接入设置" Margin="0,0,0,8" />
-                            <Button x:Name="ImportButton" Content="从原安装导入…" Click="ImportClicked" HorizontalAlignment="Left" />
-                        </StackPanel>
-                        <StackPanel x:Name="OriginalFields" Visibility="Collapsed">
-                            <Separator Margin="0,13" />
-                            <TextBlock Text="原 MiniMax Code 会话" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
-                            <TextBlock x:Name="OriginalFeedback" Text="启动游戏后，可在这里列出并接续原会话。" TextWrapping="Wrap" Margin="0,0,0,9" />
-                            <TextBlock Text="原工作目录" Margin="0,0,0,4" />
-                            <DockPanel Margin="0,0,0,9">
-                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalWorkspace" Margin="8,0,0,0" />
-                                <TextBox x:Name="OriginalWorkspace" AutomationProperties.Name="原工作目录" TextChanged="OriginalLocationChanged" />
-                            </DockPanel>
-                            <TextBlock Text="原数据目录（使用默认目录可留空）" Margin="0,0,0,4" />
-                            <DockPanel Margin="0,0,0,9">
-                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalData" Margin="8,0,0,0" />
-                                <TextBox x:Name="OriginalData" AutomationProperties.Name="原数据目录" TextChanged="OriginalLocationChanged" />
-                            </DockPanel>
-                            <TextBlock Text="MiniMax Code 客户端路径（可留空）" Margin="0,0,0,4" />
-                            <DockPanel Margin="0,0,0,9">
-                                <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseOriginalClient" Margin="8,0,0,0" />
-                                <TextBox x:Name="OriginalClient" AutomationProperties.Name="MiniMax Code 客户端路径" TextChanged="OriginalLocationChanged" />
-                            </DockPanel>
-                            <Button x:Name="ListSessionsButton" Content="列出原会话" Click="ListOriginalSessions" HorizontalAlignment="Left" />
-                            <ListBox x:Name="OriginalSessions" DisplayMemberPath="Label" AutomationProperties.Name="原会话"
-                                     SelectionChanged="OriginalSelectionChanged" Margin="0,6,0,9" MinHeight="32" MaxHeight="144" />
-                            <TextBlock Text="游戏显示名（可留空）" Margin="0,0,0,4" />
-                            <TextBox x:Name="OriginalName" AutomationProperties.Name="原伙伴显示名" MaxLength="80" Margin="0,0,0,9" />
-                            <CheckBox x:Name="OriginalIdle" Content="连接期间保持原聊天窗口闲置" Margin="0,0,0,9"
-                                      Checked="OriginalSelectionChanged" Unchecked="OriginalSelectionChanged" />
-                            <WrapPanel>
-                                <Button x:Name="AttachPartner" Content="接续所选会话" Click="AttachOriginalPartner" />
-                                <Button x:Name="DisconnectPartner" Content="断开桌面连接" Click="DisconnectOriginalPartner" />
-                                <Button x:Name="SavePartnerLocation" Content="保存原会话目录" Click="SaveOriginalLocation" />
-                            </WrapPanel>
-                        </StackPanel>
-                        <Separator Margin="0,13" />
-                        <TextBlock Text="当前存档的伙伴设置" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
-                        <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
-                        <Button x:Name="ReadProfileButton" Content="重新读取伙伴设置" HorizontalAlignment="Left" Click="ReadProfileClicked" />
-                        <StackPanel x:Name="ProfileFields" Margin="0,8,0,0">
-                            <StackPanel x:Name="CompanionIdentityFields">
-                            <UniformGrid Columns="2">
-                                <StackPanel Margin="0,0,12,10">
-                                    <TextBlock Text="伙伴名字" Margin="0,0,0,4" />
-                                    <TextBox x:Name="CompanionName" MaxLength="12" AutomationProperties.Name="伙伴名字" />
+                            <TextBlock Text="当前存档的伙伴设置" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
+                            <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <Button x:Name="ReadProfileButton" Content="重新读取伙伴设置" HorizontalAlignment="Left" Click="ReadProfileClicked" />
+                            <StackPanel x:Name="ProfileFields" Margin="0,8,0,0">
+                                <StackPanel x:Name="CompanionIdentityFields">
+                                <UniformGrid Columns="2">
+                                    <StackPanel Margin="0,0,12,10">
+                                        <TextBlock Text="伙伴名字" Margin="0,0,0,4" />
+                                        <TextBox x:Name="CompanionName" MaxLength="12" AutomationProperties.Name="伙伴名字" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Text="相处方向" Margin="0,0,0,4" />
+                                        <ComboBox x:Name="PlayStyle" SelectedValuePath="Tag" AutomationProperties.Name="相处方向">
+                                            <ComboBoxItem Content="赚钱" Tag="earn" />
+                                            <ComboBoxItem Content="干活" Tag="workhorse" />
+                                            <ComboBoxItem Content="社区" Tag="community" />
+                                            <ComboBoxItem Content="布置" Tag="decor" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,12,10">
+                                        <TextBlock Text="性格" Margin="0,0,0,4" />
+                                        <ComboBox x:Name="Personality" SelectedValuePath="Tag" AutomationProperties.Name="性格">
+                                            <ComboBoxItem Content="温柔" Tag="gentle" />
+                                            <ComboBoxItem Content="活泼" Tag="lively" />
+                                            <ComboBoxItem Content="沉稳" Tag="calm" />
+                                            <ComboBoxItem Content="嘴硬心软" Tag="tsundere" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Text="交流频率" Margin="0,0,0,4" />
+                                        <ComboBox x:Name="CareFrequency" SelectedValuePath="Tag" AutomationProperties.Name="交流频率">
+                                            <ComboBoxItem Content="安静" Tag="quiet" />
+                                            <ComboBoxItem Content="适中" Tag="moderate" />
+                                            <ComboBoxItem Content="健谈" Tag="chatty" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,12,10">
+                                        <TextBlock Text="就寝时间" Margin="0,0,0,4" />
+                                        <ComboBox x:Name="Bedtime" AutomationProperties.Name="就寝时间" />
+                                    </StackPanel>
+                                </UniformGrid>
+                                <Button x:Name="SaveProfileButton" Content="保存伙伴设置" HorizontalAlignment="Left" Click="SaveProfileClicked" />
                                 </StackPanel>
-                                <StackPanel Margin="0,0,0,10">
-                                    <TextBlock Text="相处方向" Margin="0,0,0,4" />
-                                    <ComboBox x:Name="PlayStyle" SelectedValuePath="Tag" AutomationProperties.Name="相处方向">
-                                        <ComboBoxItem Content="赚钱" Tag="earn" />
-                                        <ComboBoxItem Content="干活" Tag="workhorse" />
-                                        <ComboBoxItem Content="社区" Tag="community" />
-                                        <ComboBoxItem Content="布置" Tag="decor" />
-                                    </ComboBox>
-                                </StackPanel>
-                                <StackPanel Margin="0,0,12,10">
-                                    <TextBlock Text="性格" Margin="0,0,0,4" />
-                                    <ComboBox x:Name="Personality" SelectedValuePath="Tag" AutomationProperties.Name="性格">
-                                        <ComboBoxItem Content="温柔" Tag="gentle" />
-                                        <ComboBoxItem Content="活泼" Tag="lively" />
-                                        <ComboBoxItem Content="沉稳" Tag="calm" />
-                                        <ComboBoxItem Content="嘴硬心软" Tag="tsundere" />
-                                    </ComboBox>
-                                </StackPanel>
-                                <StackPanel Margin="0,0,0,10">
-                                    <TextBlock Text="交流频率" Margin="0,0,0,4" />
-                                    <ComboBox x:Name="CareFrequency" SelectedValuePath="Tag" AutomationProperties.Name="交流频率">
-                                        <ComboBoxItem Content="安静" Tag="quiet" />
-                                        <ComboBoxItem Content="适中" Tag="moderate" />
-                                        <ComboBoxItem Content="健谈" Tag="chatty" />
-                                    </ComboBox>
-                                </StackPanel>
-                                <StackPanel Margin="0,0,12,10">
-                                    <TextBlock Text="就寝时间" Margin="0,0,0,4" />
-                                    <ComboBox x:Name="Bedtime" AutomationProperties.Name="就寝时间" />
-                                </StackPanel>
-                            </UniformGrid>
-                            <Button x:Name="SaveProfileButton" Content="保存伙伴设置" HorizontalAlignment="Left" Click="SaveProfileClicked" />
+                                <Separator Margin="0,12" />
+                                <CheckBox x:Name="Initiative" Content="空闲时主动帮忙" Margin="0,0,0,8" />
+                                <TextBlock Text="主动帮忙时的偏好" Margin="0,0,0,4" />
+                                <ComboBox x:Name="IdlePreference" Width="200" HorizontalAlignment="Left" SelectedValuePath="Tag"
+                                          AutomationProperties.Name="主动帮忙时的偏好" Margin="0,0,0,9">
+                                    <ComboBoxItem Content="由伙伴安排" Tag="autonomous" />
+                                    <ComboBoxItem Content="清理障碍" Tag="clear" />
+                                    <ComboBoxItem Content="采集" Tag="forage" />
+                                    <ComboBoxItem Content="采木" Tag="wood" />
+                                    <ComboBoxItem Content="原地等待" Tag="wait" />
+                                </ComboBox>
+                                <Button x:Name="SaveInitiativeButton" Content="保存主动帮忙设置" HorizontalAlignment="Left" Click="SaveInitiativeClicked" />
                             </StackPanel>
-                            <Separator Margin="0,12" />
-                            <CheckBox x:Name="Initiative" Content="空闲时主动帮忙" Margin="0,0,0,8" />
-                            <TextBlock Text="主动帮忙时的偏好" Margin="0,0,0,4" />
-                            <ComboBox x:Name="IdlePreference" Width="200" HorizontalAlignment="Left" SelectedValuePath="Tag"
-                                      AutomationProperties.Name="主动帮忙时的偏好" Margin="0,0,0,9">
-                                <ComboBoxItem Content="由伙伴安排" Tag="autonomous" />
-                                <ComboBoxItem Content="清理障碍" Tag="clear" />
-                                <ComboBoxItem Content="采集" Tag="forage" />
-                                <ComboBoxItem Content="采木" Tag="wood" />
-                                <ComboBoxItem Content="原地等待" Tag="wait" />
-                            </ComboBox>
-                            <Button x:Name="SaveInitiativeButton" Content="保存主动帮忙设置" HorizontalAlignment="Left" Click="SaveInitiativeClicked" />
                         </StackPanel>
-                    </StackPanel>
-                </ScrollViewer>
+                    </ScrollViewer>
+                </DockPanel>
             </TabItem>
             <TabItem x:Name="UsagePage" Header="用量" Tag="&#xE9D9;" Style="{StaticResource RoomPage}">
                 <DockPanel Margin="4">

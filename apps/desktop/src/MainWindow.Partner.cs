@@ -55,6 +55,7 @@ public partial class MainWindow
     private void BackendSelected(object sender, SelectionChangedEventArgs e)
     {
         if (ClientPath is null || BackendPicker.SelectedItem is not DesktopProvider provider) return;
+        BackendError.Text = "";
         if (e.RemovedItems.Count > 0) ReadClientPreferences();
         _backend = provider.Id;
         var settings = _clients.GetValueOrDefault(provider.Id) ?? new();
@@ -68,6 +69,7 @@ public partial class MainWindow
 
     private void PartnerSourceSelected(object sender, SelectionChangedEventArgs e)
     {
+        if (BackendError is not null) BackendError.Text = "";
         if (OriginalFields is not null) RefreshPartnerControls();
     }
 

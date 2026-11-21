@@ -16,6 +16,7 @@ public partial class MainWindow : Window
 {
     private readonly ObservableCollection<TimelineEntry> _entries = new();
     private readonly HashSet<string> _seenResults = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _pendingChatRequests = new(StringComparer.Ordinal);
     private readonly string _root = AppContext.BaseDirectory;
     private readonly Queue<string> _pendingLogs = new();
     private readonly DispatcherTimer _logTimer;
@@ -30,6 +31,10 @@ public partial class MainWindow : Window
     private bool _reconnecting;
     private bool _closing;
     private string? _decisionSignature;
+    private string? _submittingRequestId;
+    private bool _submissionAccepted;
+    private string _activeCommandId = "";
+    private string _chatActivity = "";
 
     public MainWindow()
     {
@@ -65,17 +70,16 @@ public partial class MainWindow : Window
     private async void LaunchClicked(object sender, RoutedEventArgs e)
     {
         if (_session is not null || _closing || _importing) return;
-        if (SelectedSource == "builtin" && BackendPicker.SelectedItem is null)
-        {
-            Pages.SelectedItem = SettingsPage;
-            ActivityText.Text = "请选择一个可用的模型客户端。";
-            return;
-        }
+        SettingsFeedback.Text = GameFolderError.Text = BackendError.Text = "";
         var settings = Settings();
         if (!DesktopInstallation.IsGameDirectory(settings.GameDirectory))
         {
-            Pages.SelectedItem = SettingsPage;
-            ActivityText.Text = "请选择包含 StardewModdingAPI.exe 的游戏目录。";
+            ShowSettingsError(GameFolder, GameFolderError, "请选择包含 StardewModdingAPI.exe 的游戏目录。");
+            return;
+        }
+        if (SelectedSource == "builtin" && BackendPicker.SelectedItem is null)
+        {
+            ShowSettingsError(BackendPicker, BackendError, "请选择一个可用的模型客户端。");
             return;
         }
         var session = new DesktopSession(_root, Log);
@@ -103,6 +107,7 @@ public partial class MainWindow : Window
             {
                 ConnectionText.Text = "等待进入存档";
                 ActivityText.Text = "请在游戏窗口中选择单人存档。";
+                RefreshComposer();
             }
         }
         catch (Exception ex)
@@ -110,7 +115,10 @@ public partial class MainWindow : Window
             if (!_closing)
             {
                 Log(ex.Message);
-                await EndSessionAsync(session, ex.Message);
+                await EndSessionAsync(session, "游戏未启动，请查看设置。");
+                if (_closing || _session is not null) return;
+                Pages.SelectedItem = SettingsPage;
+                SettingsFeedback.Text = ex.Message;
             }
         }
     }
@@ -120,6 +128,7 @@ public partial class MainWindow : Window
         ApplyStatus(default);
         ConnectionText.Text = "伙伴服务已退出";
         ActivityText.Text = "游戏仍在运行。点击「重连伙伴服务」后核对旧动作。";
+        RefreshComposer();
         AddEntry("连接中断", "上一轮回复或动作结果可能尚未确认。可在连接恢复后核对旧动作，或到历史中查看已保存的对话。");
     }
 
@@ -173,16 +182,34 @@ public partial class MainWindow : Window
         if (picker.ShowDialog(this) == true) GameFolder.Text = picker.FolderName;
     }
 
+    private void GameFolderEdited(object sender, TextChangedEventArgs e)
+    {
+        if (GameFolderError is not null) GameFolderError.Text = "";
+    }
+
+    private void ShowSettingsError(Control field, TextBlock error, string message)
+    {
+        error.Text = message;
+        Pages.SelectedItem = SettingsPage;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            if (Pages.SelectedItem != SettingsPage) return;
+            field.BringIntoView();
+            field.Focus();
+            error.BringIntoView();
+        });
+    }
+
     private void SaveClicked(object sender, RoutedEventArgs e)
     {
         try
         {
             DesktopInstallation.SaveSettings(_root, Settings());
-            ActivityText.Text = "设置已保存，下次启动生效。";
+            SettingsFeedback.Text = "启动设置已保存，下次启动生效。";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            ActivityText.Text = "保存失败，请检查解压目录是否可写。";
+            SettingsFeedback.Text = "保存失败，请检查解压目录是否可写。";
             Log(ex.Message);
         }
     }
@@ -201,25 +228,41 @@ public partial class MainWindow : Window
 
     private async Task<bool> SendAsync(bool interrupt, string? selection = null, string? decisionId = null)
     {
-        if (_session is not { } session || _gameSessionId is not { } game) return false;
+        if (_submittingRequestId is not null || _session is not { } session || _gameSessionId is not { } game) return false;
         var text = selection ?? Input.Text.Trim();
         if (string.IsNullOrWhiteSpace(text)) return false;
         int view = _saveViewGeneration;
+        string requestId = Guid.NewGuid().ToString("N");
+        _submittingRequestId = requestId;
+        _submissionAccepted = false;
+        RefreshComposer();
         try
         {
             await session.PostAsync("/v1/commands", new {
-                gameSessionId = game, requestId = Guid.NewGuid().ToString("N"), text,
+                gameSessionId = game, requestId, text,
                 mode = interrupt ? "interrupt" : "send", decisionId,
             });
-            if (view != _saveViewGeneration) return false;
-            if (selection is null && Input.Text.Trim() == text) Input.Clear();
-            return true;
         }
         catch (Exception ex)
         {
-            if (view == _saveViewGeneration) AddEntry("发送失败", ex.Message);
-            return false;
+            if (view != _saveViewGeneration) return false;
+            if (!_submissionAccepted)
+            {
+                AddEntry("发送未确认", ex.Message);
+                return false;
+            }
         }
+        finally
+        {
+            if (_submittingRequestId == requestId)
+            {
+                _submittingRequestId = null;
+                RefreshComposer();
+            }
+        }
+        if (view != _saveViewGeneration) return false;
+        if (selection is null && Input.Text.Trim() == text) Input.Clear();
+        return true;
     }
 
     private async void ControlClicked(object sender, RoutedEventArgs e)
@@ -250,12 +293,24 @@ public partial class MainWindow : Window
         switch (Text(message, "type"))
         {
             case "status": ApplyStatus(payload); break;
-            case "submitted": AddEntry("你", Text(payload, "text")); break;
+            case "submitted":
+                var requestId = Text(payload, "requestId");
+                if (requestId == _submittingRequestId) _submissionAccepted = true;
+                if (_gameSessionId is not null && requestId.Length > 0) _pendingChatRequests.Add(requestId);
+                AddEntry("你", Text(payload, "text"));
+                RefreshComposer();
+                break;
             case "command" when Text(payload, "status") == "interrupting":
-                AddEntry("正在改派", "等待上一项动作停止并核对结果。"); break;
+                _chatActivity = "正在改派，等待上一项动作停止。";
+                AddEntry("正在改派", "等待上一项动作停止并核对结果。");
+                RefreshComposer();
+                break;
             case "life.care": AddEntry("提醒", Text(payload, "text")); break;
             case "chat.reply":
             case "life.chat.reply":
+                if (Text(payload, "status") is not ("accepted" or "queued" or "processing"))
+                    _pendingChatRequests.Remove(Text(payload, "requestId"));
+                RefreshComposer();
                 if (Flag(payload, "replyAlreadyDelivered")) break;
                 var reply = Text(payload, "replyText");
                 var error = Text(payload, "error");
@@ -301,18 +356,32 @@ public partial class MainWindow : Window
             if (usageChanged && Pages.SelectedItem == UsagePage) _ = ReadUsageAsync();
             return;
         }
-        ConnectionText.Text = _playerMode ? "游戏已连接 · AI 自己玩" : "游戏已连接 · 伙伴模式";
-        var action = Text(payload, "activity");
+        bool playerControls = _playerMode && _owner != "agent";
+        ConnectionText.Text = !_playerMode ? "游戏已连接 · 伙伴模式"
+            : playerControls ? "游戏已连接 · 玩家控制" : "游戏已连接 · AI 控制";
+        var reportedCommandId = Text(payload, "activeCommandId");
+        bool staleAction = reportedCommandId.Length > 0 && _seenResults.Contains(reportedCommandId);
+        _activeCommandId = staleAction ? "" : reportedCommandId;
+        var action = staleAction ? "idle" : Text(payload, "activity");
         var progress = Text(payload, "progress");
         var clockPauseOwner = Text(payload, "clockPauseOwner");
+        var execution = $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}";
+        var thinking = clockPauseOwner == "model-thinking" ? "伴侣正在规划或回复 · 游戏时钟已暂停" : "伴侣正在规划或回复";
+        bool isThinking = clockPauseOwner == "model-thinking" || Flag(payload, "thinking");
+        _chatActivity = _recoveryPending ? "请先核对旧动作。"
+            : _interrupting ? "正在等待旧动作停止并核对结果。"
+            : _activeCommandId.Length > 0 ? execution
+            : clockPauseOwner == "program-protection" ? "保护暂停 · 游戏时钟已暂停"
+            : isThinking ? thinking
+            : _paused ? "工作已暂停。"
+            : !_partnerReady ? "请在「设置」连接伙伴后发送消息。" : "";
         (AgentStateText.Text, ActivityText.Text) = _recoveryPending ? ("待核对", "已重连。请先核对旧动作，工作保持暂停。")
+            : playerControls ? ("玩家控制中", "点击「交给 AI」开始托管。")
             : _paused ? ("已暂停", "可在「今天」继续当前工作。")
-            : _playerMode && _owner != "agent" ? ("玩家接管", "玩家控制中。点击「交给 AI」开始托管。")
             : _interrupting ? ("交接中", "正在确认旧动作终态。")
-            : Text(payload, "activeCommandId").Length > 0 ? ("正在执行", $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}")
+            : _activeCommandId.Length > 0 ? ("正在执行", execution)
             : clockPauseOwner == "program-protection" ? ("已暂停", "保护暂停 · 游戏时钟已暂停")
-            : clockPauseOwner == "model-thinking" ? ("正在思考", "伴侣正在规划或回复 · 游戏时钟已暂停")
-            : Flag(payload, "thinking") ? ("正在思考", "伴侣正在规划或回复")
+            : isThinking ? ("正在思考", thinking)
             : !_partnerReady ? ("等待伙伴", "请在「设置」检查伙伴连接。")
             : action is "" or "idle" ? ("等待指令", "可以在「今天」和伙伴聊聊。") : ("正在工作", StatusLabel(action));
         if (_lastGameSessionId is not null && _lastGameSessionId != _gameSessionId)
@@ -385,6 +454,17 @@ public partial class MainWindow : Window
         string reason = result.TryGetProperty("error", out var error) ? Text(error, "message") : "";
         AddEntry("游戏回执", $"{operation} · {state} · 完成 {Count("completedCount")}，跳过 {Count("skippedCount")}，失败 {Count("failedCount")}"
             + (reason.Length > 0 ? $"\n{reason}" : ""));
+        if (_activeCommandId == id)
+        {
+            _activeCommandId = "";
+            if (!_interrupting) _chatActivity = "已收到游戏回执。";
+            if (AgentStateText.Text == "正在执行")
+            {
+                AgentStateText.Text = "已收到回执";
+                ActivityText.Text = $"{operation} · {state}";
+            }
+            RefreshComposer();
+        }
     }
 
     private static string StatusLabel(string value) => value switch
@@ -409,7 +489,8 @@ public partial class MainWindow : Window
     {
         bool connected = _gameSessionId is not null && !_closing;
         if (!connected) AgentStateText.Text = "未连接";
-        TimelineHint.Text = !connected ? "进入存档后，就可以在这里交代农活或和伙伴聊天。"
+        TimelineHint.Text = !connected ? (_session is null ? "点右上角「启动游戏」，然后在游戏窗口选择单人存档。"
+            : "选择单人存档后，就可以和伙伴聊天。")
             : _partnerReady ? "可以请伙伴照料农场，也可以和它聊聊。" : "连接伙伴后即可发送消息。";
         LaunchHeader.IsEnabled = _session is null && !_closing && !_importing;
         bool reconnect = _session?.CanReconnect == true;
@@ -418,19 +499,38 @@ public partial class MainWindow : Window
         ReconnectHeader.IsEnabled = reconnect && !_reconnecting && !_closing;
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
         RefreshImportControls();
-        SendButton.IsEnabled = Input.IsEnabled = connected && _partnerReady;
-        DecisionInput.IsEnabled = DecisionReplyButton.IsEnabled = DecisionChoices.IsEnabled = SendButton.IsEnabled;
-        InterruptButton.IsEnabled = SendButton.IsEnabled && !_paused && !_interrupting && (!_playerMode || _owner == "agent");
+        TodayOverview.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        ComposerPanel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        AuthorityButton.Visibility = connected && _playerMode ? Visibility.Visible : Visibility.Collapsed;
+        RefreshComposer();
         PauseButton.IsEnabled = connected && !_paused && !_interrupting;
         ResumeButton.IsEnabled = connected && !_recoveryPending && (_paused || _interrupting);
         CancelButton.IsEnabled = connected && !_recoveryPending;
         RecoverButton.Visibility = _recoveryPending ? Visibility.Visible : Visibility.Collapsed;
         RecoverButton.IsEnabled = connected && _recoveryPending;
-        AuthorityButton.Visibility = _playerMode ? Visibility.Visible : Visibility.Collapsed;
         AuthorityButton.IsEnabled = connected && (_owner == "agent" || (_partnerReady && !_interrupting));
         AuthorityButton.Content = _owner == "agent" ? "玩家接管（F9）" : "交给 AI";
         RefreshSaveViewControls();
         RefreshPartnerControls();
+    }
+
+    private void RefreshComposer()
+    {
+        bool connected = _gameSessionId is not null && !_closing;
+        bool canChat = connected && _partnerReady;
+        bool canInterrupt = !_playerMode || _owner == "agent";
+        Input.IsEnabled = DecisionInput.IsEnabled = canChat;
+        SendButton.IsEnabled = DecisionReplyButton.IsEnabled = DecisionChoices.IsEnabled = canChat && _submittingRequestId is null;
+        InterruptButton.Visibility = canInterrupt ? Visibility.Visible : Visibility.Collapsed;
+        InterruptButton.IsEnabled = SendButton.IsEnabled && canInterrupt && !_paused && !_interrupting;
+        SendShortcutHint.Visibility = canChat ? Visibility.Visible : Visibility.Collapsed;
+        ChatStatus.Text = !connected ? (_session is not null ? ActivityText.Text : "")
+            : _submittingRequestId is not null ? "正在提交消息…"
+            : _chatActivity.Length > 0 ? _chatActivity
+            : _pendingChatRequests.Count > 0 ? "已提交，等待 Agent 处理。" : "";
+        OwnershipHint.Text = !connected || !_playerMode || !_partnerReady ? ""
+            : _owner != "agent" ? "可以先聊天。让 AI 操作游戏，请先交给 AI。"
+            : ChatStatus.Text.Length == 0 ? "AI 正在控制游戏。" : "";
     }
 
     private void AddEntry(string label, string text)
@@ -442,6 +542,12 @@ public partial class MainWindow : Window
     }
 
     private void OpenWorkClicked(object sender, RoutedEventArgs e) => Pages.SelectedItem = WorkPage;
+
+    private void OpenChatClicked(object sender, RoutedEventArgs e)
+    {
+        Pages.SelectedItem = CommandPage;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => Input.Focus());
+    }
 
     private void Log(string line)
     {

@@ -128,8 +128,8 @@ public partial class MainWindow
     {
         string[] parts = value.Split(':');
         if (parts.Length != 3) return value;
-        string season = parts[1] switch { "spring" => "春", "summer" => "夏", "fall" => "秋", "winter" => "冬", _ => parts[1] };
-        return $"第 {parts[0]} 年 {season} {parts[2]} 日";
+        string? season = parts[1] switch { "spring" => "春季", "summer" => "夏季", "fall" => "秋季", "winter" => "冬季", _ => null };
+        return season is null ? value : $"第 {parts[0]} 年{season}第 {parts[2]} 天";
     }
 
     private async void MilestoneClicked(object sender, RoutedEventArgs e)
@@ -168,9 +168,16 @@ public partial class MainWindow
         DeferMilestoneButton.IsEnabled = connected && !_changingMilestone && status is "suggested" or "adopted";
         DismissDecisionButton.IsEnabled = connected && !_changingNotice && DecisionPicker.SelectedItem is DesktopDecision;
         RestoreDecisionButton.IsEnabled = connected && !_changingNotice && ClosedDecisionPicker.SelectedItem is DesktopDecision;
+        RefreshMessagesButton.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         RefreshMessagesButton.IsEnabled = connected && !_readingMessages;
-        OlderMessagesButton.IsEnabled = RefreshMessagesButton.IsEnabled && _olderMessagesBefore.HasValue;
-        ReadMessageButton.IsEnabled = RefreshMessagesButton.IsEnabled && MessagePicker.SelectedItem is DesktopCareMessage { Unread: true };
+        OlderMessagesButton.Visibility = _olderMessagesBefore.HasValue ? Visibility.Visible : Visibility.Collapsed;
+        OlderMessagesButton.IsEnabled = RefreshMessagesButton.IsEnabled;
+        bool canMarkRead = MessagePicker.SelectedItem is DesktopCareMessage { Unread: true };
+        ReadMessageButton.Visibility = canMarkRead ? Visibility.Visible : Visibility.Collapsed;
+        ReadMessageButton.IsEnabled = RefreshMessagesButton.IsEnabled && canMarkRead;
+        MessagePicker.Visibility = MessagePicker.HasItems ? Visibility.Visible : Visibility.Collapsed;
+        RestoreDecisionButton.Visibility = ClosedDecisionPicker.SelectedItem is DesktopDecision ? Visibility.Visible : Visibility.Collapsed;
+        ClosedDecisionPicker.Visibility = ClosedDecisionPicker.HasItems ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void MessageSelected(object sender, SelectionChangedEventArgs e)
@@ -252,7 +259,7 @@ public partial class MainWindow
         {
             await session.PostAsync("/v1/notices", new { gameSessionId = game, action, noticeId = decision.Id });
             if (view == _saveViewGeneration) feedback.Text = action == "dismiss"
-                ? "已关闭，可在「伙伴消息」恢复。" : "已恢复，可返回「指令」回复。";
+                ? "已关闭，可在「伙伴消息」恢复。" : "已恢复，可返回「今天」回复。";
         }
         catch (Exception ex) { if (view == _saveViewGeneration) feedback.Text = ex.Message; }
         finally
