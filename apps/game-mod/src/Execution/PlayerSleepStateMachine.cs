@@ -248,6 +248,19 @@ public sealed class PlayerSleepStateMachine : ISkillExecutionMachine
 
     private void NotifyPlayer(string message) => OnNotification?.Invoke(message);
 
+    internal static TileCoordinate? FindBedApproach(IWorldObserver observer, string location, TileCoordinate bed)
+    {
+        for (int radius = 1; radius <= 2; radius++)
+            for (int dx = -radius; dx <= radius; dx++)
+                for (int dy = -radius; dy <= radius; dy++)
+                {
+                    if (Math.Abs(dx) + Math.Abs(dy) != radius) continue;
+                    var tile = new TileCoordinate(bed.X + dx, bed.Y + dy);
+                    if (observer.IsTilePassable(location, tile) && !observer.IsWarpOrDoorTile(location, tile)) return tile;
+                }
+        return null;
+    }
+
     /// <summary>
     /// Creates the machine. <paramref name="navigation"/> must be a dedicated
     /// <see cref="NavigationStateMachine"/> instance owned by this machine (driven only
@@ -396,16 +409,7 @@ public sealed class PlayerSleepStateMachine : ISkillExecutionMachine
                 // Native bed collision depends on the farmer actually being in
                 // the house. First walk onto ordinary observed floor, then plan
                 // the owned-bed touch action using the current native location.
-                TileCoordinate? approach = null;
-                for (int radius = 1; radius <= 2 && approach is null; radius++)
-                    for (int dx = -radius; dx <= radius && approach is null; dx++)
-                        for (int dy = -radius; dy <= radius && approach is null; dy++)
-                        {
-                            if (Math.Abs(dx) + Math.Abs(dy) != radius) continue;
-                            var tile = new TileCoordinate(initialTarget.X + dx, initialTarget.Y + dy);
-                            if (_observer.IsTilePassable(_bedLocationName, tile)
-                                && !_observer.IsWarpOrDoorTile(_bedLocationName, tile)) approach = tile;
-                        }
+                var approach = FindBedApproach(_observer, _bedLocationName, initialTarget);
                 if (approach is null)
                 {
                     earlyTerminalResult = FinishExecution(ExecutionState.Failed,
@@ -954,7 +958,7 @@ public sealed class PlayerSleepStateMachine : ISkillExecutionMachine
         }
     }
 
-    private static bool SleepQuestionOpenUnlocked()
+    internal static bool SleepQuestionOpenUnlocked()
     {
         try
         {

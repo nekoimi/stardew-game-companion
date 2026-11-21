@@ -271,6 +271,7 @@ export async function startDesktopService(
             if (typeof body.expectedRevision !== "number") return respond(res, 400, { error: "缺少设定版本。" });
             const profile = store.updateProfile(save, object(body.patch), body.expectedRevision);
             runner.syncProfile(binding);
+            runner.changed();
             return respond(res, 200, profile);
           }
           case "/v2/memory": {

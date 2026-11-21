@@ -22,7 +22,7 @@ public partial class MainWindow
     private void InitializeSaveViews()
     {
         Bedtime.ItemsSource = (from hour in Enumerable.Range(18, 8)
-                              from minute in Enumerable.Range(0, hour == 25 ? 1 : 6)
+                              from minute in Enumerable.Range(0, 6)
                               select new BedtimeOption(hour * 100 + minute * 10, $"{hour % 24:00}:{minute * 10:00}")).ToArray();
         Bedtime.SelectedValuePath = nameof(BedtimeOption.Value);
         Bedtime.DisplayMemberPath = nameof(BedtimeOption.Label);
@@ -279,7 +279,7 @@ public partial class MainWindow
     private async void ReadProfileClicked(object sender, RoutedEventArgs e) => await ReadPreferencesAsync();
 
     private Task ReadPreferencesAsync() => UpdatePreferencesAsync("/v2/profile", game => new { gameSessionId = game, saveId = _saveId },
-        result => { ApplyProfile(result); ApplyInitiative(result); }, "已读取当前存档的伙伴设置。");
+        result => { ApplyProfile(result); ApplyInitiative(result); }, "已读取当前存档的偏好。");
 
     private async void SaveProfileClicked(object sender, RoutedEventArgs e)
     {
@@ -298,7 +298,7 @@ public partial class MainWindow
         };
         if (revision == 0) patch["onboarded"] = true;
         await UpdatePreferencesAsync("/v2/profile", game => new { gameSessionId = game, saveId = _saveId, expectedRevision = revision, patch },
-            ApplyProfile, "伙伴设置已保存。");
+            ApplyProfile, "存档偏好已保存。");
     }
 
     private async void SaveInitiativeClicked(object sender, RoutedEventArgs e) => await UpdatePreferencesAsync("/v2/initiative",

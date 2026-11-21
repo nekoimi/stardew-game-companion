@@ -197,7 +197,8 @@ export class CompanionTools {
           if (["complete", "cancel"].includes(action) && !goal) throw new Error("当前没有可完成或取消的目标。");
           result = store.updateItem(save, "goals", context.goalId,
             { text: params.text ?? goal?.text ?? "当前玩家目标", summary: params.summary ?? goal?.summary ?? "",
-              requestId: context.requestId, status: action === "complete" ? "completed" : action === "cancel" ? "cancelled" : "active" });
+              requestId: context.requestId, status: action === "complete" ? "completed" : action === "cancel" ? "cancelled" : "active",
+              continuation: goal?.continuation ?? "continue" });
         } else if (operation === "set_goal_continuation") {
           if (params.status !== "continue" && params.status !== "wait") throw new Error("续作状态无效。");
           if (params.status === "wait" && params.next_time === undefined && params.next_day !== true) {

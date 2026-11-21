@@ -142,7 +142,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     {
         if (!PlayerModeEnabled || !Context.IsWorldReady || Game1.IsMultiplayer) return;
         if (_authority is not { AgentOwns: true }) return;
-        if (Game1.timeOfDay < 2500) return;
+        if (Game1.timeOfDay < 2500 || _dayTransition || Game1.newDay || Game1.showingEndOfNightStuff) return;
         if (_thinking is null || _thinking.FailureReason != null || _thinking.ActiveLeaseId != null) return;
         if (_coordinator is null || _coordinator.GetActivityStatus() != "idle") return;
         _thinking.StopForFailure("深夜无执行动作且无模型回合，已保护暂停防止空站昏倒；新回合或接管自动恢复。");

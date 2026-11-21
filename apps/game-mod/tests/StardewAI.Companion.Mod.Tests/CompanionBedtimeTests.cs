@@ -90,7 +90,7 @@ public class CompanionBedtimeTests
         var tile = new TileCoordinate(60, 15);
         var bed = new TileCoordinate(10, 10);
         cache.Store(4, 2400, "Farm", tile, "FarmHouse", bed, 2000, 40);
-        Assert.True(cache.TryGet(4, 2400, "Farm", tile, "FarmHouse", bed, 2020, out int minutes));
+        Assert.True(cache.TryGet(4, 2400, "Farm", tile, "FarmHouse", bed, 2020, out int? minutes));
         Assert.Equal(40, minutes);
         Assert.False(cache.TryGet(4, 2400, "Farm", tile, "FarmHouse", bed, 2030, out _));
         Assert.False(cache.TryGet(4, 2400, "Town", tile, "FarmHouse", bed, 2010, out _));

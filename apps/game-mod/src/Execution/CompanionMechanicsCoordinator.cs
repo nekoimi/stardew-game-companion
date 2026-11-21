@@ -256,7 +256,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
         _navigationMachine = new NavigationStateMachine(_actor, _observer, _navigator, _mapGraph, _avatar, log);
         _navigationMachine.OnCompleted += HandleNavigationCompleted;
         _navigationMachine.OnNotification += msg => OnNotification?.Invoke(msg);
-        Rest = new CompanionRestController(_actor, new NavigationStateMachine(_actor, _observer, _navigator, _mapGraph, _avatar, log));
+        Rest = new CompanionRestController(_actor, new NavigationStateMachine(_actor, _observer, _navigator, _mapGraph, _avatar, log), _observer);
     }
 
     private readonly Action<string, StardewModdingAPI.LogLevel>? _log;
@@ -277,7 +277,10 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
         UpdateRouteObservation();
         extensionMachine?.Update(time, tickCount);
         if (_actor is PlayerActor binding && !binding.BindingValid) { _eatingMachine?.Update(time, tickCount); PlayerAuthority?.Release("actor-binding-lost"); return; }
-        if (!ActorGuards.IsPlayerBound(_actor)) Rest.Update(time, tickCount, ActiveMachine);
+        if (ActorGuards.IsPlayerBound(_actor))
+            Rest.UpdatePlayerBedtime(PlayerAuthority?.AgentOwns == true && _sleepMachine?.IsExecuting != true
+                && PresetBusinessAllowed?.Invoke() != false, ActiveMachine);
+        else Rest.Update(time, tickCount, ActiveMachine);
         if (_restRequest != null)
         {
             if (!Rest.IsResting) FinishRest("succeeded");
@@ -760,6 +763,12 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             if (ActorGuards.IsPlayerBound(_actor) && !skillId.StartsWith("inspect-") && PlayerAuthority?.AgentOwns != true) {
                 rejectResult = BuildRejection(payload, "PLAYER_CONTROL_NOT_HELD", "Agent does not hold player control.", false); return false;
             }
+            if (ActorGuards.IsPlayerBound(_actor) && Rest.BedtimeSchedule?.ReturnDue == true && !skillId.StartsWith("inspect-")
+                && skillId is not ("sleep" or "native-advance" or "native-answer" or "native-menu-select" or "navigate-to" or "clear-debris"))
+            {
+                rejectResult = BuildRejection(payload, "BEDTIME", "Return for sleep. Keep unfinished work for tomorrow.", false);
+                return false;
+            }
             if (skillId == "rest")
             {
                 if (ActorGuards.IsPlayerBound(_actor) || payload.Parameters.TargetStamina is not float target
@@ -784,7 +793,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             }
             if (skillId=="native-menu-select") return TryAcceptPlayerInteraction(payload,envelope,out rejectResult);
             if (ActorGuards.IsPlayerBound(_actor) && !skillId.StartsWith("inspect-")
-                && !(skillId == "sleep" && _sleepMachine?.CanResumeOwnedOvernight == true)
+                && !(skillId == "sleep" && (_sleepMachine?.CanResumeOwnedOvernight == true || PlayerSleepStateMachine.SleepQuestionOpenUnlocked()))
                 && TryDescribeNativeUiBlock(out var uiCode,out var uiMessage, skillId is "navigate-to" or "talk-npc" or "interact-tile" or "open-shop" or "purchase-items")) {
                 rejectResult=BuildRejection(payload,uiCode,uiMessage,true,NativeUiDetails()); return false;
             }
@@ -837,7 +846,8 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                 if (!_sleepCompletionBound) { _sleepMachine.OnCompleted += r => CompleteExecution(r.ToTransportPayload() with { SkillId = _sleepSkillId }); _sleepCompletionBound=true; }
                 _currentExecuteEnvelope=envelope; _currentExecuteCommandId=payload.CommandId;
                 _sleepSkillId = "sleep";
-                var started = _sleepMachine.Start(new PlayerSleepRequest(payload.CommandId,payload.TaskId,envelope.IdempotencyKey,payload.ExpectedWorldRevision,payload.Budgets.MaxGameMinutes,payload.CancelPolicy),out var error);
+                var started = _sleepMachine.Start(new PlayerSleepRequest(payload.CommandId,payload.TaskId,envelope.IdempotencyKey,payload.ExpectedWorldRevision,payload.Budgets.MaxGameMinutes,payload.CancelPolicy),out var error,
+                    answerExistingQuestion: PlayerSleepStateMachine.SleepQuestionOpenUnlocked());
                 rejectResult = error?.ToTransportPayload(); return started;
             }
 
@@ -1726,7 +1736,8 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                 RestState: Rest.State,
                 Bedtime: Rest.Bedtime,
                 SleepStartedAt: Rest.SleepStartedAt,
-                ActiveCommandId: activeMachine is not null || _restRequest != null ? _currentExecuteCommandId : null
+                ActiveCommandId: activeMachine is not null || _restRequest != null ? _currentExecuteCommandId : null,
+                BedtimeSchedule: Rest.BedtimeSchedule
             );
 
             // Farm work describes the Farm even while the companion is indoors.
@@ -2177,6 +2188,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             PurchaseStateMachine => "purchasing",
             NativeActionStateMachine native => DescribeNativeActivity(native.CurrentRequest?.Kind),
             NavigationStateMachine => "navigating",
+            PlayerSleepStateMachine sleep => sleep.Phase == "waiting-for-morning" ? "sleeping" : "returning-home",
             _ => "working"
         };
     }
@@ -2208,7 +2220,8 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             "watering" => "浇水", "harvesting" => "收获", "navigating" => "赶路",
             "chopping" => "砍树", "clearing" => "清理", "picking-up" => "拾取",
             "refilling" => "补水", "depositing" => "存放物品", "withdrawing" => "取物",
-            "planting" => "播种", "hoeing" => "锄地", "eating" => "进食", _ => "工作中"
+            "planting" => "播种", "hoeing" => "锄地", "eating" => "进食",
+            "returning-home" => "回家休息", "sleeping" => "过夜保存", _ => "工作中"
         };
         return machine.TotalTargets > 0
             ? $"{label} {Math.Clamp(machine.CurrentTargetIndex, 0, machine.TotalTargets)}/{machine.TotalTargets}" : label;

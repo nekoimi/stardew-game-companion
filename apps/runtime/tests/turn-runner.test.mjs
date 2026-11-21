@@ -256,6 +256,44 @@ test("a persisted goal resumes only after authority is handed back", async () =>
   } finally { await runner.stop(); store.close(); }
 });
 
+test("the saved player bedtime triggers native sleep, then replans the same waiting goal from a fresh morning observation", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  const save = binding.saveId;
+  store.updateProfile(save, { bedtime: 2200 }, 0);
+  store.updateItem(save, "goals", "irrigation", { status: "active", text: "照料作物", requestId: "farm-request",
+    summary: "复查剩余待浇作物", continuation: "wait", waitNextDay: true, updatedDay: "1:spring:3" });
+  game.snapshot = { companion: { locationId: "Town", bedtime: 2200, bedtimeSchedule: { latestDeparture: 2100, returnDue: true } },
+    world: { year: 1, season: "spring", dayOfMonth: 3, timeOfDay: 2100, native: { playerCanMove: true } } };
+  game.state.controlOwner = "human";
+  const calls = [];
+  const observations = [];
+  game.nativeResult = (commandId, skill, parameters) => {
+    calls.push(skill);
+    assert.deepEqual(calls, ["sleep"]);
+    assert.equal(parameters.locationId, "Town");
+    return { commandId, skillId: skill, terminalState: "succeeded", completedCount: 1 };
+  };
+  game.observe = async () => {
+    game.snapshot = { companion: { locationId: "FarmHouse", bedtime: 2200 },
+      world: { year: 1, season: "spring", dayOfMonth: 4, timeOfDay: 600, isRaining: true } };
+    return game.snapshot;
+  };
+  const runner = new TurnRunner(game, { async *generate(input) { observations.push(input); yield done(); } }, () => undefined, "", store);
+  try {
+    game.emit("changed");
+    await setTimeout(800);
+    assert.deepEqual(calls, []);
+    game.state.controlOwner = "agent";
+    game.emit("changed");
+    await waitFor(() => observations.length === 1, 450);
+    assert.deepEqual(calls, ["sleep"]);
+    assert.match(observations[0].messages.at(-1).text, /照料作物.*复查剩余待浇作物/s);
+    assert.match(observations[0].instructions, /"dayOfMonth":4.*"isRaining":true/);
+    assert.equal(store.items(save, "goals")[0].id, "irrigation");
+  } finally { await runner.stop(); store.close(); }
+});
+
 test("a tool-boundary message supersedes an old proposed action and is passed to the next model step", async () => {
   const game = new FakeGame();
   let finish;

@@ -434,7 +434,7 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
-                                <Button x:Name="ReadProfileButton" Content="重新读取伙伴设置" HorizontalAlignment="Left" Click="ReadProfileClicked" Visibility="Collapsed" />
+                                <Button x:Name="ReadProfileButton" Content="重新读取存档偏好" HorizontalAlignment="Left" Click="ReadProfileClicked" Visibility="Collapsed" />
                                 <StackPanel x:Name="ProfileFields" Margin="0,8,0,0">
                                     <UniformGrid Columns="2">
                                         <StackPanel Margin="0,0,12,10">
@@ -467,12 +467,13 @@
                                                 <ComboBoxItem Content="健谈" Tag="chatty" />
                                             </ComboBox>
                                         </StackPanel>
-                                        <StackPanel Margin="0,0,12,10">
-                                            <TextBlock Text="就寝时间" Margin="0,0,0,4" />
-                                            <ComboBox x:Name="Bedtime" AutomationProperties.Name="就寝时间" />
-                                        </StackPanel>
                                     </UniformGrid>
-                                    <Button x:Name="SaveProfileButton" Content="保存伙伴设置" HorizontalAlignment="Left" Click="SaveProfileClicked" />
+                                    <Separator Margin="0,6,0,12" />
+                                    <TextBlock Text="就寝时间" Margin="0,0,0,4" />
+                                    <ComboBox x:Name="Bedtime" Width="200" HorizontalAlignment="Left" AutomationProperties.Name="就寝时间" />
+                                    <TextBlock Text="两种模式都按游戏时间提前返程。AI 托管主角时会自动睡觉并进入下一天。" TextWrapping="Wrap"
+                                               Foreground="{StaticResource MutedInk}" Margin="0,6,0,10" />
+                                    <Button x:Name="SaveProfileButton" Content="保存存档偏好" HorizontalAlignment="Left" Click="SaveProfileClicked" />
                                     <Separator Margin="0,12" />
                                     <CheckBox x:Name="Initiative" Content="空闲时主动帮忙" Margin="0,0,0,8" />
                                     <TextBlock Text="主动帮忙时的偏好" Margin="0,0,0,4" />

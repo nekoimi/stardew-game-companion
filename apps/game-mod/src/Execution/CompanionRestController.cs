@@ -5,7 +5,8 @@ using StardewValley.Objects;
 using StardewAI.Companion.Mod.Adapters;
 using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.Menus;
-using StardewAI.Companion.Mod.Navigation;
+using StardewAI.Companion.Mod.Observation;
+using StardewAI.Companion.Mod.Transport;
 
 namespace StardewAI.Companion.Mod.Execution;
 
@@ -14,28 +15,59 @@ public sealed class CompanionRestController
 {
     private readonly IFarmerActor _actor;
     private readonly NavigationStateMachine _navigation;
+    private readonly BedtimeRoutePlanner _bedtimeRoute;
+    private readonly Func<string, TileCoordinate, TileCoordinate?>? _findPlayerBedApproach;
     private int _lastAttemptTime = -1;
-    private int _lastPreviewTime = -1;
-    private NavigationSearch<Dictionary<string, object>>? _bedtimePreview;
-    private (int Day, int Bedtime, string Origin, TileCoordinate Tile, string House, TileCoordinate Bed, int Clock) _previewOrigin;
-
-    private void ClearBedtimePreview()
-    {
-        _bedtimePreview?.Dispose();
-        _bedtimePreview = null;
-    }
     private bool _cancelRequested;
-    private readonly CompanionBedtimeRouteEstimate _routeEstimate = new();
+    private string? _windingDownPlayerTask;
     private string? _recoveryFailure;
     public bool Paused { get; set; }
     public bool TaskPaused { get; set; }
-    public int Bedtime { get; set; } = CompanionBedtime.Default;
+    private int _bedtime = CompanionBedtime.Default;
+    public int Bedtime
+    {
+        get => _bedtime;
+        set
+        {
+            int bedtime = CompanionBedtime.Normalize(value);
+            if (bedtime == _bedtime) return;
+            _bedtime = bedtime;
+            _bedtimeRoute.Reset();
+            BedtimeSchedule = null;
+        }
+    }
     public string State { get; private set; } = "awake";
     public string? Reason { get; private set; }
     public int? SleepStartedAt { get; private set; }
     public bool IsDaytimeRest { get; private set; }
     public bool IsResting => State != "awake";
     public float? RecoveryTarget { get; private set; }
+    internal BedtimeScheduleSnapshot? BedtimeSchedule { get; private set; }
+
+    internal void UpdatePlayerBedtime(bool enabled, ISkillExecutionMachine? work)
+    {
+        int now = Game1.timeOfDay;
+        if (!enabled || Paused || Game1.newDay || Game1.showingEndOfNightStuff || Game1.eventUp ||
+            !CompanionBedtime.ShouldPreviewRoute(now, Bedtime))
+        {
+            _bedtimeRoute.StopPreview();
+            BedtimeSchedule = null;
+            if (!enabled) _windingDownPlayerTask = null;
+            return;
+        }
+
+        var house = Game1.getLocationFromName("FarmHouse") as FarmHouse;
+        var spot = house?.GetPlayerBed()?.GetBedSpot();
+        TileCoordinate? target = spot is { } bed ? new(bed.X, bed.Y) : null;
+        BedtimeSchedule = _bedtimeRoute.Update(Game1.Date.TotalDays, now, Bedtime, house?.NameOrUniqueName, target,
+            _findPlayerBedApproach);
+        if (work?.ActiveTaskId is not { } taskId) _windingDownPlayerTask = null;
+        else if (BedtimeSchedule.ReturnDue || _windingDownPlayerTask == taskId)
+        {
+            _windingDownPlayerTask = taskId;
+            CancelAfterSafePoint(work, "BEDTIME: wrapping up for sleep; preserve unfinished work for tomorrow.");
+        }
+    }
 
     public void BeginDaytimeRest(float target)
     {
@@ -49,8 +81,14 @@ public sealed class CompanionRestController
         Reason = $"回床恢复至 {target:0} 体力。";
     }
 
-    public CompanionRestController(IFarmerActor actor, NavigationStateMachine navigation)
-    { _actor = actor; _navigation = navigation; }
+    public CompanionRestController(IFarmerActor actor, NavigationStateMachine navigation, IWorldObserver? observer = null)
+    {
+        _actor = actor;
+        _navigation = navigation;
+        _bedtimeRoute = new(actor, navigation);
+        if (observer is not null)
+            _findPlayerBedApproach = (home, tile) => _actor.LocationName == home ? tile : PlayerSleepStateMachine.FindBedApproach(observer, home, tile);
+    }
 
     public void RestoreSleep(int startedAt, bool daytime = false)
     {
@@ -84,9 +122,8 @@ public sealed class CompanionRestController
         IsDaytimeRest = false;
         _cancelRequested = false;
         _lastAttemptTime = -1;
-        _lastPreviewTime = -1;
-        ClearBedtimePreview();
-        _routeEstimate.Clear();
+        _bedtimeRoute.Reset();
+        BedtimeSchedule = null;
         _recoveryFailure = null;
         if (_actor.GameFarmer is { } farmer)
         {
@@ -104,13 +141,17 @@ public sealed class CompanionRestController
     private void FinishWorkAtSafePoint(ISkillExecutionMachine? work)
     {
         if (work?.IsExecuting != true || _cancelRequested) return;
-        // Pause boundaries finish and verify the current effect before the partial
-        // result is emitted, preserving accurate progress for tomorrow.
-        if (!work.IsPaused) { work.RequestPause(); return; }
-        work.RequestCancel(IsDaytimeRest
+        _cancelRequested = CancelAfterSafePoint(work, IsDaytimeRest
             ? "LOW_STAMINA_REST: wrapping up to recover in bed; preserve unfinished work until awake."
             : "BEDTIME: wrapping up for sleep; preserve unfinished work for tomorrow.");
-        _cancelRequested = true;
+    }
+
+    private static bool CancelAfterSafePoint(ISkillExecutionMachine work, string reason)
+    {
+        // Pause boundaries verify the current effect before emitting the partial result.
+        if (!work.IsPaused) { work.RequestPause(); return false; }
+        work.RequestCancel(reason);
+        return true;
     }
 
     private static bool CanEnterBed(GameLocation house, BedFurniture bed, TileCoordinate origin, TileCoordinate target)
@@ -133,7 +174,7 @@ public sealed class CompanionRestController
     public void Update(GameTime? time, long tick, ISkillExecutionMachine? work)
     {
         if (Paused || TaskPaused || Game1.paused || Game1.eventUp || CompanionMenuClock.HasBlockingMenu)
-        { ClearBedtimePreview(); return; }
+        { _bedtimeRoute.StopPreview(); return; }
         // The same native time boundary applies to movement and resource recovery.
         if (time is not null && !Game1.shouldTimePass()) return;
         int now = Game1.timeOfDay;
@@ -184,13 +225,18 @@ public sealed class CompanionRestController
                 State = "winding-down";
                 Reason = IsDaytimeRest ? "体力耗尽，回床恢复。" : null;
             }
-            else if (!CompanionBedtime.ShouldPreviewRoute(now, Bedtime)) return;
+            else if (!CompanionBedtime.ShouldPreviewRoute(now, Bedtime))
+            {
+                BedtimeSchedule = null;
+                return;
+            }
         }
         var house = Game1.getLocationFromName("FarmHouse") as FarmHouse;
         var bed = house?.GetPlayerBed();
         if (house == null || bed == null)
         {
-            if (IsResting || CompanionBedtime.ShouldWindDown(now, Bedtime, 30))
+            BedtimeSchedule = _bedtimeRoute.Update(Game1.Date.TotalDays, now, Bedtime, null, null);
+            if (IsResting || BedtimeSchedule.ReturnDue)
             {
                 State = "waiting-for-bed"; Reason = "家里没有可用的床。";
                 FinishWorkAtSafePoint(work);
@@ -201,34 +247,11 @@ public sealed class CompanionRestController
         var target = new TileCoordinate(spot.X, spot.Y);
         if (!IsResting)
         {
-            int day = Game1.Date.TotalDays;
-            if (!_routeEstimate.TryGet(day, Bedtime, _actor.LocationName, _actor.Tile, house.NameOrUniqueName, target, now, out int travel))
-            {
-                if (_bedtimePreview is not null && (_previewOrigin.Day != day || _previewOrigin.Bedtime != Bedtime ||
-                    _previewOrigin.Origin != _actor.LocationName || _previewOrigin.House != house.NameOrUniqueName || _previewOrigin.Bed != target ||
-                    Math.Abs(_previewOrigin.Tile.X - _actor.Tile.X) + Math.Abs(_previewOrigin.Tile.Y - _actor.Tile.Y) > 12))
-                    ClearBedtimePreview();
-                if (_bedtimePreview is null && _lastPreviewTime != now)
-                {
-                    _previewOrigin = (day, Bedtime, _actor.LocationName, _actor.Tile, house.NameOrUniqueName, target, now);
-                    _bedtimePreview = _navigation.BeginPreviewRoute(house.NameOrUniqueName, target);
-                }
-                // Keep bedtime conservative while the estimate spans multiple frames.
-                travel = 60;
-                if (_bedtimePreview is not null && _bedtimePreview.Advance())
-                {
-                    var route = _bedtimePreview.Result;
-                    travel = route.TryGetValue("estimatedGameMinutes", out var estimate) && estimate is int minutes ? minutes : 60;
-                    _routeEstimate.Store(day, Bedtime, _previewOrigin.Origin, _previewOrigin.Tile,
-                        house.NameOrUniqueName, target, _previewOrigin.Clock, travel);
-                    _lastPreviewTime = now;
-                    ClearBedtimePreview();
-                }
-            }
-            if (!CompanionBedtime.ShouldWindDown(now, Bedtime, travel)) return;
+            BedtimeSchedule = _bedtimeRoute.Update(Game1.Date.TotalDays, now, Bedtime, house.NameOrUniqueName, target);
+            if (!BedtimeSchedule.ReturnDue) return;
             State = "winding-down";
         }
-        ClearBedtimePreview();
+        _bedtimeRoute.StopPreview();
         if (work?.IsExecuting == true)
         {
             FinishWorkAtSafePoint(work);

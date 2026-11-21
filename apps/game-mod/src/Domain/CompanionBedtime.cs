@@ -7,11 +7,16 @@ public static class CompanionBedtime
     public static int Normalize(int time)
     {
         if (time is >= 0 and <= 100) time += 2400;
-        return time is >= 1800 and <= 2500 && time % 100 < 60 ? time : Default;
+        return time is >= 1800 and <= 2550 && time % 100 <= 50 && time % 10 == 0 ? time : Default;
     }
     public static int Minutes(int time) => time / 100 * 60 + time % 100;
+    public static int ReturnHomeAt(int bedtime, int travelMinutes)
+    {
+        int latest = Math.Max(360, Minutes(Normalize(bedtime)) - Math.Max(30, travelMinutes + 20));
+        return latest / 60 * 100 + latest % 60;
+    }
     public static bool ShouldWindDown(int now, int bedtime, int travelMinutes) =>
-        Minutes(now) >= Minutes(Normalize(bedtime)) - Math.Max(30, travelMinutes + 20);
+        now >= ReturnHomeAt(bedtime, travelMinutes);
     public static bool ShouldPreviewRoute(int now, int bedtime) =>
         Minutes(now) >= Minutes(Normalize(bedtime)) - RoutePreviewWindowMinutes;
     public static bool NeedsDaytimeRest(float stamina, int maxStamina) =>
@@ -23,11 +28,11 @@ public static class CompanionBedtime
 /// <summary>A short-lived estimate, not a reusable movement route. Dispatch always plans against the live world.</summary>
 internal sealed class CompanionBedtimeRouteEstimate
 {
-    private (int Day, int Bedtime, string Origin, TileCoordinate Tile, string House, TileCoordinate Bed, int Clock, int Minutes)? _value;
+    private (int Day, int Bedtime, string Origin, TileCoordinate Tile, string House, TileCoordinate Bed, int Clock, int? Minutes)? _value;
 
-    public bool TryGet(int day, int bedtime, string origin, TileCoordinate tile, string house, TileCoordinate bed, int now, out int minutes)
+    public bool TryGet(int day, int bedtime, string origin, TileCoordinate tile, string house, TileCoordinate bed, int now, out int? minutes)
     {
-        minutes = 60;
+        minutes = null;
         if (_value is not { } cached) return false;
         int age = CompanionBedtime.Minutes(now) - CompanionBedtime.Minutes(cached.Clock);
         if (cached.Day != day || cached.Bedtime != CompanionBedtime.Normalize(bedtime) ||
@@ -38,7 +43,7 @@ internal sealed class CompanionBedtimeRouteEstimate
         return true;
     }
 
-    public void Store(int day, int bedtime, string origin, TileCoordinate tile, string house, TileCoordinate bed, int now, int minutes) =>
-        _value = (day, CompanionBedtime.Normalize(bedtime), origin, tile, house, bed, now, Math.Max(0, minutes));
+    public void Store(int day, int bedtime, string origin, TileCoordinate tile, string house, TileCoordinate bed, int now, int? minutes) =>
+        _value = (day, CompanionBedtime.Normalize(bedtime), origin, tile, house, bed, now, minutes);
     public void Clear() => _value = null;
 }

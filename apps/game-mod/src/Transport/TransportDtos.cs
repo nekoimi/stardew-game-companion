@@ -63,7 +63,14 @@ public sealed record CompanionSnapshot(
     [property: JsonPropertyName("restState"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RestState = null,
     [property: JsonPropertyName("bedtime"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Bedtime = null,
     [property: JsonPropertyName("sleepStartedAt"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? SleepStartedAt = null,
-    [property: JsonPropertyName("activeCommandId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ActiveCommandId = null
+    [property: JsonPropertyName("activeCommandId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ActiveCommandId = null,
+    [property: JsonPropertyName("bedtimeSchedule"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BedtimeScheduleSnapshot? BedtimeSchedule = null
+);
+
+public sealed record BedtimeScheduleSnapshot(
+    [property: JsonPropertyName("latestDeparture")] int LatestDeparture,
+    [property: JsonPropertyName("travelMinutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TravelMinutes,
+    [property: JsonPropertyName("returnDue")] bool ReturnDue
 );
 
 public sealed record MatureCropTile(
@@ -222,7 +229,8 @@ public sealed record NativeUiSnapshot(
     [property: JsonPropertyName("playerActionSupport"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? PlayerActionSupport = null,
     [property: JsonPropertyName("eventIsFestival")] bool EventIsFestival = false,
     [property: JsonPropertyName("eventAllowsMovement")] bool EventAllowsMovement = false,
-    [property: JsonPropertyName("namingInput"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, object>? NamingInput = null
+    [property: JsonPropertyName("namingInput"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, object>? NamingInput = null,
+    [property: JsonPropertyName("sleepQuestion"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool SleepQuestion = false
 );
 
 /// <summary>Structured protective-hold state carried in the native UI snapshot.</summary>

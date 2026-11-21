@@ -33,6 +33,8 @@ export class TurnRunner {
   private wakeTimer?: NodeJS.Timeout;
   private stopping = false;
   private readonly wakeSignatures = new Map<string, string>();
+  private bedtimeAttempt?: string;
+  private bedtimeRecovery?: string;
   private observedOwner = false;
 
   constructor(private readonly game: GameConnection, private model: ModelContext | undefined,
@@ -47,6 +49,9 @@ export class TurnRunner {
         this.active?.abort.abort();
       }
       if (binding && this.previousBinding?.saveId !== binding.saveId) this.messages.length = 0;
+      if (!binding || this.previousBinding?.gameSessionId !== binding.gameSessionId) {
+        this.bedtimeRecovery = undefined;
+      }
       if (binding && this.uncertain && (this.uncertain.binding.gameSessionId !== binding.gameSessionId
         || this.uncertain.binding.saveId !== binding.saveId)) this.uncertain = undefined;
       if (binding && !this.active && !this.uncertain) {
@@ -198,12 +203,12 @@ export class TurnRunner {
   }
 
   private startTurn(binding: GameBinding, requestId: string, goalId: string, text: string, autonomous = false,
-                    originalRequestId = requestId): void {
+                    originalRequestId = requestId, bedtimeOnly = false): void {
     if (!this.model) return;
     const turn: Turn = { id: randomUUID(), requestId, originalRequestId, goalId, binding, abort: new AbortController(), additional: [],
       requests: [requestId], settled: Promise.resolve() };
     this.active = turn;
-    turn.settled = this.run(turn, this.model, text, autonomous);
+    turn.settled = this.run(turn, this.model, text, autonomous, bedtimeOnly);
     this.changed();
   }
 
@@ -220,12 +225,31 @@ export class TurnRunner {
       || !this.observedOwner || this.game.state.paused === true || this.game.state.interrupting === true
       || this.game.state.recoveryPending === true || (this.game.actorMode === "player" && this.game.state.controlOwner !== "agent")) return;
     const save = binding.saveId;
-    if (this.store.items(save, "decisions").some(item => item.status === "pending")) return;
+    if (this.bedtimeNeedsSleep(binding)) {
+      this.startTurn(binding, `bedtime-${randomUUID()}`, "", "", true, undefined, true);
+      return;
+    }
+    const native = object(object(this.game.snapshot?.world).native);
+    if (native.endOfNight === true) return;
+    const actor = object(this.game.snapshot?.companion);
+    if (this.game.actorMode === "companion" && (object(actor.bedtimeSchedule).returnDue === true
+      || ["winding-down", "returning-home", "waiting-for-bed", "sleeping", "resting"].includes(String(this.game.state.activity ?? actor.restState)))) return;
     const goal = this.store.items(save, "goals").findLast(item => item.status === "active");
+    const date = gameDate(this.game.snapshot);
+    if (this.bedtimeRecovery && this.bedtimeRecovery === date) {
+      this.bedtimeRecovery = undefined;
+      const requestId = `bedtime-recovery-${randomUUID()}`;
+      const decisionPending = this.store.items(save, "decisions").some(item => item.status === "pending");
+      const current = decisionPending ? undefined : goal;
+      this.startTurn(binding, requestId, current?.id ?? randomUUID(),
+        "自动就寝未完成。检查原生回执和当前状态，处理回家或就寝的障碍。需要玩家明确选择时等待确认。", true,
+        typeof current?.requestId === "string" ? current.requestId : requestId);
+      return;
+    }
+    if (this.store.items(save, "decisions").some(item => item.status === "pending")) return;
     const profile = this.store.profile(save);
     if (!goal && (profile.initiativeMode !== "free" || profile.idlePreference === "wait")) return;
     if (goal && goal.continuation !== "continue" && goal.continuation !== "wait") return;
-    const date = gameDate(this.game.snapshot);
     if (goal?.continuation === "wait") {
       const due = goal.waitNextDay === true ? date && date !== goal.updatedDay
         : typeof time === "number" && typeof goal.wakeTime === "number" && time >= goal.wakeTime;
@@ -235,14 +259,49 @@ export class TurnRunner {
       || row.terminalState === "partially-succeeded");
     const revision = goal ? JSON.stringify([goal.id, goal.text, goal.continuation, goal.wakeTime, goal.updatedDay,
       lastPerformed?.commandId]) : date;
-    const signature = `${binding.gameSessionId}:${revision}`;
+    const signature = `${binding.gameSessionId}:${date}:${revision}`;
     if (this.wakeSignatures.get(save) === signature) return;
     this.wakeSignatures.set(save, signature);
     const originalRequest = typeof goal?.requestId === "string" ? goal.requestId : "";
     const requestId = `autonomy-${randomUUID()}`;
     this.startTurn(binding, requestId, goal?.id ?? randomUUID(),
-      goal ? `继续当前目标：${goal.text}\n按实际观察与回执处理剩余工作。`
+      goal ? `继续当前目标：${goal.text}\n已记录的进度或下一步：${goal.summary || "待核对"}\n按当天实际观察与回执处理剩余工作。`
         : "按当前存档的主动帮忙偏好，观察当天需要照料的农活，然后处理适合的事项。", true, originalRequest || requestId);
+  }
+
+  private bedtimeNeedsSleep(binding: GameBinding): { attempt: string; locationId: string } | undefined {
+    if (this.game.actorMode !== "player" || this.game.state.controlOwner !== "agent"
+      || this.game.state.paused === true || this.game.state.interrupting === true || this.game.state.recoveryPending === true
+      || this.game.state.activeCommandId || this.uncertain) return;
+    const snapshot = this.game.snapshot;
+    const actor = object(snapshot?.companion);
+    const world = object(snapshot?.world);
+    const native = object(world.native);
+    const date = gameDate(snapshot);
+    const schedule = object(actor.bedtimeSchedule);
+    if (schedule.returnDue !== true || !date || typeof actor.locationId !== "string" || !actor.locationId
+      || actor.bedtime !== object(this.store?.profile(binding.saveId).profile).bedtime
+      || typeof world.timeOfDay !== "number" || typeof schedule.latestDeparture !== "number" || world.timeOfDay < schedule.latestDeparture
+      || native.eventUp === true || native.endOfNight === true || native.clockPauseOwner === "external"
+      || (native.sleepQuestion !== true && (native.activeMenu || native.playerCanMove !== true))) return;
+    const attempt = JSON.stringify([binding.gameSessionId, date, actor.bedtime]);
+    return attempt === this.bedtimeAttempt ? undefined : { attempt, locationId: actor.locationId };
+  }
+
+  private async sleepAtBedtime(turn: Turn): Promise<JsonObject | undefined> {
+    const due = this.bedtimeNeedsSleep(turn.binding);
+    if (!due || turn.abort.signal.aborted) return;
+    this.bedtimeAttempt = due.attempt;
+    const receipt = await this.executeNative(turn, "sleep", { locationId: due.locationId });
+    if (!turn.abort.signal.aborted) {
+      this.assertBinding(turn.binding);
+      if (receipt.terminalState === "succeeded" || receipt.terminalState === "partially-succeeded") await this.game.observe();
+      else {
+        const error = object(receipt.error).message;
+        this.remind(turn.binding, "bedtime", "", `未能按时就寝。${typeof error === "string" ? error : "请查看游戏状态。"}`);
+      }
+    }
+    return receipt;
   }
 
   private remind(binding: GameBinding, kind: string, ref: string, text: string): void {
@@ -331,6 +390,7 @@ export class TurnRunner {
     const result = await this.game.control(action);
     if (action === "resume" || action === "handoff") {
       this.wakeSignatures.delete(binding.saveId);
+      this.bedtimeAttempt = undefined;
       this.changed();
     }
     return result;
@@ -343,7 +403,7 @@ export class TurnRunner {
     await this.active?.settled;
   }
 
-  private async run(turn: Turn, model: ModelContext, text: string, autonomous: boolean): Promise<void> {
+  private async run(turn: Turn, model: ModelContext, text: string, autonomous: boolean, bedtimeOnly: boolean): Promise<void> {
     const save = turn.binding.saveId;
     const history = this.store?.recentConversation(save) ?? this.messages;
     const messages: ModelMessage[] = [...history];
@@ -375,6 +435,16 @@ export class TurnRunner {
     };
     try {
       while (!signal.aborted) {
+        const sleep = await this.sleepAtBedtime(turn);
+        if (bedtimeOnly && !turn.additional.length) {
+          if (!signal.aborted && sleep && sleep.terminalState !== "succeeded") {
+            failure = `就寝未完成。${object(sleep.error).message ?? "请查看游戏状态。"}`;
+            if (sleep.terminalState !== "partially-succeeded") this.bedtimeRecovery = gameDate(this.game.snapshot);
+          }
+          break;
+        }
+        if (signal.aborted) break;
+        if (sleep) messages.push({ role: "user", text: `按存档作息执行了原生就寝，回执：${JSON.stringify(sleep)}。请根据新的游戏观察规划后续。` });
         acknowledgeAdditional();
         lease("begin");
         const renewal = setInterval(() => lease("renew"), 3000);
@@ -417,6 +487,11 @@ export class TurnRunner {
         messages.push({ role: "assistant", text: response.text, calls: response.calls });
         for (const call of response.calls) {
           if (signal.aborted) break;
+          if (call.name === "submit_work" && this.bedtimeNeedsSleep(turn.binding)) {
+            messages.push({ role: "tool", callId: call.id, name: call.name,
+              result: { error: "已到返程时间，先按存档作息休息，再根据最新观察安排工作。" }, failed: true });
+            continue;
+          }
           if (turn.additional.length) {
             messages.push({ role: "tool", callId: call.id, name: call.name,
               result: { error: "收到玩家的新要求，先按新要求重新安排。" }, failed: true });
@@ -491,7 +566,7 @@ export class TurnRunner {
   private settleReceipt(binding: GameBinding, actionId: string, receipt: JsonObject): void {
     if (!this.store || this.store.recordReceipt(binding, actionId, { ...receipt, gameDate: gameDate(this.game.snapshot) })) {
       this.publish("result", { ...binding, ...receipt });
-      if (receipt.terminalState === "succeeded" && Number(receipt.completedCount) > 0 && receipt.skillId !== "navigate-to") {
+      if (receipt.terminalState === "succeeded" && Number(receipt.completedCount) > 0 && receipt.skillId !== "navigate-to" && receipt.skillId !== "sleep") {
         this.remind(binding, "work-done", actionId, `刚核对了游戏回执，这项工作已完成 ${receipt.completedCount} 项。`);
       }
     }

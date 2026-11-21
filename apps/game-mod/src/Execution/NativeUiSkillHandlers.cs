@@ -67,7 +67,8 @@ public sealed partial class CompanionMechanicsCoordinator
                 PlayerActionSupport: ActorGuards.IsPlayerBound(_actor)
                     ? new[] { "refill_watering_can", "clear_debris:includes-native-mine-stones", "cut_grass", "chop_tree:ordinary-wild-trees-only", "apply_fertilizer", "pickup_items", "eat_food:one-selected-native-backpack-unit", "craft_items:native-learned-recipe-click", "place_items:native-inventory-placement", "observe_player_activities", "talk_npc", "interact_tile", "fish:requires-owned-rod", "attack:requires-owned-weapon", "native_menu_select:observed-item-or-elevator-or-crafting-cursor-or-explicit-naming-text" }
                     : null,
-                NamingInput: menu is NamingMenu naming ? DescribeNativeNamingInput(naming) : null);
+                NamingInput: menu is NamingMenu naming ? DescribeNativeNamingInput(naming) : null,
+                SleepQuestion: PlayerSleepStateMachine.SleepQuestionOpenUnlocked());
         }
         catch
         {
