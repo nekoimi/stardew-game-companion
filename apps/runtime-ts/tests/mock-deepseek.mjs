@@ -31,6 +31,10 @@ export async function createMockDeepSeek() {
     }
     let name, args = {};
     if (body.tools?.some(tool => tool.function.name === "check_connection")) name = "check_connection";
+    else if (user.includes("记住今日目标") && last.role === "user") {
+      name = "manage_arrangements";
+      args = { change: { manage_goal: { action: "add", text: "今天先照料田地", summary: "等玩家交代范围" } } };
+    }
     else if (last.role === "user") name = "get_status";
     else if (latestTool && body.messages.findLast(item => item.tool_calls)?.tool_calls[0].function.name === "get_status") {
       const observed = JSON.parse(latestTool.content).world.companion;

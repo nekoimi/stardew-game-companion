@@ -5,7 +5,9 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { GameConnection } from "../game/game-connection.js";
 import { listModelProviders, ModelError, PiModelAdapter } from "../model/pi-model.js";
-import { TurnRunner, object } from "../../application/turn-runner.js";
+import { TurnRunner } from "../../application/turn-runner.js";
+import { object } from "../../application/model.js";
+import { CompanionStore } from "../storage/companion-store.js";
 import type { JsonObject, ModelSelection } from "../../application/model.js";
 
 export async function startDesktopService(
@@ -13,10 +15,11 @@ export async function startDesktopService(
 ): Promise<void> {
   if (!secret || !stopFile || !Number.isSafeInteger(ownerPid) || ownerPid < 1) throw new Error("Invalid desktop launch parameters");
   const game = new GameConnection(runDirectory);
+  const store = modelTestOnly ? undefined : new CompanionStore(join(runDirectory, "..", "..", "data", "companion.sqlite"));
   const provider = new PiModelAdapter();
   const streams = new Set<ServerResponse>();
   const events: { id: number; data: string }[] = [];
-  const submissions = new Map<string, { text: string; mode: string; state: JsonObject }>();
+  const submissions = new Set<string>();
   let sequence = 0;
   let lastStatus = "";
   let activeGameId: string | undefined;
@@ -28,18 +31,19 @@ export async function startDesktopService(
     }
     if (type === "life.chat.reply" && typeof payload.requestId === "string") {
       const id = `${payload.gameSessionId}:${payload.requestId}`;
-      const record = submissions.get(id);
-      if (record) record.state = payload;
+      if (typeof payload.saveId === "string" && typeof payload.gameSessionId === "string") {
+        store?.settleSubmission({ saveId: payload.saveId, gameSessionId: payload.gameSessionId }, payload.requestId, payload);
+      }
+      submissions.delete(id);
     }
     const frame = { id: ++sequence, data };
     events.push(frame);
     if (events.length > 256) events.shift();
     for (const stream of streams) if (!stream.write(sse(frame))) stream.destroy();
   };
-  // Preserve the current guidance in the closed loop. Capability-specific limits are explicit for this stage.
-  const core = await readFile(join(runDirectory, "docs", "agent-core-instructions-draft.md"), "utf8");
+  const core = await readFile(join(runDirectory, "docs", "agent-ts-instructions.md"), "utf8");
   const runner = new TurnRunner(game, undefined, publish,
-    core + "\n当前运行时支持 get_status 与 submit_work.action.navigate_to。按最新观察选择可站立的邻近格，工具回执确认后汇报。");
+    core + "\n按最新观察和工具回执推进。", store, runDirectory);
   game.on("changed", () => {
     const binding = game.binding;
     if (binding && activeGameId !== binding.gameSessionId) {
@@ -47,15 +51,60 @@ export async function startDesktopService(
       submissions.clear();
     }
   });
-  game.on("player-message", payload => {
+  game.on("player-message", (type: string, payload: JsonObject) => {
     const binding = game.binding;
     if (!binding || typeof payload.requestId !== "string" || typeof payload.text !== "string") return;
-    void runner.submit(binding, payload.requestId, payload.text, "send", false).catch(error => {
+    const preset = type === "chat.submit";
+    if (!preset && store && Array.isArray(payload.noticeIds)
+        && (payload.noticeAction === "dismiss" || payload.noticeAction === "restore")) {
+      const action = payload.noticeAction;
+      const expected = action === "dismiss" ? "pending" : "dismissed";
+      const available = new Set(store.items(binding.saveId, "decisions").filter(item => item.status === expected).map(item => item.id));
+      const ids = [...new Set(payload.noticeIds)];
+      const valid = ids.length > 0 && ids.every(id => typeof id === "string" && available.has(id));
+      if (valid) for (const id of ids) store.changeDecision(binding.saveId, String(id), action);
+      runner.syncProfile(binding);
+      runner.changed();
+      game.notify("life.chat.reply", { ...binding, requestId: payload.requestId, status: valid ? "completed" : "failed",
+        error: valid ? null : "这项选择已经变化。", profileRevision: store.profile(binding.saveId).profileRevision,
+        memoryRevision: store.memory(binding.saveId).memoryRevision, replyAlreadyDelivered: true });
+      return;
+    }
+    const decisionId = store?.items(binding.saveId, "decisions").some(item => item.id === payload.replyToNoticeId)
+      ? String(payload.replyToNoticeId) : undefined;
+    void runner.submit(binding, payload.requestId, payload.text, "send", false, decisionId, preset).catch(error => {
       const result = { ...binding, requestId: payload.requestId, status: "failed", error: error.message,
-        profileRevision: 0, memoryRevision: 0 };
-      try { game.notify("life.chat.reply", result); } catch { /* The binding has already changed. */ }
+        replyText: preset ? error.message : null, profileRevision: 0, memoryRevision: 0 };
+      try { game.notify(preset ? "chat.reply" : "life.chat.reply", result); } catch { /* The binding has already changed. */ }
       publish("life.chat.reply", result);
     });
+  });
+  game.on("player-event", (type: string, payload: JsonObject) => {
+    const binding = game.binding;
+    if (!binding || !store) return;
+    const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
+    const save = binding.saveId;
+    if (type === "chat.cancel") {
+      void runner.control(binding, "cancel").catch(() => undefined);
+      return;
+    }
+    try {
+      if (type === "life.profile.get" || type === "life.profile.set") {
+        if (type === "life.profile.set") store.updateProfile(save, object(payload.patch), Number(payload.expectedRevision));
+        runner.syncProfile(binding, requestId);
+      } else if (type === "life.milestones.get") {
+        game.notify("life.milestones.state", { saveId: save, requestId, status: "ok", nodes: store.items(save, "milestones") });
+      } else {
+        if (type === "life.memory.edit") store.editMemory(save, String(payload.op ?? ""), String(payload.id ?? ""),
+          String(payload.kind ?? ""), String(payload.text ?? ""), "player", Number(payload.expectedRevision));
+        game.notify("life.memory.state", { saveId: save, requestId, status: "confirmed", ...store.memory(save) });
+      }
+    } catch {
+      if (type.startsWith("life.profile")) runner.syncProfile(binding, requestId, "failed");
+      else if (type.startsWith("life.memory")) {
+        game.notify("life.memory.state", { saveId: save, requestId, status: "failed", reason: "请重新读取后再操作。", ...store.memory(save) });
+      }
+    }
   });
   const token = Buffer.from(`Bearer ${secret}`);
   const server = createServer((req, res) => void route(req, res));
@@ -65,10 +114,11 @@ export async function startDesktopService(
     if (closing) return;
     closing = true;
     clearInterval(heartbeat);
-    runner.stop();
+    const stopping = runner.stop();
     game.stop();
     for (const stream of streams) stream.end();
     server.close();
+    void stopping.finally(() => store?.close());
   };
   const heartbeat = setInterval(async () => {
     for (const stream of streams) if (!stream.write(": heartbeat\n\n")) stream.destroy();
@@ -111,7 +161,7 @@ export async function startDesktopService(
         if (url.startsWith("/v2/commands/")) {
           const binding = game.binding;
           const id = url.slice("/v2/commands/".length);
-          const result = binding ? submissions.get(`${binding.gameSessionId}:${id}`)?.state : undefined;
+          const result = binding ? readSubmission(binding, id)?.state : undefined;
           return result ? respond(res, 200, result) : respond(res, 404, { error: "找不到指令。" });
         }
       }
@@ -124,7 +174,7 @@ export async function startDesktopService(
         }
         const model = provider.open(selection as unknown as ModelSelection, body.apiKey);
         if (url === "/v2/model/configure") {
-          runner.configure(model);
+          runner.configure(model, selection as unknown as ModelSelection);
           return respond(res, 200, { ready: true });
         }
         const signal = AbortSignal.timeout(20_000);
@@ -140,27 +190,84 @@ export async function startDesktopService(
         throw new ModelError("unsupported", "模型已响应，工具调用尚未通过测试。");
       }
       const binding = game.binding;
+      if (url === "/v2/usage" && body.gameSessionId == null && body.saveId == null) return respond(res, 200, store?.usage() ?? {});
       if (!binding || body.saveId !== binding.saveId || body.gameSessionId !== binding.gameSessionId) {
         return respond(res, 409, { error: "游戏会话已变化，请重新操作。" });
       }
       if (url === "/v2/control" && typeof body.action === "string") {
-        return respond(res, 200, await runner.control(binding, body.action));
+        return respond(res, 200, await runner.control(binding, body.action,
+          typeof body.goalId === "string" ? body.goalId : undefined));
+      }
+      if (store) {
+        const save = binding.saveId;
+        const before = typeof body.before === "number" && Number.isSafeInteger(body.before) ? body.before : undefined;
+        switch (url) {
+          case "/v2/usage": return respond(res, 200, store.usage(save));
+          case "/v2/profile": {
+            if (!body.patch) return respond(res, 200, store.profile(save));
+            if (typeof body.expectedRevision !== "number") return respond(res, 400, { error: "缺少设定版本。" });
+            const profile = store.updateProfile(save, object(body.patch), body.expectedRevision);
+            runner.syncProfile(binding);
+            return respond(res, 200, profile);
+          }
+          case "/v2/memory": {
+            if (!body.op) return respond(res, 200, store.memory(save));
+            if (typeof body.expectedRevision !== "number" || (body.op === "add" && !["preference", "agreement"].includes(String(body.kind)))) {
+              return respond(res, 400, { error: "记忆内容或操作无效。" });
+            }
+            const result = store.editMemory(save, String(body.op), String(body.id ?? ""), String(body.kind ?? ""),
+              typeof body.text === "string" ? body.text.trim() : "", "player", body.expectedRevision);
+            return respond(res, 200, result);
+          }
+          case "/v2/initiative": {
+            const result = store.initiative(save, String(body.mode ?? ""), String(body.preference ?? ""));
+            runner.changed();
+            return respond(res, 200, result);
+          }
+          case "/v2/history": return respond(res, 200, store.history(save, before));
+          case "/v2/messages":
+            if (typeof body.readId === "string") { store.markRead(save, body.readId); runner.changed(); }
+            return respond(res, 200, store.history(save, before, true));
+          case "/v2/notices":
+            if (typeof body.noticeId === "string" && (body.action === "dismiss" || body.action === "restore")) {
+              const result = store.changeDecision(save, body.noticeId, body.action);
+              runner.syncProfile(binding);
+              runner.changed();
+              return respond(res, 200, result);
+            }
+            return respond(res, 400, { error: "待确认事项或操作无效。" });
+          case "/v2/milestones": {
+            const current = store.items(save, "milestones").find(item => item.id === body.nodeId);
+            if (!current || current.updatedAt !== body.updatedAt || (body.action !== "adopt" && body.action !== "defer")) {
+              return respond(res, 409, { error: "计划已变化，请重新读取。" });
+            }
+            const result = store.updateItem(save, "milestones", current.id,
+              { status: body.action === "adopt" ? "adopted" : "deferred" }, true);
+            runner.changed();
+            return respond(res, 200, result);
+          }
+        }
       }
       if (url === "/v2/commands") {
         const { requestId, text, mode = "send" } = body;
         if (typeof requestId !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(requestId)
           || typeof text !== "string" || !text.trim() || text.length > 500 || (mode !== "send" && mode !== "interrupt")
-          || body.decisionId != null) return respond(res, 400, { error: "指令参数无效。" });
+          || (body.decisionId != null && (typeof body.decisionId !== "string" || body.decisionId.length > 120 || mode !== "send"))) {
+          return respond(res, 400, { error: "指令参数无效。" });
+        }
         const id = `${binding.gameSessionId}:${requestId}`;
-        const existing = submissions.get(id);
-        if (existing) return existing.text === text && existing.mode === mode
+        const signature = JSON.stringify([text, mode, body.decisionId ?? null]);
+        const existing = readSubmission(binding, requestId);
+        if (existing) return existing.signature === signature
           ? respond(res, 200, existing.state) : respond(res, 409, { error: "请求编号已用于其他指令。" });
-        const record = { text, mode, state: { ...binding, requestId, status: "accepted" } };
-        submissions.set(id, record);
-        try { await runner.submit(binding, requestId, text.trim(), mode); }
-        catch (error) { submissions.delete(id); throw error; }
-        if (submissions.size > 2048) submissions.delete(submissions.keys().next().value!);
-        return respond(res, 202, record.state);
+        if (!store) return respond(res, 409, { error: "当前进程仅用于测试模型连接。" });
+        const accepted = { ...binding, requestId, status: "accepted" };
+        store.trackSubmission(binding, requestId, signature, accepted);
+        submissions.add(id);
+        try { await runner.submit(binding, requestId, text.trim(), mode, true,
+          typeof body.decisionId === "string" ? body.decisionId : undefined); }
+        catch (error) { submissions.delete(id); store.forgetSubmission(binding, requestId); throw error; }
+        return respond(res, 202, readSubmission(binding, requestId)?.state ?? accepted);
       }
       return respond(res, 404, { error: "找不到操作。" });
     } catch (error) {
@@ -168,6 +275,14 @@ export async function startDesktopService(
       if (error instanceof SyntaxError) return respond(res, 400, { error: "请求格式无效。" });
       return respond(res, 409, { error: error instanceof Error ? error.message : "操作未完成。" });
     }
+  }
+
+  function readSubmission(binding: { saveId: string; gameSessionId: string }, id: string) {
+    const record = store?.submission(binding, id);
+    if (record?.state.status === "accepted" && !submissions.has(`${binding.gameSessionId}:${id}`)) {
+      return { ...record, state: { ...record.state, status: "unknown", error: "上次连接中断，指令结果待核对。" } };
+    }
+    return record;
   }
 }
 

@@ -116,6 +116,13 @@ internal sealed class DesktopSession
         apiKey = key,
     };
 
+    internal async Task ConfigureModelAsync(ApiModelSettings selected, string key)
+    {
+        if (_settings is not { } settings) throw new InvalidOperationException("伴侣服务尚未启动。");
+        await PostAsync("/v2/model/configure", ModelRequest(selected, key));
+        _settings = settings with { ApiModel = selected };
+    }
+
     public Task StopAsync() => _stopTask ??= StopCoreAsync();
 
     private async Task StopCoreAsync()

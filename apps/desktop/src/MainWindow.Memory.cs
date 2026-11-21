@@ -78,8 +78,8 @@ public partial class MainWindow
     {
         if (_loadingMemory || _session is not { } session || _gameSessionId is not { } game) return;
         int view = _saveViewGeneration;
-        object body = action is null ? new { gameSessionId = game }
-            : new { gameSessionId = game, op = action, id = entryId, kind = MemoryKind.SelectedValue, text, expectedRevision = _memoryRevision };
+        object body = action is null ? new { gameSessionId = game, saveId = _saveId }
+            : new { gameSessionId = game, saveId = _saveId, op = action, id = entryId, kind = MemoryKind.SelectedValue, text, expectedRevision = _memoryRevision };
         var selectedId = action == "delete" ? null : (MemoryPicker.SelectedItem as DesktopMemory)?.Id;
         _loadingMemory = true;
         MemoryFeedback.Text = action is null ? "正在读取记忆…" : "正在保存…";

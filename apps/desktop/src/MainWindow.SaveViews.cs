@@ -97,7 +97,7 @@ public partial class MainWindow
         RefreshUsageButton.IsEnabled = false;
         try
         {
-            var summary = await session.PostAsync("/v1/usage", new { gameSessionId = game });
+            var summary = await session.PostAsync("/v1/usage", new { gameSessionId = game, saveId = _saveId });
             if (_session != session || view != _saveViewGeneration) return;
             var entries = new List<TimelineEntry> { new("今日 · 全部存档", Text(summary, "usageTodayText")) };
             if (game is not null)
@@ -207,7 +207,7 @@ public partial class MainWindow
         RefreshSaveViewControls();
         try
         {
-            await session.PostAsync("/v1/control", new { gameSessionId = game, action = "cancel", goalId = goal.Id });
+            await session.PostAsync("/v1/control", new { gameSessionId = game, saveId = _saveId, action = "cancel", goalId = goal.Id });
             if (view == _saveViewGeneration) WorkFeedback.Text = "所选目标已撤回。";
         }
         catch (Exception ex) { if (view == _saveViewGeneration) WorkFeedback.Text = ex.Message; }
@@ -237,7 +237,7 @@ public partial class MainWindow
         RefreshSaveViewControls();
         try
         {
-            var page = await session.PostAsync("/v1/history", new { gameSessionId = game, before });
+            var page = await session.PostAsync("/v1/history", new { gameSessionId = game, saveId = _saveId, before });
             if (view != _saveViewGeneration) return;
             // Each page arrives newest first. Preserve its cursor and show the entries in conversation order.
             var rows = Rows(page, "entries").Reverse().Select(HistoryEntry).ToArray();
@@ -277,7 +277,7 @@ public partial class MainWindow
 
     private async void ReadProfileClicked(object sender, RoutedEventArgs e) => await ReadPreferencesAsync();
 
-    private Task ReadPreferencesAsync() => UpdatePreferencesAsync("/v1/profile", game => new { gameSessionId = game },
+    private Task ReadPreferencesAsync() => UpdatePreferencesAsync("/v1/profile", game => new { gameSessionId = game, saveId = _saveId },
         result => { ApplyProfile(result); ApplyInitiative(result); }, _activeSource == "external"
             ? "原伙伴的人格由原客户端管理。" : "已读取当前存档的伙伴设置。");
 
@@ -297,12 +297,12 @@ public partial class MainWindow
             ["bedtime"] = bedtime,
         };
         if (revision == 0) patch["onboarded"] = true;
-        await UpdatePreferencesAsync("/v1/profile", game => new { gameSessionId = game, expectedRevision = revision, patch },
+        await UpdatePreferencesAsync("/v1/profile", game => new { gameSessionId = game, saveId = _saveId, expectedRevision = revision, patch },
             ApplyProfile, "伙伴设置已保存。");
     }
 
     private async void SaveInitiativeClicked(object sender, RoutedEventArgs e) => await UpdatePreferencesAsync("/v1/initiative",
-        game => new { gameSessionId = game, mode = Initiative.IsChecked == true ? "free" : "command", preference = IdlePreference.SelectedValue },
+        game => new { gameSessionId = game, saveId = _saveId, mode = Initiative.IsChecked == true ? "free" : "command", preference = IdlePreference.SelectedValue },
         ApplyInitiative, "主动帮忙设置已保存。");
 
     private async Task UpdatePreferencesAsync(string route, Func<string, object> body, Action<JsonElement> apply, string success)

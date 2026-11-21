@@ -1,5 +1,8 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
+export function object(value: JsonValue | undefined): JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
 
 export interface ModelSelection {
   provider: string;

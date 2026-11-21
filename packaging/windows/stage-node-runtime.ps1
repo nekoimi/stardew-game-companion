@@ -64,6 +64,9 @@ try {
         $env:PATH = "$env:SystemRoot\System32"
         & (Join-Path $runtime 'node.exe') --disable-warning=ExperimentalWarning (Join-Path $runtime 'dist/bootstrap.js') --check
         if ($LASTEXITCODE) { throw 'Portable runtime self-check failed.' }
+        & (Join-Path $runtime 'node.exe') --disable-warning=ExperimentalWarning (Join-Path $runtime 'dist/bootstrap.js') --catalog |
+            Set-Content -LiteralPath (Join-Path $runtime 'models.json') -Encoding utf8NoBOM
+        if ($LASTEXITCODE) { throw 'Could not generate the bundled model catalogue.' }
     } finally { $env:PATH = $savedPath }
 } finally { Pop-Location }
 

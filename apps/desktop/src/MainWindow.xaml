@@ -410,21 +410,6 @@
                                     </DockPanel>
                                     <TextBlock Text="留空自动检测。请先在原客户端登录。" Foreground="#537261" Margin="0,3,0,12" />
                                 </StackPanel>
-                                <StackPanel x:Name="ApiModelFields" Visibility="Collapsed">
-                                    <TextBlock Text="模型服务商" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                    <ComboBox x:Name="ApiProvider" SelectedValuePath="Tag" SelectionChanged="ApiProviderSelected"
-                                              AutomationProperties.Name="模型服务商" Margin="0,0,0,13">
-                                        <ComboBoxItem Content="DeepSeek" Tag="deepseek" />
-                                        <ComboBoxItem Content="OpenAI" Tag="openai" />
-                                    </ComboBox>
-                                    <TextBlock Text="API Key" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                    <PasswordBox x:Name="ApiKey" AutomationProperties.Name="API Key" MaxLength="1200" Padding="9,6" Margin="0,0,0,13" />
-                                    <TextBlock Text="模型" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                    <TextBox x:Name="ApiModel" AutomationProperties.Name="模型" Margin="0,0,0,13" />
-                                    <Button x:Name="TestModelButton" Content="测试连接" Click="TestModelClicked" HorizontalAlignment="Left" />
-                                    <TextBlock x:Name="ApiModelFeedback" Style="{StaticResource InlineFeedback}"
-                                               AutomationProperties.LiveSetting="Polite" Margin="0,4,0,0" />
-                                </StackPanel>
                                 <StackPanel x:Name="LegacyImportFields">
                                     <Separator Margin="0,13" />
                                     <TextBlock Text="旧安装数据" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,7" />
@@ -432,6 +417,27 @@
                                 <CheckBox x:Name="ImportDataOnly" Content="仅导入数据，沿用此包的伙伴接入设置" Margin="0,0,0,8" />
                                 <Button x:Name="ImportButton" Content="从原安装导入…" Click="ImportClicked" HorizontalAlignment="Left" />
                                 </StackPanel>
+                            </StackPanel>
+                            <StackPanel x:Name="ApiModelFields" Visibility="Collapsed">
+                                <TextBlock Text="模型服务商" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <ComboBox x:Name="ApiProvider" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="ApiProviderSelected"
+                                          AutomationProperties.Name="模型服务商" Margin="0,0,0,13" />
+                                <TextBlock Text="API Key" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <PasswordBox x:Name="ApiKey" AutomationProperties.Name="API Key" MaxLength="1200" Padding="9,6" Margin="0,0,0,13" />
+                                <TextBlock Text="模型" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <ComboBox x:Name="ApiModel" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="ApiModelSelected"
+                                          AutomationProperties.Name="模型" Margin="0,0,0,13" />
+                                <StackPanel x:Name="ApiReasoningFields" Visibility="Collapsed">
+                                    <TextBlock Text="推理档位" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <ComboBox x:Name="ApiReasoning" SelectedValuePath="Tag"
+                                              AutomationProperties.Name="推理档位" Margin="0,0,0,13" />
+                                </StackPanel>
+                                <WrapPanel>
+                                    <Button x:Name="TestModelButton" Content="测试连接" Click="TestModelClicked" />
+                                    <Button x:Name="ApplyModelButton" Content="应用模型" Click="ApplyModelClicked" Visibility="Collapsed" />
+                                </WrapPanel>
+                                <TextBlock x:Name="ApiModelFeedback" Style="{StaticResource InlineFeedback}"
+                                           AutomationProperties.LiveSetting="Polite" Margin="0,4,0,0" />
                             </StackPanel>
                             <StackPanel x:Name="OriginalFields" Visibility="Collapsed">
                                 <Separator Margin="0,13" />

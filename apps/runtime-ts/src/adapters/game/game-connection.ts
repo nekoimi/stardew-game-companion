@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import type { JsonObject } from "../../application/model.js";
+import { object } from "../../application/model.js";
 import { classifyReceipt, gameProtocolVersion } from "./action-receipt.js";
 import type { GameBinding } from "./action-receipt.js";
 
@@ -23,6 +24,7 @@ interface Envelope extends GameBinding {
 interface Pending {
   match: (message: Envelope) => boolean;
   finish: (value: Envelope | Error) => void;
+  observe?: (message: Envelope) => void;
 }
 
 /** The chat socket carries player input and ownership. The command socket owns native action receipts. */
@@ -152,16 +154,22 @@ export class GameConnection extends EventEmitter {
       this.emit("changed");
     } else if (message.messageType === "desktop.control.result") {
       for (const [key, value] of Object.entries(message.payload)) {
-        if (key !== "requestId" && key !== "result" && key !== "error") this.state[key] = value;
+        if (!["requestId", "result", "error", "observation"].includes(key)) this.state[key] = value;
       }
       this.emit("changed");
     } else if (message.messageType === "player.authority") {
       this.state.controlOwner = message.payload.owner;
       this.emit("changed");
     }
-    for (const pending of this.pending) if (pending.match(message)) pending.finish(message);
+    for (const pending of this.pending) {
+      if (pending.match(message)) pending.finish(message);
+      else pending.observe?.(message);
+    }
     if (message.messageType === "life.chat.submit" || message.messageType === "chat.submit") {
-      this.emit("player-message", message.payload);
+      this.emit("player-message", message.messageType, message.payload);
+    } else if (["life.profile.get", "life.profile.set", "life.memory.list", "life.memory.edit",
+      "life.milestones.get", "chat.cancel"].includes(message.messageType)) {
+      this.emit("player-event", message.messageType, message.payload);
     }
   }
 
@@ -176,13 +184,13 @@ export class GameConnection extends EventEmitter {
 
   private request(socket: WebSocket | undefined, type: string, payload: JsonObject,
       match: (message: Envelope) => boolean, timeoutMs: number, id = randomUUID(),
-      action?: { idempotencyKey: string; expiresAt: string }): Promise<Envelope> {
+      action?: { idempotencyKey: string; expiresAt: string }, progressing?: (message: Envelope) => boolean): Promise<Envelope> {
     return new Promise((resolve, reject) => {
       const pending: Pending = { match, finish: value => {
         clearTimeout(timer);
         this.pending.delete(pending);
         if (value instanceof Error) reject(value); else resolve(value);
-      } };
+      }, observe: progressing ? message => { if (progressing(message)) timer.refresh(); } : undefined };
       const timer = setTimeout(() => pending.finish(new Error("游戏响应超时，结果待核对。")), timeoutMs);
       this.pending.add(pending);
       try { this.send(socket, type, payload, id, action); }
@@ -202,16 +210,39 @@ export class GameConnection extends EventEmitter {
     if (this.binding) this.send(this.chat, type, payload);
   }
 
+  async observe(): Promise<JsonObject> {
+    const response = await this.control("observe");
+    const observed = object(response.observation);
+    if (!Object.keys(observed).length) throw new Error("游戏尚未返回当前观察。");
+    const revision = Number(observed.capturedRevision ?? 0);
+    if (Number.isSafeInteger(revision) && revision >= this.revision) {
+      this.snapshot = observed;
+      this.revision = revision;
+    }
+    return this.snapshot ?? observed;
+  }
+
   async execute(actionId: string, turnId: string, skill: string, parameters: JsonObject): Promise<JsonObject> {
     const binding = this.binding;
     if (!binding) throw new Error("尚未连接当前游戏。");
     const expectedRevision = this.revision;
+    let progress = "";
     const reply = await this.request(this.commands, "skill.execute", {
       commandId: actionId, taskId: turnId, skillId: skill, skillVersion: "0.1", expectedWorldRevision: expectedRevision,
       parameters, budgets: { maxGameMinutes: 0, maxStamina: 50, maxWater: 0 },
       cancelPolicy: "safe-point", policyDecisionId: turnId,
     }, message => this.isReceipt(message, binding, actionId), 30_000, randomUUID(),
-    { idempotencyKey: `${binding.gameSessionId}:${actionId}`, expiresAt: new Date(Date.now() + 10_000).toISOString() });
+    { idempotencyKey: `${binding.gameSessionId}:${actionId}`, expiresAt: new Date(Date.now() + 10_000).toISOString() },
+    message => {
+      if (this.state.activeCommandId !== actionId) return false;
+      if (this.state.paused === true) return true;
+      if (message.messageType !== "world.snapshot" && message.messageType !== "desktop.control.result") return false;
+      const actor = object(this.snapshot?.companion);
+      const state = JSON.stringify([this.state.progress, actor.tileX, actor.tileY, actor.stamina, actor.waterCanLevel]);
+      if (state === progress) return false;
+      progress = state;
+      return true;
+    });
     this.settled.add(actionId);
     if (this.settled.size > 512) this.settled.delete(this.settled.values().next().value!);
     return reply.payload;

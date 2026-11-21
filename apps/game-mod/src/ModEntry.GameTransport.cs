@@ -43,7 +43,7 @@ public sealed partial class ModEntry
 
     private void TryAutoStartChatBridge()
     {
-        if (_desktopMode) return;
+        if (HasDesktopControls) return;
         // Isolated acceptance and manually managed developer sessions own their bridge.
         if (Environment.GetEnvironmentVariable("STARDEW_AI_MANUAL_BRIDGE") == "1") return;
         if (!_config.ConnectionSourceChosen) return;

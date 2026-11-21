@@ -86,7 +86,7 @@ public partial class MainWindow : Window
             try { SaveApiCredential(); }
             catch (Exception error) when (error is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
             {
-                ShowSettingsError(ApiModel.Text.Trim().Length == 0 ? ApiModel : ApiKey, ApiModelFeedback, error.Message);
+                ShowSettingsError(ApiModel.SelectedItem is null ? ApiModel : ApiKey, ApiModelFeedback, error.Message);
                 return;
             }
         }
@@ -224,7 +224,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
         {
-            ShowSettingsError(ApiModel.Text.Trim().Length == 0 ? ApiModel : ApiKey, ApiModelFeedback, ex.Message);
+            ShowSettingsError(ApiModel.SelectedItem is null ? ApiModel : ApiKey, ApiModelFeedback, ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -518,6 +518,9 @@ public partial class MainWindow : Window
         ReconnectHeader.Visibility = reconnect || _reconnecting ? Visibility.Visible : Visibility.Collapsed;
         ReconnectHeader.IsEnabled = reconnect && !_reconnecting && !_closing;
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
+        ApiModelFields.IsEnabled = !_testingModel && !_closing && !_reconnecting;
+        ApplyModelButton.Visibility = NodeRuntime && _session is not null ? Visibility.Visible : Visibility.Collapsed;
+        ApplyModelButton.IsEnabled = _partnerServiceReady && !_interrupting;
         RefreshImportControls();
         TodayOverview.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         ComposerPanel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;

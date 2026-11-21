@@ -184,7 +184,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         TickUnattendedPassoutGuard();
         if (!_desktopMode && PlayerModeEnabled && e.IsMultipleOf(30) && _coordinator != null && _transportServer != null)
             _ = _transportServer.SendSnapshotAsync(_coordinator.CaptureCurrentSnapshot(_observer!.WorldRevision), _observer.WorldRevision);
-        if (_desktopMode && e.IsMultipleOf(30)) PublishDesktopControlState(e.IsMultipleOf(120));
+        if (HasDesktopControls && e.IsMultipleOf(30)) PublishDesktopControlState(e.IsMultipleOf(120));
         MeasureDesktopPhase("snapshot");
         if (PlayerModeEnabled && _actor != null) _knowledge?.NoteLocationVisited(_actor.LocationName);
         if (_decisionEdits.Count > 0 && DateTime.UtcNow - _decisionEditSentAt > TimeSpan.FromSeconds(30))
@@ -249,7 +249,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         }
 
         // 2. Only advance game action if not cancelled or paused
-        if (_coordinator != null) _coordinator.Rest.Paused = _chatUiState.ShouldPauseNative || (_desktopMode && (_desktopPaused || _desktopInterrupting));
+        if (_coordinator != null) _coordinator.Rest.Paused = _chatUiState.ShouldPauseNative || (HasDesktopControls && (_desktopPaused || _desktopInterrupting));
         MeasureDesktopPhase("before-native-action");
         _coordinator?.Update(Game1.currentGameTime, e.Ticks);
         MeasureDesktopPhase("native-action");

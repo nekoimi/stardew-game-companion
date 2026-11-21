@@ -12,6 +12,8 @@ namespace StardewAI.Companion.Mod;
 public sealed partial class ModEntry
 {
     private readonly bool _desktopMode = Environment.GetEnvironmentVariable("STARDEW_DESKTOP_MODE") == "1";
+    private readonly bool _usesAgentProtocol = Environment.GetEnvironmentVariable("STARDEW_AGENT_PROTOCOL") == AgentProtocol.Version;
+    private bool HasDesktopControls => _desktopMode || _usesAgentProtocol;
     private bool _desktopPaused;
     private bool _desktopInterrupting;
     private bool _desktopRecoveryPending;
@@ -20,6 +22,7 @@ public sealed partial class ModEntry
     private long _desktopHandledDisconnectRevision;
     private GameLocation? _desktopSnapshotLocation;
     private StardewValley.Menus.IClickableMenu? _desktopSnapshotMenu;
+    private int _desktopSnapshotTime;
     private long _desktopPreviousTick;
     private long _desktopTickStarted;
     private long _desktopPhaseStarted;
@@ -29,7 +32,7 @@ public sealed partial class ModEntry
     private double _desktopPreviousModMs;
     private string _desktopSlowestPhase = "";
 
-    private bool DesktopActionsAllowed => !_desktopMode || (!_desktopPaused && !_desktopInterrupting
+    private bool DesktopActionsAllowed => !HasDesktopControls || (!_desktopPaused && !_desktopInterrupting
         && _desktopHandledDisconnectRevision == _transportServer?.DesktopDisconnectRevision);
 
     private void EnableDesktopFocusPolicy()
@@ -52,12 +55,13 @@ public sealed partial class ModEntry
 
     private void AttachDesktopControls(WebSocketTransportServer server)
     {
-        if (!_desktopMode) return;
+        if (!HasDesktopControls) return;
         _desktopPaused = _desktopInterrupting = _desktopRecoveryPending = false;
         _desktopInterruptedCommandId = null;
         _desktopSnapshotGeneration = -1;
         _desktopSnapshotLocation = null;
         _desktopSnapshotMenu = null;
+        _desktopSnapshotTime = 0;
         _desktopHandledDisconnectRevision = 0;
         server.DesktopClientEnabled = true;
         server.OnDesktopControl += payload =>
@@ -93,13 +97,17 @@ public sealed partial class ModEntry
         long generation = server.ChatGeneration;
         if (_desktopHandledDisconnectRevision != server.DesktopDisconnectRevision) return;
         bool newConnection = _desktopSnapshotGeneration != generation;
-        if (_observer is not null && (newConnection || PlayerModeEnabled && (periodicPlayerSnapshot
+        bool shouldRefresh = PlayerModeEnabled && (periodicPlayerSnapshot
             || !ReferenceEquals(_desktopSnapshotLocation, Game1.currentLocation)
-            || !ReferenceEquals(_desktopSnapshotMenu, Game1.activeClickableMenu))))
+            || !ReferenceEquals(_desktopSnapshotMenu, Game1.activeClickableMenu));
+        if (server.ProtocolVersion == AgentProtocol.Version && periodicPlayerSnapshot && Game1.timeOfDay != _desktopSnapshotTime)
+            shouldRefresh = true;
+        if (_observer is not null && (newConnection || shouldRefresh))
         {
             _desktopSnapshotGeneration = generation;
             _desktopSnapshotLocation = Game1.currentLocation;
             _desktopSnapshotMenu = Game1.activeClickableMenu;
+            _desktopSnapshotTime = Game1.timeOfDay;
             _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
         }
         _ = server.SendDesktopStateAsync("desktop.control.result", new JsonObject
@@ -186,7 +194,7 @@ public sealed partial class ModEntry
         }
 
         string? error = null;
-        if (_desktopRecoveryPending && action is not ("status" or "read-message" or "recover" or "takeover"))
+        if (_desktopRecoveryPending && action is not ("status" or "observe" or "read-message" or "recover" or "takeover"))
             error = "RECOVERY_PENDING";
         SkillResultPayload? receipt = null;
         string? receiptId = payload["commandId"]?.GetValue<string>();
@@ -202,6 +210,7 @@ public sealed partial class ModEntry
         switch (action)
         {
             case "status": break;
+            case "observe": break;
             case "recover":
                 if (!_desktopRecoveryPending) break;
                 if (active) error = "ACTION_STILL_RUNNING";
@@ -291,7 +300,9 @@ public sealed partial class ModEntry
             ["controlOwner"] = PlayerModeEnabled ? _authority?.AgentOwns == true ? "agent" : "human" : null,
             ["result"] = receipt is null ? null : JsonSerializer.SerializeToNode(receipt, WebSocketTransportServer.JsonOptions)
         };
-        if (action is not ("status" or "read-message"))
+        if (action == "observe" && error is null)
+            reply["observation"] = JsonSerializer.SerializeToNode(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), WebSocketTransportServer.JsonOptions);
+        else if (action is not ("status" or "read-message"))
             _ = server.SendSnapshotAsync(coordinator.CaptureCurrentSnapshot(_observer.WorldRevision), _observer.WorldRevision);
         _ = server.SendDesktopStateAsync("desktop.control.result", reply, generation);
     }

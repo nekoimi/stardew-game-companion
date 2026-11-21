@@ -25,8 +25,7 @@ foreach ($name in 'DotNet-LICENSE.txt', 'DotNet-ThirdPartyNotices.txt') {
     Copy-Item -LiteralPath (Join-Path $DesktopSource $name) -Destination $docs
 }
 foreach ($name in 'LICENSE', 'NOTICE') { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $docs }
-Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/prompts/agent-core-instructions-draft.md'),
-    (Join-Path $repo 'resources/agent/prompts/agent-domain-guidance-draft.md') -Destination $modDocs
+Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/prompts/agent-ts-instructions.md') -Destination $modDocs
 Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/prompts/agent-guidance') -Destination $modDocs -Recurse
 Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/skills') -Destination (Join-Path $mod 'agent-skills') -Recurse
 Copy-Item -LiteralPath (Join-Path $repo 'docs/development/agent-runtime-rewrite.md') -Destination $docs
