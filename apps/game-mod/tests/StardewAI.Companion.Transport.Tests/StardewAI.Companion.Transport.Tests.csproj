@@ -19,6 +19,8 @@
   <!-- Standalone linked-source inclusion of owned Transport files only (isolated from concurrent mechanics edits) -->
   <ItemGroup>
     <Compile Include="..\..\src\Transport\*.cs" Link="Transport\%(Filename)%(Extension)" />
+    <None Include="..\..\..\..\contracts\game-bridge\examples\v2\action-lifecycle.json"
+          Link="fixtures\action-lifecycle.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

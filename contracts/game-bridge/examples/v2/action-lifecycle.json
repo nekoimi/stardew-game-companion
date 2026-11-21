@@ -1,0 +1,42 @@
+[
+  {
+    "name": "wrong version",
+    "gameSessionId": "spring-5",
+    "expectedActionId": "move-1",
+    "settledActionIds": [],
+    "message": {"protocolVersion":"0.1","messageType":"skill.result","saveId":"farm","gameSessionId":"spring-5","payload":{"commandId":"move-1"}},
+    "expected": "version-mismatch"
+  },
+  {
+    "name": "old game after a reload",
+    "gameSessionId": "spring-5-reload",
+    "expectedActionId": "move-1",
+    "settledActionIds": [],
+    "message": {"protocolVersion":"2","messageType":"skill.result","saveId":"farm","gameSessionId":"spring-5","payload":{"commandId":"move-1"}},
+    "expected": "stale-game"
+  },
+  {
+    "name": "duplicate terminal receipt",
+    "gameSessionId": "spring-5",
+    "expectedActionId": "move-2",
+    "settledActionIds": ["move-1"],
+    "message": {"protocolVersion":"2","messageType":"skill.result","saveId":"farm","gameSessionId":"spring-5","payload":{"commandId":"move-1"}},
+    "expected": "duplicate"
+  },
+  {
+    "name": "missing receipt during reconnect",
+    "gameSessionId": "spring-5",
+    "expectedActionId": "move-1",
+    "settledActionIds": [],
+    "message": {"protocolVersion":"2","messageType":"skill.result.status","saveId":"farm","gameSessionId":"spring-5","payload":{"commandId":"move-1","status":"unknown"}},
+    "expected": "pending"
+  },
+  {
+    "name": "matching terminal receipt",
+    "gameSessionId": "spring-5",
+    "expectedActionId": "move-1",
+    "settledActionIds": [],
+    "message": {"protocolVersion":"2","messageType":"skill.result","saveId":"farm","gameSessionId":"spring-5","payload":{"commandId":"move-1","terminalState":"succeeded"}},
+    "expected": "terminal"
+  }
+]

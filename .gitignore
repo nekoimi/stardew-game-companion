@@ -29,6 +29,9 @@ dist/
 build/
 *.egg-info/
 
+# TypeScript
+node_modules/
+
 # Secrets and local configuration
 .env
 .env.*
