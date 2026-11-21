@@ -51,7 +51,8 @@ export class GameConnection extends EventEmitter {
   constructor(private readonly modDirectory: string) { super(); }
 
   get binding(): GameBinding | undefined {
-    if (!this.descriptor || !this.welcomed || !this.snapshot || this.chat?.readyState !== WebSocket.OPEN) return;
+    if (!this.descriptor || !this.welcomed || !this.snapshot || this.chat?.readyState !== WebSocket.OPEN
+      || typeof this.state.recoveryPending !== "boolean") return;
     return { saveId: this.descriptor.saveId, gameSessionId: this.descriptor.gameSessionId };
   }
 
