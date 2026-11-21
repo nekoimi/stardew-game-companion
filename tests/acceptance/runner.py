@@ -136,7 +136,8 @@ def evaluate(case, before, after, samples):
 
 
 class Runner:
-    def __init__(self, run, case, timeout, cases_file=None, *, keep_open=False, reset_fixture=False, api_runtime=False):
+    def __init__(self, run, case, timeout, cases_file=None, *, keep_open=False, reset_fixture=False,
+                 api_runtime=False, simulated=False):
         self.run = run.resolve()
         self.evidence = self.run / "evidence"
         self.mod = self.run / "mods" / "StardewAI.Companion.Mod"
@@ -145,6 +146,7 @@ class Runner:
         self.token = uuid.uuid4().hex[:8]
         self.keep_open, self.reset_fixture = keep_open, reset_fixture
         self.api_runtime = api_runtime
+        self.simulated = simulated
         self.trace_file = self.evidence / "agent-runtime-events.jsonl" if api_runtime else self.mod / "data/mcode-public-events.jsonl"
         self.number = 0
         self.samples = []
@@ -227,7 +229,10 @@ class Runner:
             dll = self.mod / "StardewAI.Companion.Mod.dll"
             self.report["modSha256"] = hashlib.sha256(dll.read_bytes()).hexdigest()
             if self.api_runtime:
-                self.report["backend"] = read(self.evidence / "agent-runtime-ready.json")
+                backend = read(self.evidence / "agent-runtime-ready.json") or {}
+                if backend.get("simulated") is not self.simulated:
+                    raise RuntimeError("API evidence does not confirm the requested acceptance mode")
+                self.report["backend"] = backend
                 package = read(self.evidence / "agent-package.json") or {}
                 if any(not package.get(key) for key in ("gameVersion", "smapiVersion", "modVersion", "packageManifestSha256")):
                     raise RuntimeError("Missing package or game version evidence")
@@ -376,12 +381,13 @@ class Runner:
         return 0 if self.report["status"] == "passed" else 1
 
 
-async def run_suite(run, cases, timeout, cases_file, api_runtime=False):
+async def run_suite(run, cases, timeout, cases_file, api_runtime=False, simulated=False):
     import shutil
     reports = []
     try:
         for index, case in enumerate(cases):
-            runner = Runner(run, case, timeout, cases_file, keep_open=True, reset_fixture=index > 0, api_runtime=api_runtime)
+            runner = Runner(run, case, timeout, cases_file, keep_open=True, reset_fixture=index > 0,
+                            api_runtime=api_runtime, simulated=simulated)
             code = await runner.execute()
             reports.append(runner.report)
             folder = run / "evidence" / case
@@ -395,8 +401,7 @@ async def run_suite(run, cases, timeout, cases_file, api_runtime=False):
     finally:
         success = len(reports) == len(cases) and all(r["status"] == "passed" for r in reports)
         write(run / "evidence/free-mode-control-done.json", {"success": success})
-        backend = reports[0].get("backend") or {} if reports else {}
-        mode = "模拟 API" if backend.get("simulated") else "厂商 API" if api_runtime else "旧版客户端"
+        mode = "模拟 API" if simulated else "厂商 API" if api_runtime else "旧版客户端"
         lines = [f"- {r['case']}: {r['status']} ({r['elapsedSeconds']} 秒)" for r in reports]
         lines.extend(f"- {case}：未执行" for case in cases[len(reports):])
         (run / "summary.md").write_text(f"# 伙伴实机回归 · {mode}\n\n一次启动、同一存档和会话，场景间只重置测试布置。\n\n"
@@ -412,7 +417,11 @@ if __name__ == "__main__":
     parser.add_argument("--cases-file", type=Path, help="Frozen suite definitions")
     parser.add_argument("--suite", nargs="+")
     parser.add_argument("--api-runtime", action="store_true")
+    parser.add_argument("--simulated", action="store_true")
     args = parser.parse_args()
+    if args.simulated and not args.api_runtime:
+        parser.error("--simulated requires --api-runtime")
     raise SystemExit(asyncio.run(
-        run_suite(args.run_dir, args.suite, args.timeout, args.cases_file, args.api_runtime) if args.suite
-        else Runner(args.run_dir, args.case, args.timeout, args.cases_file, api_runtime=args.api_runtime).execute()))
+        run_suite(args.run_dir, args.suite, args.timeout, args.cases_file, args.api_runtime, args.simulated) if args.suite
+        else Runner(args.run_dir, args.case, args.timeout, args.cases_file,
+                    api_runtime=args.api_runtime, simulated=args.simulated).execute()))

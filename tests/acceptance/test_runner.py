@@ -54,6 +54,14 @@ def test_api_startup_failure_surfaces_before_game_ready(tmp_path):
         asyncio.run(case.wait(lambda: None, "No isolated game", timeout=0.1))
 
 
+def test_failed_simulated_launch_remains_labeled_as_simulation(tmp_path):
+    runner.write(tmp_path / "evidence" / "agent-startup-error.json", {"error": "Model failed before startup"})
+    assert asyncio.run(runner.run_suite(tmp_path, ["care-guidance"], 60, None, api_runtime=True, simulated=True)) == 1
+    summary = (tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert summary.startswith("# 伙伴实机回归 · 模拟 API\n")
+    assert "care-guidance: error" in summary
+
+
 def test_suite_keeps_game_open_and_preserves_failed_scene(tmp_path, monkeypatch):
     calls = []
     evidence = tmp_path / "evidence"
@@ -72,8 +80,8 @@ def test_suite_keeps_game_open_and_preserves_failed_scene(tmp_path, monkeypatch)
 
     monkeypatch.setattr(runner, "Runner", FakeRunner)
     assert asyncio.run(runner.run_suite(tmp_path, ["care", "harvest", "rest"], 60, None)) == 1
-    assert calls == [("care", {"keep_open": True, "reset_fixture": False, "api_runtime": False}),
-                     ("harvest", {"keep_open": True, "reset_fixture": True, "api_runtime": False})]
+    assert calls == [("care", {"keep_open": True, "reset_fixture": False, "api_runtime": False, "simulated": False}),
+                     ("harvest", {"keep_open": True, "reset_fixture": True, "api_runtime": False, "simulated": False})]
     assert (evidence / "care/preset-report.md").read_text() == "care"
     assert runner.read(evidence / "free-mode-control-done.json") == {"success": False}
     assert "rest：未执行" in (tmp_path / "summary.md").read_text(encoding="utf-8")

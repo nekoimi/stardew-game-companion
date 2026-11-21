@@ -16,7 +16,7 @@
 
 涉及掉落物时，旁观玩家停在远离任务区的农场可通行位置，并核对实际落点，避免抢先吸取物品或被农舍入口重定位后堵门。
 
-运行 `tests/acceptance/run-companion-presets.ps1 -ReleaseDir <新解压的绿色包目录> -SavePath <春季测试存档目录>`。脚本复制 Mod 和存档，在隔离实例使用随包运行时。默认执行三组，也可用 `-Cases care-guidance` 单独复测。
+运行 `tests/acceptance/run-companion-presets.ps1 -ReleaseDir <新解压的绿色包目录> -SavePath <春季测试存档目录>`。脚本先按发行清单校验 API 绿色包的全部文件，再复制 Mod 和存档，在隔离实例使用随包运行时。默认执行三组，也可用 `-Cases care-guidance` 单独复测。
 
 正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。用 `-Provider openai -Model gpt-5-mini` 可切换到 OpenAI，用 `-Simulated` 可运行本地 DeepSeek 测试服务。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
 

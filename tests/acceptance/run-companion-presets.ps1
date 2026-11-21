@@ -13,7 +13,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
-$apiRelease = Test-Path -LiteralPath (Join-Path $release 'runtime/dist/bootstrap.js') -PathType Leaf
+$apiRelease = (Test-Path -LiteralPath (Join-Path $release 'runtime/dist/bootstrap.js') -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $release 'runtime/node.exe') -PathType Leaf)
 if (!$Python) {
     $Python = Join-Path $root 'apps/runtime/.venv/Scripts/python.exe'
     if (!(Test-Path -LiteralPath $Python -PathType Leaf)) { $Python = 'python' }
@@ -23,13 +24,16 @@ if ($Simulated -and $Provider -ne 'deepseek') { throw 'The fixed farm fixture cu
 if ($apiRelease) {
     if (!$Model) { $Model = if ($Provider -eq 'openai') { 'gpt-5-mini' } else { 'deepseek-flash' } }
     $required = if ($Provider -eq 'openai') { 'OPENAI_API_KEY' } else { 'DEEPSEEK_API_KEY' }
-    if (!$Simulated -and ![Environment]::GetEnvironmentVariable($required)) {
+    if (!$Simulated -and [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($required))) {
         throw "Set $required in the current process before starting formal acceptance."
     }
 }
 $shell = (Get-Process -Id $PID).Path
 if (Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue) {
     throw '请先退出正在运行的游戏；验收只启动和关闭自己的隔离实例。'
+}
+if ($apiRelease) {
+    & (Join-Path $root 'packaging/windows/verify-node-release.ps1') -ReleaseDir $release
 }
 & (Join-Path $PSScriptRoot 'build-testdriver.ps1') -Configuration Debug
 if ($LASTEXITCODE -ne 0) { throw 'TestDriver build failed.' }
@@ -62,6 +66,7 @@ try {
         -RedirectStandardOutput (Join-Path $suite 'launch.log') -RedirectStandardError (Join-Path $suite 'launch.err')
     $runnerArgs = @('--run-dir', $run, '--suite') + $Cases + @('--timeout', $TimeoutSeconds, '--cases-file', (Join-Path $suite 'cases.json'))
     if ($apiRelease) { $runnerArgs += '--api-runtime' }
+    if ($Simulated) { $runnerArgs += '--simulated' }
     & $Python (Join-Path $PSScriptRoot 'runner.py') @runnerArgs
     $runnerExit = $LASTEXITCODE
     $launcher.WaitForExit()
