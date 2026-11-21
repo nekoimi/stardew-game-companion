@@ -7,7 +7,7 @@
 ```powershell
 uv sync --project apps/runtime --locked
 uv run --project apps/runtime pytest apps/runtime/tests
-uv run --project apps/runtime ruff check runtime
+uv run --project apps/runtime --locked ruff check apps/runtime
 ```
 
 源码调试独立聊天服务和 MCP 时，参见[源码调试与 MCP 接入](../../docs/mcp.md)。运行时随桌面绿色包发布，项目的 Apache-2.0 许可及原作者署名见 [LICENSE](../../LICENSE) 和 [NOTICE](../../NOTICE)。

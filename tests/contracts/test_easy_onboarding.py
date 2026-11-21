@@ -162,7 +162,7 @@ def test_register_mcp_spaces_handling() -> None:
 def test_setup_companion_local_dev_manifest_and_compatibility(tmp_path: Path) -> None:
     # The wizard writes repo-level binding state; snapshot and restore it so the
     # production binding survives the test regardless of outcome.
-    installed_cfg = REPO_ROOT / "config" / "installed-candidate.json"
+    installed_cfg = REPO_ROOT / ".local" / "installed-candidate.json"
     local_dev_dir = REPO_ROOT / "artifacts" / "releases" / "local-dev"
     cfg_backup = installed_cfg.read_bytes() if installed_cfg.is_file() else None
     local_dev_backup = (local_dev_dir / "manifest.json").read_bytes() if (local_dev_dir / "manifest.json").is_file() else None
@@ -209,8 +209,7 @@ def _run_local_dev_onboarding_case(tmp_path: Path, installed_cfg: Path) -> None:
     res = _run_powershell(cmd)
     assert res.returncode == 0, f"AutoInstall failed: {res.stderr}\n{res.stdout}"
 
-    installed_cfg = REPO_ROOT / "config" / "installed-candidate.json"
-    assert installed_cfg.is_file(), "config/installed-candidate.json was not created"
+    assert installed_cfg.is_file(), ".local/installed-candidate.json was not created"
     installed_data = json.loads(installed_cfg.read_text(encoding="utf-8-sig"))
     assert installed_data["version"] == "local-dev"
     assert installed_data["manifestType"] == "local-dev"

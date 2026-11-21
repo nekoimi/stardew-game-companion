@@ -68,9 +68,10 @@ model-cache/
 *.wav
 *.mp3
 
-# Machine-specific provider selection and installation receipts
+# Legacy machine-specific configuration
 /config/chat-backend.json
 /config/installed-candidate.json
+/config/usage-prices.json
 
 # Test spillover and local session exports
 MagicMock/
@@ -108,4 +109,5 @@ MagicMock/
 !/tools/dev/register-mcp.ps1
 !/tools/dev/setup-companion.ps1
 !/tools/dev/start-companion.ps1
+!/tools/dev/templates/
 !/tools/dev/test.ps1

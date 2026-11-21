@@ -35,17 +35,19 @@ stardew-game-companion/
 │       ├── prompts/                核心指令、领域索引与相邻的领域指导
 │       └── skills/                 游戏技能
 ├── packaging/
-│   └── windows/                    绿色包构建、文件映射和校验
+│   └── windows/                    绿色包构建、文件映射、校验和随包模板
 ├── tests/
 │   ├── contracts/                   跨组件和跨语言契约测试
 │   └── acceptance/                  隔离存档用例、运行脚本和 TestDriver
 ├── tools/
-│   └── dev/                        环境检查、源码调试与 MCP 注册
+│   └── dev/                        环境检查、源码调试、MCP 注册和配置模板
 ├── docs/                           玩家指南、开发说明和设计记录
 └── .env.example                    源码开发配置模板
 ```
 
 组件内的测试留在所属组件。涉及两种语言共同读取的样本放在 `contracts/` 对应协议下，由跨语言测试共用。仓库根目录继续提供构建公共属性、贡献说明、许可证和版权声明。
+
+开发配置与安装配对记录由源码调试工具写入 `.local/`。绿色包保留 Mod 的现有配置路径和桌面自动生成的 `data/desktop-settings.json`。
 
 Python 保留 `stardew_ai_runtime` 包名。目录重构集中在包内职责，所有实际使用的 `python -m stardew_ai_runtime.*` 入口继续由包根模块承接，内部实现可以迁入各适配器。`bootstrap.py` 负责组装入口所需的依赖。
 

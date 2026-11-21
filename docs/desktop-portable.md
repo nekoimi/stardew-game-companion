@@ -8,6 +8,8 @@
 
 桌面程序启动随包提供的伙伴运行时和本机 SMAPI。此时使用绿色包内的独立 `Mods` 目录，游戏原目录的其他 Mod 不会随这次启动加载。修改游玩方式、伙伴来源或客户端配置后，保存设置并重启游戏。
 
+游戏目录、伙伴来源和模型选项在桌面「设置」中配置，程序会将这些设置保存到绿色包的 `data/desktop-settings.json`。
+
 ## 接入模型
 
 - **启动本机模型客户端**：将 Pi、DeepSeek（dsh）、Codex 或 MiniMax Code 安装在本机并完成登录。在桌面选择客户端、模型和推理档位，客户端路径留空时自动查找。DeepSeek 模型留空时使用 `deepseek-flash`，可沿用 dsh 保存的凭据或 `DEEPSEEK_API_KEY`。

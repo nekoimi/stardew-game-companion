@@ -25,7 +25,7 @@
 - 游戏托管路径保留原会话映射，读档时清除旧执行并刷新世界。外部路径每轮带上完整的精简游戏状态，避免原客户端整理上下文后继续依赖缺失的增量基线。
 - 首版连接期间原聊天窗口须保持闲置，玩家在游戏聊天栏继续交流；尚无跨客户端并发锁或一键客户端插件。退出游戏取消游戏回合，适配器可用 `Ctrl+C` 或断开命令结束；随后在原客户端重新打开同一会话，刷新游戏经历后继续聊天。
 
-离线逻辑、本机通信、发行包与实机证据见[双路径接入验证记录](dual-connection-validation.md)，操作见 [MCP 接入说明](mcp.md#已有-minimax-code-伙伴主动连接)。两种来源均完成了连续三个游戏日、实际收获入箱及保存退出重进；原伙伴在退出游戏后，通过原会话且不调用工具回忆了新增约定与游戏成果。执行中 F9 接管后，来回切换来源没有重新启动导航或夺回控制权。
+离线逻辑、本机通信、发行包与实机证据见[双路径接入验证记录](dual-connection-validation.md)，操作见 [MCP 接入说明](../mcp.md#已有-minimax-code-伙伴主动连接)。两种来源均完成了连续三个游戏日、实际收获入箱及保存退出重进；原伙伴在退出游戏后，通过原会话且不调用工具回忆了新增约定与游戏成果。执行中 F9 接管后，来回切换来源没有重新启动导航或夺回控制权。
 
 本轮实机同时修复了按数量入箱的参数转换、树已砍倒却返回完成数零，以及外部伙伴沿用内置显示名的问题，并完成对应复测。自然语言经验学习与原生适配器构建、热加载已加入本次源码；具体新增共同玩法的实机效果仍需逐项验收；其他客户端的自动接入、原窗口与游戏并发对话，以及更严格的经历来源与时间顺序记忆，仍需后续适配和验证。
 
@@ -49,7 +49,7 @@
 
 ## 2 发布基线与待解决的问题
 
-原项目 0.3.21 报告了固定三组伙伴实机回归，覆盖浇水补水、中途追加要求、收获拾取入箱出货，以及休息后采木并保留幼树。每组任务的现行复测标准见[可重复伙伴实机验收](repeatable-companion-acceptance.md)。
+原项目 0.3.21 报告了固定三组伙伴实机回归，覆盖浇水补水、中途追加要求、收获拾取入箱出货，以及休息后采木并保留幼树。每组任务的现行复测标准见[可重复伙伴实机验收](../repeatable-companion-acceptance.md)。
 
 | 已有基础 | 仍需解决的问题 | 本次设计 |
 | --- | --- | --- |
@@ -62,7 +62,7 @@
 | 已有偏好、约定、事件和增量上下文 | 长期存储与当轮展示预算绑定较紧 | 重要记忆归档保留，按当前场景召回 |
 | mcode 已有原会话压缩实现 | 后端维护与游戏侧记忆缺少统一策略 | 统一恢复、记忆整理与压缩后基线重建 |
 
-依据主要是 [game_tools.py](../apps/runtime/src/stardew_ai_runtime/game_tools.py)、[chat_bridge.py](../apps/runtime/src/stardew_ai_runtime/chat_bridge.py)、[game_reload.py](../apps/runtime/src/stardew_ai_runtime/game_reload.py)、[companion_memory.py](../apps/runtime/src/stardew_ai_runtime/companion_memory.py) 和 [mcode_compaction.py](../apps/runtime/src/stardew_ai_runtime/adapters/providers/mcode_compaction.py)。后续继续复用这些模块，不恢复旧版的只读聊天回合、二次派工准备或持久化动作队列。
+依据主要是 [game_tools.py](../../apps/runtime/src/stardew_ai_runtime/game_tools.py)、[chat_bridge.py](../../apps/runtime/src/stardew_ai_runtime/chat_bridge.py)、[game_reload.py](../../apps/runtime/src/stardew_ai_runtime/game_reload.py)、[companion_memory.py](../../apps/runtime/src/stardew_ai_runtime/companion_memory.py) 和 [mcode_compaction.py](../../apps/runtime/src/stardew_ai_runtime/adapters/providers/mcode_compaction.py)。后续继续复用这些模块，不恢复旧版的只读聊天回合、二次派工准备或持久化动作队列。
 
 ## 3 四条相互连接的体验循环
 
@@ -577,10 +577,10 @@ flowchart TD
 ### 本项目
 
 - [0.3.21 历史更新说明](https://github.com/nekoimi/stardew-game-companion/blob/cd05c4f1b0fdd93717e4f4070be863a275056882/docs/release-notes-0.3.21.md)
-- [可重复伙伴实机验收](repeatable-companion-acceptance.md)：三组场景与隔离验证方法。
-- [桌面使用指南](desktop-portable.md)和[自主生活与农场改造](farm-projects.md)涵盖当前入口、持续经营与能力范围。
-- [游戏工具](../apps/runtime/src/stardew_ai_runtime/game_tools.py)、[读档核对](../apps/runtime/src/stardew_ai_runtime/game_reload.py)、[增量送达](../apps/runtime/src/stardew_ai_runtime/prompt_delivery.py)：固定入口、即时执行与状态一致性。
-- [伙伴记忆](../apps/runtime/src/stardew_ai_runtime/companion_memory.py)、[后端适配](../apps/runtime/src/stardew_ai_runtime/adapters/providers)、[mcode 原生压缩](../apps/runtime/src/stardew_ai_runtime/adapters/providers/mcode_compaction.py)：会话和记忆可复用基础。
+- [可重复伙伴实机验收](../repeatable-companion-acceptance.md)：三组场景与隔离验证方法。
+- [桌面使用指南](../desktop-portable.md)和[自主生活与农场改造](../farm-projects.md)涵盖当前入口、持续经营与能力范围。
+- [游戏工具](../../apps/runtime/src/stardew_ai_runtime/game_tools.py)、[读档核对](../../apps/runtime/src/stardew_ai_runtime/game_reload.py)、[增量送达](../../apps/runtime/src/stardew_ai_runtime/prompt_delivery.py)：固定入口、即时执行与状态一致性。
+- [伙伴记忆](../../apps/runtime/src/stardew_ai_runtime/companion_memory.py)、[后端适配](../../apps/runtime/src/stardew_ai_runtime/adapters/providers)、[mcode 原生压缩](../../apps/runtime/src/stardew_ai_runtime/adapters/providers/mcode_compaction.py)：会话和记忆可复用基础。
 
 ### 外部项目与接口
 

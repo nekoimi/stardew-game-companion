@@ -25,6 +25,9 @@ RUNTIME = ROOT / "apps/runtime"
 PYTHON_VERSION = "3.13.11"
 PYTHON_SHA256 = "1ec066fb61ba5e8c73e29e048cd07c26850f74585e3a116005135b31b8004890"
 MOD_FILES = ("manifest.json", "StardewAI.Companion.Mod.dll", "StardewAI.Companion.Mod.deps.json")
+RUNTIME_PACKAGE = RUNTIME / "src/stardew_ai_runtime"
+# These package-root modules implement the source-only stardew-ai-runtime health check.
+DEVELOPER_MODULES = frozenset({Path("__main__.py"), Path("cli.py"), Path("config.py")})
 
 
 def digest(path: Path) -> str:
@@ -109,14 +112,14 @@ def build(args) -> Path:
     for name in MOD_FILES:
         copy_file(source / name, package / name)
     # PDBs can embed developer source paths; they are intentionally not shipped.
-    for path in sorted((RUNTIME / "src/stardew_ai_runtime").rglob("*")):
-        if path.suffix in {".py", ".mjs"}:
+    for path in sorted(RUNTIME_PACKAGE.rglob("*")):
+        if path.suffix in {".py", ".mjs"} and path.relative_to(RUNTIME_PACKAGE) not in DEVELOPER_MODULES:
             copy_file(path, package / "runtime" / path.relative_to(RUNTIME))
     for path in INSTRUCTION_FILES:
         copy_file(source_instruction_path(ROOT, path), package / path)
     copy_file(ROOT / "LICENSE", package / "LICENSE")
     copy_file(ROOT / "NOTICE", package / "NOTICE")
-    copy_file(ROOT / "config/usage-prices.example.json", package / "docs/usage-prices.example.json")
+    copy_file(ROOT / "packaging/windows/templates/usage-prices.example.json", package / "docs/usage-prices.example.json")
 
     cache = args.cache.resolve()
     cache.mkdir(parents=True, exist_ok=True)

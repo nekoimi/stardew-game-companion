@@ -4,7 +4,7 @@
 
 ## 配置与使用
 
-安装 Node.js ≥22.19.0 并安装、登录 [Pi](https://github.com/earendil-works/pi)（`npm install -g @earendil-works/pi-coding-agent`），要求具备 MCP、RPC、`get_state`、`agent_settled` 和 `--approve` 接口（按 1.5.2 协议接入）；旧版不支持时需升级。桌面上模型留空时沿用 Pi 当前模型。调试旧的游戏内启动路径时，可在运行目录的 `config/chat-backend.json` 写入：
+安装 Node.js ≥22.19.0 并安装、登录 [Pi](https://github.com/earendil-works/pi)（`npm install -g @earendil-works/pi-coding-agent`），要求具备 MCP、RPC、`get_state`、`agent_settled` 和 `--approve` 接口（按 1.5.2 协议接入）。桌面上模型留空时沿用 Pi 当前模型。运行仓库中的游戏内调试服务时，可在仓库的 `.local/chat-backend.json` 写入下方配置。已安装的旧 Mod 使用其内的 `config/chat-backend.json`。
 
 ```json
 {"backend":"pi","model":""}

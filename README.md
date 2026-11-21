@@ -30,7 +30,7 @@
 
 支持 Pi、DeepSeek（dsh）、Codex 和 MiniMax Code，可在 GUI 配置模型与推理档位，也可接续选定的 MiniMax Code 原会话。模型客户端自行安装与登录，订阅或 API 用量按所选服务计费。
 
-存档由游戏保存，桌面设置与伙伴数据保存在绿色包目录。运行时会向玩家选用的模型发送聊天、相关游戏状态和工具结果。[后端验证范围](docs/tested-backends.md)
+存档由游戏保存，桌面设置写入绿色包的 `data/desktop-settings.json`，伙伴数据随绿色包保存。运行时会向玩家选用的模型发送聊天、相关游戏状态和工具结果。[后端验证范围](docs/tested-backends.md)
 
 ## 开发与贡献
 

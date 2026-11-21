@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .paths import local_config_path
 from .paths import project_root as locate_project_root
 
 DEFAULT_BACKEND = "kimi"
@@ -19,7 +20,7 @@ def config_path() -> Path:
     override = os.getenv("STARDEW_CHAT_BACKEND_CONFIG")
     if override:
         return Path(override)
-    return project_root() / "config" / "chat-backend.json"
+    return local_config_path(project_root(), "chat-backend.json")
 
 
 def load_chat_backend_config(path: Path | None = None) -> dict[str, str]:

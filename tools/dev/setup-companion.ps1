@@ -178,11 +178,11 @@ function Install-ModFiles([string]$sourceDir, [string]$destinationDir, [bool]$is
             gameDirectory = $detectedGame
             modDirectory = [IO.Path]::GetFullPath($destinationDir)
         }
-        $configDirectory = Join-Path $repoRoot 'config'
+        $configDirectory = Join-Path $repoRoot '.local'
         [void][IO.Directory]::CreateDirectory($configDirectory)
         [IO.File]::WriteAllText((Join-Path $configDirectory 'installed-candidate.json'), ($installed | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
     } else {
-        # 自建绑定路径：安装自编译产物后计算 SHA256，生成 local-dev 清单并写入 config/installed-candidate.json。
+        # 自建绑定路径：安装自编译产物后计算 SHA256，生成 local-dev 清单并写入 .local/installed-candidate.json。
         # 仅当目标是检测到的真实游戏 Mod 目录时才写仓库级绑定；显式 -TargetModDir 的自定义/测试安装不触碰绑定。
         $normDestForBinding = [IO.Path]::GetFullPath($destinationDir).TrimEnd('\')
         $writeBinding = $false
@@ -191,7 +191,7 @@ function Install-ModFiles([string]$sourceDir, [string]$destinationDir, [bool]$is
             $writeBinding = ($normDestForBinding -eq $normExpectedForBinding)
         }
         if (-not $writeBinding) {
-            Write-Host "目标不是检测到的游戏 Mod 目录，跳过本地绑定写入（config/installed-candidate.json 保持不变）"
+            Write-Host "目标不是检测到的游戏 Mod 目录，跳过本地绑定写入"
         } else {
         $installedDll = Join-Path $destinationDir "StardewAI.Companion.Mod.dll"
         $modSha256 = Get-Sha256 $installedDll
@@ -246,7 +246,7 @@ function Install-ModFiles([string]$sourceDir, [string]$destinationDir, [bool]$is
             gameDirectory = $effectiveGame
             modDirectory = [IO.Path]::GetFullPath($destinationDir)
         }
-        $configDirectory = Join-Path $repoRoot 'config'
+        $configDirectory = Join-Path $repoRoot '.local'
         [void][IO.Directory]::CreateDirectory($configDirectory)
         [IO.File]::WriteAllText((Join-Path $configDirectory 'installed-candidate.json'), ($installed | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
         }
@@ -373,7 +373,7 @@ function Set-ChatBackendConfig([string]$backendName, [bool]$isDryRun = $false) {
     if ($backendName -notin @('agy', 'kimi', 'codex', 'dsh', 'mcode', 'pi')) {
         return
     }
-    $configDir = Join-Path $repoRoot "config"
+    $configDir = Join-Path $repoRoot '.local'
     $configFile = Join-Path $configDir "chat-backend.json"
     if ($isDryRun) {
         Write-Host "DryRun: 模拟写入聊天后端配置 $backendName"

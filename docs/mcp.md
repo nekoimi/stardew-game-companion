@@ -95,7 +95,7 @@ MiniMax Code 的 MCP 服务保存在数据目录的 `mcp.json`（`MINIMAX_DATA_D
 
 游戏内 `mcode` 的聊天、工作与主动交流复用同一会话，已确认送达后发送状态增量，读档或压缩后重建基线。已有伙伴自动接入使用 ACP 恢复原会话，游戏状态采用自足的紧凑快照，不依赖原客户端可能已经压缩掉的历史增量；不把原会话历史回放复制到 Mod。
 
-手动配置支持 stdio 的 MCP 客户端时，可以直接使用 `uv run --project <仓库根目录>/runtime python`（与 `register-mcp.ps1 -Install` 生成的配置一致），参数为：
+手动配置支持 stdio 的 MCP 客户端时，可以直接使用 `uv run --project <仓库根目录>/apps/runtime python`，参数为：
 
 ```text
 -m stardew_ai_runtime.mcp_server --run-dir <Mod 安装目录> --surface light
@@ -107,10 +107,10 @@ MiniMax Code 的 MCP 服务保存在数据目录的 `mcp.json`（`MINIMAX_DATA_D
 
 ## 游戏内聊天
 
-复制 `config/chat-backend.example.json` 为 `config/chat-backend.json`，设置 `backend` 和 `model`。当前聊天后端支持 `kimi`、`agy`、`codex`、`dsh` 和 `mcode`。使用本机已登录的 Codex CLI 时，设置 `"backend": "codex"`；省略 `model` 会沿用本机 Codex 配置的模型。每次调用只临时绑定当前游戏的 MCP，不修改全局配置。
+源码调试时，从[模型配置模板](../tools/dev/templates/chat-backend.example.json)复制一份到仓库的 `.local/chat-backend.json`，填写 `backend` 和 `model`。支持 `pi`、`dsh`、`codex`、`mcode`、`kimi` 和 `agy`。新位置没有文件时可继续读取旧仓库的 `config/chat-backend.json`。
 
 ```powershell
-uv run --project apps/runtime python -m stardew_ai_runtime.chat_bridge --run-dir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod" --backend kimi
+uv run --project apps/runtime python -m stardew_ai_runtime.chat_bridge --run-dir "C:\你的游戏目录\Mods\StardewAI.Companion.Mod"
 ```
 
 保持服务运行，在游戏中按 `F8` 打开对话。发送指令后窗口会关闭，让游戏动作继续；再次按 `F8` 可查看同一条指令的后续进度和完整回复。打开菜单会暂停农活动作的推进，关闭菜单后才会继续执行。

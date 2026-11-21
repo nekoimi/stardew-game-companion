@@ -29,6 +29,7 @@ uv run --project apps/runtime python packaging/windows/build-release.py --versio
 - `contracts/`：桌面 HTTP、游戏 WebSocket 契约和样例。
 - `resources/agent/`：提示词、领域指导和技能。
 - `packaging/windows/`：绿色包生成和发包校验。
+- `tools/dev/`：源码调试脚本和模型配置模板。开发安装生成的模型设置和配对记录位于 `.local/`。
 - `apps/game-mod/tests/`、`apps/runtime/tests/`、`tests/`：组件测试、跨语言契约与隔离验收。
 
 游戏对象的读写在游戏主线程执行。模型发出任务意图，具体动作由 Mod 执行；修改动作逻辑时需要同时检查前置条件、物品消耗和最终结果。

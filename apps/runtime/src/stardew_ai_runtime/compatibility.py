@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .paths import project_root
+from .paths import local_config_path, project_root
 
 
 class CompatibilityError(RuntimeError):
@@ -24,7 +24,7 @@ def assert_native_compatible(run_dir):
             raise CompatibilityError(f"MOD_RUNTIME_MISMATCH：下载版文件不完整或不配套，请重新安装。{error}") from error
         return
     releases_dir = (root / "artifacts/releases").resolve()
-    installed = root / "config/installed-candidate.json"
+    installed = local_config_path(root, "installed-candidate.json")
     manifest = None
     is_local_dev = False
 

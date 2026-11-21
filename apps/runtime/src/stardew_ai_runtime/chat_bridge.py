@@ -94,6 +94,7 @@ from stardew_ai_runtime.job_feedback import (
 )
 from stardew_ai_runtime.life_chat import LifeChatService
 from stardew_ai_runtime.owner_process import OwnerProcessGuard
+from stardew_ai_runtime.paths import local_config_path
 from stardew_ai_runtime.plan_executor import (
     StepExecution,
     normalise_native_result,
@@ -148,7 +149,7 @@ def resolve_chat_bridge_run_dir(run_dir: str | Path | None = None) -> Path | Non
     if env_dir and env_dir.strip():
         return Path(env_dir.strip()).resolve()
     try:
-        candidate_meta = project_root() / "config" / "installed-candidate.json"
+        candidate_meta = local_config_path(project_root(), "installed-candidate.json")
         if candidate_meta.is_file():
             meta = json.loads(candidate_meta.read_text(encoding="utf-8"))
             mod_dir = meta.get("modDirectory")
@@ -341,8 +342,11 @@ class ChatBridge:
         self._sessions_file = sessions_file or self._default_sessions_file()
         self._provider_sessions = ProviderSessionStore(self._sessions_file, self._session_history_path())
         self._commands_file = commands_file or self._default_commands_file()
-        self._usage_display = UsageDisplay(self._commands_file, project_root() / "config" / "usage-prices.json",
-                                           self._commands_file.parent / "data" / "model-usage.jsonl")
+        self._usage_display = UsageDisplay(
+            self._commands_file,
+            local_config_path(project_root(), "usage-prices.json"),
+            self._commands_file.parent / "data" / "model-usage.jsonl",
+        )
         provider = self._provider_spec()
         if provider is not None and provider.recover_usage is not None:
             provider.recover_usage(self._commands_file)
@@ -5642,13 +5646,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--backend", type=str, choices=PROVIDERS, default=None,
-        help="Chat provider (overrides config/chat-backend.json)",
+        help="Chat provider (overrides the local backend configuration)",
     )
     parser.add_argument(
         "--model",
         type=str,
         default=None,
-        help="Provider model (overrides config/chat-backend.json)",
+        help="Provider model (overrides the local backend configuration)",
     )
     parser.add_argument(
         "--effort",

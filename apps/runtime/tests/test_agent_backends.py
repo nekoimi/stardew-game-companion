@@ -89,6 +89,23 @@ def test_chat_backend_config_defaults_to_kimi_and_accepts_explicit_file(tmp_path
     assert load_chat_backend_config(config) == {"backend": "agy", "model": "gemini-test"}
 
 
+def test_chat_backend_config_prefers_local_checkout_and_keeps_package_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("STARDEW_CHAT_BACKEND_CONFIG", raising=False)
+    monkeypatch.setattr("stardew_ai_runtime.chat_backend_config.project_root", lambda: tmp_path)
+    legacy = tmp_path / "config/chat-backend.json"
+    legacy.parent.mkdir()
+    legacy.write_text('{"backend":"kimi"}', encoding="utf-8")
+    assert load_chat_backend_config()["backend"] == "kimi"
+
+    local = tmp_path / ".local/chat-backend.json"
+    local.parent.mkdir()
+    local.write_text('{"backend":"pi"}', encoding="utf-8")
+    assert load_chat_backend_config()["backend"] == "pi"
+
+    (tmp_path / "release-manifest.json").write_text("{}", encoding="utf-8")
+    assert load_chat_backend_config()["backend"] == "kimi"
+
+
 def test_codex_backend_uses_run_local_mcp_and_qualified_session(tmp_path: Path) -> None:
     python = tmp_path / "runtime" / "python" / "python.exe"
     python.parent.mkdir(parents=True)

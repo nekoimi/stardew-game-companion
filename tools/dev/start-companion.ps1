@@ -23,7 +23,10 @@ $sourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if (Test-Path -LiteralPath (Join-Path $sourceRoot 'apps/runtime/pyproject.toml')) { $repoRoot = $sourceRoot }
 $python = Join-Path $repoRoot 'apps\runtime\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { $python = (Get-Command python.exe -ErrorAction Stop).Source }
-$metadata = Join-Path $repoRoot 'config\installed-candidate.json'
+$metadata = Join-Path $repoRoot '.local\installed-candidate.json'
+if (-not (Test-Path -LiteralPath $metadata -PathType Leaf)) {
+    $metadata = Join-Path $repoRoot 'config\installed-candidate.json'
+}
 $serviceArgs = @('-m', 'stardew_ai_runtime.chat_bridge')
 if ($OwnerProcessId) { $serviceArgs += @('--owner-pid', [string]$OwnerProcessId) }
 if (Test-Path -LiteralPath $metadata) {

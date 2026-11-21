@@ -24,6 +24,6 @@
 
 ## 设计与验证记录
 
-- [会话延续与伙伴能力设计](companion-efficiency-and-play-design.md)
-- [双来源会话验证记录](dual-connection-validation.md)
-- [原生动作与存档问题修复记录](csharp-reliability-fixes.md)
+- [会话延续与伙伴能力设计](development/companion-efficiency-and-play-design.md)
+- [双来源会话验证记录](development/dual-connection-validation.md)
+- [原生动作与存档问题修复记录](development/csharp-reliability-fixes.md)
