@@ -21,3 +21,18 @@
 正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。使用 `-Provider openai -Model gpt-5-mini` 可选择 OpenAI。为任一服务商加 `-Simulated` 可用其本地流式协议跑相同的固定场景。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
 
 每组结果在同一运行目录的 `evidence/<场景名>/`，总结果在 `.test-runs/presets-*/summary.md`。API 运行在启动游戏前测试模型工具调用以及根据工具回执生成确认文本。报告保留所用服务商、模型、游戏和 SMAPI 版本、包清单哈希、自然语言指令、状态采样和失败原因。画面观感、选项跨天、读档与执行中退出需单独核对。
+
+## 桌面与同一存档切换
+
+```powershell
+pwsh -File tests/acceptance/start-desktop-acceptance.ps1 -ReleaseDir '<解压目录>' -SavePath '<测试存档目录>' -GamePath '<SMAPI 游戏目录>'
+```
+
+脚本将绿色包和存档复制到 `.test-runs/desktop-*`，用该副本的伴侣启动器打开桌面。在桌面「设置」分别填写两家凭据，点击「测试连接」，从桌面启动游戏并在游戏菜单加载复制出的存档。加 `-Simulated` 时填写 `accept-usage` 和 `accept-openai`，桌面使用本地模拟服务。
+
+1. 用 DeepSeek 执行自然语言移动指令，核对原生位置和桌面动作回执。分别在模型思考和移动时按 F9，核对控制权回到玩家。交权后测「打断并执行」，核对旧动作终态和新指令结果。
+2. 写入伙伴名、手记并留下未完成目标。请求伙伴给出一项选择，提交后检查待确认项关闭。模拟 DeepSeek 可用「等待接管」「走到出口附近」「记住今日目标」和「请向我确认是否留种」触发对应动作。
+3. 在同一存档应用 OpenAI 模型并询问上一轮约定，核对伙伴名、手记、历史、目标以及两家用量仍可读取。正式 API 同时核对模型的回答。
+4. 让隔离桌面的运行时断线，从桌面重连并核对旧动作。退出到标题并重载同一存档，检查会话更新、控制权由玩家持有、目标仍在。
+
+在运行目录的 `evidence` 留存包版本、进程与回执证据，并记录各项通过、失败或未执行。自动事件记录在 `agent-runtime-events.jsonl`，用量与角色数据保存在副本的 `desktop/data/companion.sqlite`。结束时退出隔离游戏和桌面。

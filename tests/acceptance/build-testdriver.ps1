@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug'
+    [string]$Configuration = 'Debug',
+    [string]$GamePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,7 +38,9 @@ $dotnetPath = if ($env:STAR_DOTNET_PATH -and (Test-Path -LiteralPath $env:STAR_D
 
 $proj = Join-Path $PSScriptRoot 'test-driver/StardewAI.Companion.TestDriver.csproj'
 Write-Host "Building TestDriver project: $proj ($Configuration)..."
-& $dotnetPath build $proj --configuration $Configuration
+$buildArgs = @('build', $proj, '--configuration', $Configuration)
+if ($GamePath) { $buildArgs += "-p:StardewGamePath=$GamePath" }
+& $dotnetPath @buildArgs
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
