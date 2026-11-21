@@ -8657,6 +8657,15 @@ public sealed class TestDriverMod : Mod
                 SaveGame.Load(_lifecycleSaveName);
                 Game1.exitActiveMenu();
             }
+            else if (action == "load")
+            {
+                var saves = SaveIsolationPatcher.TargetIsolatedSavesPath;
+                if (_testMode != "interactive" || Game1.activeClickableMenu is not TitleMenu || Context.IsWorldReady || saves == null)
+                    throw new InvalidOperationException("Initial load requires the isolated interactive title screen.");
+                var save = Directory.GetDirectories(saves).Single();
+                SaveGame.Load(Path.GetFileName(save));
+                Game1.exitActiveMenu();
+            }
             else if (action != "snapshot") throw new ArgumentException("Unknown lifecycle action.");
             var info = Helper.ModRegistry.Get("CSXizhang.StardewAICompanion");
             var instance = info?.GetType().GetProperty("Mod")?.GetValue(info);

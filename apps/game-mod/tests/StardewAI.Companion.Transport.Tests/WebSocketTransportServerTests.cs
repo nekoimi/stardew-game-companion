@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
@@ -12,6 +13,23 @@ namespace StardewAI.Companion.Mod.Transport.Tests;
 
 public class WebSocketTransportServerTests
 {
+    [Fact]
+    public async Task AutomaticPortRetriesWhenAnotherListenerClaimsItsFirstCandidate()
+    {
+        using var server = new WebSocketTransportServer(0, "test-token", new TestTransportHandler(), "save", "session");
+        var first = server.Port;
+        using var competingListener = new HttpListener();
+        competingListener.Prefixes.Add($"http://127.0.0.1:{first}/");
+        competingListener.Start();
+        server.Start();
+        Assert.NotEqual(first, server.Port);
+        using var client = new ClientWebSocket();
+        client.Options.SetRequestHeader("Authorization", "Bearer test-token");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/chat"), timeout.Token);
+        Assert.Equal(WebSocketState.Open, client.State);
+    }
+
     [Fact]
     public async Task DesktopControlIsAcceptedOnlyForEnabledChatAndCurrentSaveSession()
     {

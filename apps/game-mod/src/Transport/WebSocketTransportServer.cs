@@ -22,7 +22,8 @@ public sealed class WebSocketTransportServer : ITransportServer
 
     private sealed record OutboundItem(EnvelopeDto Envelope, bool IsCritical, long Generation);
 
-    private readonly HttpListener _listener;
+    private HttpListener _listener;
+    private readonly bool _automaticPort;
     private readonly BoundedMessageQueue _queue;
     private readonly IdempotencyManager _idempotencyManager;
     private readonly ITransportHandler _handler;
@@ -53,7 +54,7 @@ public sealed class WebSocketTransportServer : ITransportServer
     private readonly Queue<(long Generation, string Reason)> _pendingDisconnects = new();
     private readonly object _disconnectLock = new();
 
-    public int Port { get; }
+    public int Port { get; private set; }
     public string SessionToken { get; }
     public TransportState State { get; private set; } = TransportState.Disconnected;
     public bool IsClientConnected => _activeSocket is { State: WebSocketState.Open };
@@ -131,7 +132,8 @@ public sealed class WebSocketTransportServer : ITransportServer
         _maxNormalOutboundCapacity = maxNormalOutboundCapacity > 0 ? maxNormalOutboundCapacity : 128;
         _maxCriticalOutboundCapacity = maxCriticalOutboundCapacity > 0 ? maxCriticalOutboundCapacity : 64;
 
-        Port = port > 0 ? port : GetAvailablePort();
+        _automaticPort = port <= 0;
+        Port = _automaticPort ? GetAvailablePort() : port;
         SessionToken = string.IsNullOrWhiteSpace(sessionToken)
             ? GenerateSecureToken()
             : sessionToken;
@@ -139,8 +141,14 @@ public sealed class WebSocketTransportServer : ITransportServer
         _queue = new BoundedMessageQueue(maxNormalCapacity: 64, maxPriorityCapacity: 16);
         _idempotencyManager = new IdempotencyManager(maxCapacity: 256, completedArchiveDirectory: completedArchiveDirectory);
 
-        _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
+        _listener = CreateListener(Port);
+    }
+
+    private static HttpListener CreateListener(int port)
+    {
+        var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        return listener;
     }
 
     public WebSocketTransportServer(
@@ -197,10 +205,26 @@ public sealed class WebSocketTransportServer : ITransportServer
                 return;
             }
 
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    _listener.Start();
+                    break;
+                }
+                catch (HttpListenerException error) when (_automaticPort && attempt < 8)
+                {
+                    _logger?.Invoke($"Loopback port {Port} could not be opened ({error.NativeErrorCode}); trying another port.", "Warn");
+                    _listener.Close();
+                    Port = GetAvailablePort();
+                    _listener = CreateListener(Port);
+                }
+            }
+            _serverCts?.Dispose();
             _serverCts = new CancellationTokenSource();
-            _listener.Start();
             State = TransportState.Listening;
-            _listenerLoopTask = Task.Run(() => AcceptLoopAsync(_serverCts.Token));
+            var token = _serverCts.Token;
+            _listenerLoopTask = Task.Run(() => AcceptLoopAsync(token));
             _logger?.Invoke($"WebSocket transport server listening on 127.0.0.1:{Port}");
         }
     }
