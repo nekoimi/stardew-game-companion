@@ -107,7 +107,10 @@ def evaluate(case, before, after, samples):
         checks.pop("targets_preserved")
         checks["two_mature_trees_cut"] = before.get("acceptanceMatureTreesRemaining") == 2 and after.get("acceptanceMatureTreesRemaining") == 0
         checks["sapling_preserved"] = before.get("acceptanceSaplingStage") == after.get("acceptanceSaplingStage") == 2
-        checks["wood_stored"] = count(after.get("acceptanceChestItems"), "(O)388") > 0 and count(after.get("companionItems"), "(O)388") == 0
+        wood_before = before.get("acceptanceFarmChestWood")
+        wood_after = after.get("acceptanceFarmChestWood")
+        checks["wood_stored"] = (isinstance(wood_before, int) and isinstance(wood_after, int) and wood_after > wood_before
+                                 and after.get("companionItems") is not None and count(after["companionItems"], "(O)388") == 0)
     elif case in {"water-refill", "rest-water"}:
         checks["all_target_crops_watered"] = bool(target_count) and (
             after.get("harnessFixtureDryCropCount") == 0

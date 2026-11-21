@@ -34,6 +34,16 @@ def test_harvest_disappearance_does_not_prove_pickup_or_storage():
     assert not all(runner.evaluate("harvest-store", before, dict(after, companionItems=[{"id": "(O)24", "stack": 1}]), []).values())
 
 
+def test_forestry_counts_new_wood_in_any_farm_chest():
+    before = {"year": 1, "season": "spring", "day": 1, "acceptanceMatureTreesRemaining": 2,
+              "acceptanceSaplingStage": 2, "acceptanceFarmChestWood": 34}
+    after = dict(before, acceptanceMatureTreesRemaining=0, acceptanceFarmChestWood=68, acceptanceChestItems=[],
+                 companionRestState="awake", companionActiveTaskId=None, companionMachineExecuting=None, companionItems=[])
+    assert all(runner.evaluate("mature-trees", before, after, []).values())
+    assert not runner.evaluate("mature-trees", before, dict(after, acceptanceFarmChestWood=34), [])["wood_stored"]
+    assert not runner.evaluate("mature-trees", before, dict(after, acceptanceFarmChestWood=None), [])["wood_stored"]
+
+
 def test_trace_retains_tool_failures_and_nonterminal_results():
     trace = [{"event": {"item": {"type": "tool_call", "toolCall": {
         "name": "mcp__stardew-companion__submit_work", "input": {"water_auto": {}},

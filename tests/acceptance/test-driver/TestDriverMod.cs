@@ -1003,12 +1003,14 @@ public sealed class TestDriverMod : Mod
                             var snapshotRequest = Path.Combine(outDirCoordWait, "free-mode-native-snapshot-request.txt");
                             if (File.Exists(snapshotRequest))
                             {
-                                string label = File.ReadAllText(snapshotRequest).Trim();
-                                File.Delete(snapshotRequest);
-                                if (label.Length is > 0 and <= 48 && label.All(c => char.IsLetterOrDigit(c) || c is '-' or '_'))
-                                    WriteFreeModeNativeSnapshot(outDirCoordWait, label);
-                                else
-                                    Monitor.Log("[TestDriver] Invalid free-mode snapshot label.", LogLevel.Warn);
+                                string? label = TryTakeSnapshotRequest(snapshotRequest);
+                                if (label is not null)
+                                {
+                                    if (label.Length is > 0 and <= 48 && label.All(c => char.IsLetterOrDigit(c) || c is '-' or '_'))
+                                        WriteFreeModeNativeSnapshot(outDirCoordWait, label);
+                                    else
+                                        Monitor.Log("[TestDriver] Invalid free-mode snapshot label.", LogLevel.Warn);
+                                }
                             }
                         }
                     }
@@ -8454,6 +8456,21 @@ public sealed class TestDriverMod : Mod
         }
     }
 
+    private static string? TryTakeSnapshotRequest(string path)
+    {
+        try
+        {
+            string label = File.ReadAllText(path).Trim();
+            File.Delete(path);
+            return label;
+        }
+        catch (IOException error) when ((error.HResult & 0xffff) is 32 or 33)
+        {
+            // Keep the request for the next game tick while another process holds the file.
+            return null;
+        }
+    }
+
     private void WriteFreeModeNativeSnapshot(string outDir, string label)
     {
         try
@@ -8574,6 +8591,10 @@ public sealed class TestDriverMod : Mod
                     && young is Tree youngTree ? youngTree.growthStage.Value : (int?)null;
                 payload["acceptanceChestItems"] = _acceptanceChest is Vector2 ct && farm.objects.TryGetValue(ct, out var chestObject)
                     && chestObject is StardewValley.Objects.Chest chest ? DescribeItems(chest.Items) : null;
+                if (_harnessFixtureMode == "mature-trees")
+                    payload["acceptanceFarmChestWood"] = farm.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Chest)
+                        .Sum(pair => ((StardewValley.Objects.Chest)pair.Value).Items
+                            .Where(item => item?.QualifiedItemId == "(O)388").Sum(item => item.Stack));
                 payload["harnessFixtureCropCount"] = fixtureDirt.Count(dirt => dirt?.crop != null);
                 payload["harnessFixtureDryCropCount"] = fixtureDirt.Count(dirt => dirt?.crop != null && dirt.state.Value == 0);
                 payload["harnessFixtureWateredCount"] = fixtureDirt.Count(dirt => dirt?.state.Value == 1);
