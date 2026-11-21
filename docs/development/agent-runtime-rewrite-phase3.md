@@ -103,13 +103,42 @@ DeepSeek 官方 `deepseek-flash` 与第三方 Responses `gpt-6.1-sol` 均通过�
 
 从 `f337409` 干净克隆构建候选，ZIP SHA256 为 `320d1b41b683c78068d43d19171226f266fb8470897bae9d62393ee9eac98c2e`，包清单 SHA256 为 `2c45844bff592d3153ae8d0171e9f0f1eec53b4f8ad2565af440a2cade9effac`。用 `start-desktop-acceptance.ps1 -ReleaseDir <解压目录> -SavePath <隔离存档> -GamePath <SMAPI 目录>`，以 DeepSeek `deepseek-flash` 在游戏 1.6.15.24356、SMAPI 4.5.2 复测。思考和原生移动分别实按 F9，改派等旧动作结算后回复，选择「留种」写入 SQLite，重连沿用游戏会话，重新读档建立新会话并保留玩家控制。证据目录为 `desktop-1121-204413-cfa2`，源存档哈希一致。
 
+## TS-14 正式绿色包
+
+`4b667e0` 将桌面与 Mod 切到 v2，移除旧 Python 生产运行时、CLI 适配器、外部会话接口和数据迁移入口。Python 只用于开发验收报告。首轮实机照料和收获出货通过，采木后的寻路一直停在准备阶段，超过了运行时等候回执的时间。`a12d312` 为寻路准备添加 20 秒原生超时，保留可核对的失败终态并释放执行权。导航回归验证了超时后下一条动作可以执行。
+
+从 `a12d312` 干净克隆，用 .NET SDK 10.0.404 和锁定依赖构建 `StardewGameCompanion-0.3.22-windows-x64.zip`。归档及新解压的中文空格目录均通过 11,440 个文件与清单校验。Windows 系统 PATH 下随包 Node 22.22.2、SQLite 3.51.2、pi-ai 1.6.0 自检通过，`consult` 能读取随包执行指导。包内核对了 87 个生产 npm 依赖及许可证记录，并包含 Node、.NET 和项目许可。包内未发现旧生产脚本或临时模型配置值。
+
+- ZIP SHA256 `1abc23f07aa65ab3da79ab5e8ea46f1da7efe8fe40972ac503f1b9bdac2eb421`
+- 包清单 SHA256 `531b18293f9b6fb4b048f4d8a4c79de9d5d267cd6885cdda5d68100b96dc62d7`
+- 源码测试通过 24 项 TypeScript、63 项 C# 传输（含与 TS 实连及共享样例）、684 项 C# Mod Release、7 项验收判定。
+
+最终包使用真实 DeepSeek `deepseek-flash`，游戏 1.6.15.24356 和 SMAPI 4.5.2。按默认 600 秒预算运行，动作、物品、动画和碰撞以原生证据判定。
+
+| 场景 | 结果 | 运行目录 |
+| --- | --- | --- |
+| `care-guidance` | 通过，50.3 秒。补水、浇水及工具边界的追加消息。 | `presets-1121-211241-d364-game` |
+| `harvest-logistics` | 通过，41.6 秒。收获、入箱、出货及保留木材。 | `presets-1121-211241-d364-game` |
+| `rest-forestry` | 单组复测通过，115.2 秒。原生床恢复至少 80 体力，采两棵成熟树，保留幼树，箱内木材从 0 增至 31。 | `presets-1121-211724-6d5c-game` |
+
+三组同跑时采木场景提前询问玩家，第二棵成熟树和入箱未达标。按原自然语言和原判定单组重跑通过，保留两次证据。真实 Responses 验收使用第三方网关。官方 OpenAI 账户和待确认事项跨天本轮未验。
+
+第三方 Responses `gpt-6.1-sol` 用最终包完成了连接预检、流式工具调用和回执确认。`launch-game.ps1 -Mode interactive` 用同一包绑定隔离存档，实体 F8 打开原生选项。结束后游戏正常退出，原存档与 Mod 哈希一致。证据目录为 `interactive-final-1121-212226`。
+
+最终包的 WPF「测试连接」在两种真实协议下通过。两种模型均验证了思考中 F9 和移动中 F9，后者收到原生取消回执。DeepSeek 复测中，改派确认取消了旧动作，新模型请求失败。同一 Key 随后在独立最小请求中返回 HTTP 402。Responses 网关的改派复测在观察窗口内未开始原生移动。证据分别在 `desktop-1121-211935-d4ad` 与 `desktop-1121-212640-ae6a`。真实模型的完整生命周期记录见 [TS-13](#真实桌面生命周期补验)。
+
+最终包使用模拟 DeepSeek 完成桌面复测。在 `desktop-1121-213013-b6f6` 验证了改派收到新回复，选择写入 SQLite，同一游戏内恢复旧动作和会话，读档生成新会话并保留玩家控制，托盘恢复和退出清理通过。两种 F9 使用实体按键，移动中的接管收到原生取消回执。源存档、日常存档和验收游戏的 Mod 文件哈希一致，验收证据无临时 API Key。
+
+新版退出后，在新目录校验旧绿色包的 1,793 个文件。旧 EXE 可以独立启动，使用模拟 Pi 在隔离档中完成原生移动。隐藏窗口期间动作继续，托盘恢复时仍显示同一游戏会话的回执。退出旧桌面仅结束所属运行时，游戏保持运行。证据目录为 `rollback-final-1121-210453`。旧包 ZIP SHA256 与阶段 0 留存值一致。
+
 ## 复现命令
 
 ```powershell
-pwsh -File packaging/windows/build-node-release.ps1 -Output artifacts/api-preview
-pwsh -File packaging/windows/verify-node-release.ps1 -Archive <候选ZIP路径>
-pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir <解压目录> -SavePath <春季隔离来源存档> -Provider deepseek -Simulated
-pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir <解压目录> -SavePath <春季隔离来源存档> -Provider openai -Simulated
+pwsh -File packaging/windows/build-node-release.ps1 -Output artifacts/windows-x64
+pwsh -File packaging/windows/verify-node-release.ps1 -Archive '<ZIP 路径>'
+pwsh -File tools/dev/test.ps1 -GamePath '<SMAPI 目录>' -DotNet '<.NET 6 dotnet.exe>'
+pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir '<解压目录>' -SavePath '<春季隔离来源存档>' -Provider deepseek -Model deepseek-flash
+pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir '<解压目录>' -SavePath '<春季隔离来源存档>' -Provider deepseek -Model deepseek-flash -Cases rest-forestry
 ```
 
-实机执行由已打包的运行时和 Mod 完成，TestDriver 只布置存档、发送自然语言和采集原生结果。模拟报告单独标记，真实 API 运行从当前进程读取相应厂商或网关凭据。真实桌面切换和接管补验、Python 生产链路和最终包复验仍按待办执行。[三组固定场景和正式入口](../repeatable-companion-acceptance.md)
+实机执行由已打包的运行时和 Mod 完成，TestDriver 布置存档、发送自然语言和采集原生结果。真实 API 从当前进程读取相应厂商或网关凭据。[三组固定场景和正式入口](../repeatable-companion-acceptance.md)

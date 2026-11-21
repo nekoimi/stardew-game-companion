@@ -791,6 +791,9 @@ if ($Mode -eq 'baseline-gate') {
 } elseif ($Mode -eq 'scenario') {
     # Functional scenario mode requires verified external Act execution
     $runSuccess = ($cleanExit -and $noViolations -and $matchingRun -and $evidenceJson.functionalSkillPassed -eq $true)
+} elseif ($Mode -eq 'interactive') {
+    # Interactive runs use their own observation files and finish when the game closes.
+    $runSuccess = ($cleanExit -and $noViolations)
 }
 
 if ($runSuccess) {
