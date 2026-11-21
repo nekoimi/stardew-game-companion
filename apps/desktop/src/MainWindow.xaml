@@ -401,7 +401,8 @@
                                     <TextBox x:Name="Model" AutomationProperties.Name="模型" />
                                     <TextBlock x:Name="ModelHint" Foreground="#537261" Margin="0,3,0,13" TextWrapping="Wrap" />
                                     <TextBlock Text="推理档位" FontWeight="SemiBold" Margin="0,0,0,6" />
-                                    <ComboBox x:Name="ReasoningEffort" AutomationProperties.Name="推理档位" Margin="0,0,0,13" />
+                                    <ComboBox x:Name="ReasoningEffort" AutomationProperties.Name="推理档位"
+                                              SelectedValuePath="Tag" Margin="0,0,0,13" />
                                     <TextBlock Text="客户端路径" FontWeight="SemiBold" Margin="0,0,0,6" />
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="选择…" Click="BrowseClient" Margin="8,0,0,0" />

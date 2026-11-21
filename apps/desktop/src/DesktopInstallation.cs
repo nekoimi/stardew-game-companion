@@ -9,7 +9,7 @@ using Microsoft.Win32;
 namespace StardewAI.Companion.Desktop;
 
 internal sealed record ClientPreferences(string Model = "", string Path = "", string Effort = "");
-internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "companion", string Model = "", string PiPath = "",
+internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "player", string Model = "", string PiPath = "",
     string Backend = "pi", string ConnectionSource = "builtin", Dictionary<string, ClientPreferences>? Clients = null,
     string OriginalWorkspace = "", string OriginalDataDirectory = "", string OriginalClient = "", string OriginalName = "");
 

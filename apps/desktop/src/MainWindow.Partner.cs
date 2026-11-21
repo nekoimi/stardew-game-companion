@@ -9,7 +9,6 @@ namespace StardewAI.Companion.Desktop;
 public sealed record OriginalSessionOption(string Id, string Label);
 public sealed record DesktopProvider(string Id, string Name, string DefaultModel, bool AllowCmd,
     string DefaultEffort, string[] Efforts);
-
 public partial class MainWindow
 {
     private readonly Dictionary<string, ClientPreferences> _clients = new(StringComparer.Ordinal);
@@ -48,7 +47,7 @@ public partial class MainWindow
     private Dictionary<string, ClientPreferences> ReadClientPreferences()
     {
         if (BackendPicker.SelectedItem is not null)
-            _clients[_backend] = new(Model.Text.Trim(), ClientPath.Text.Trim(), ReasoningEffort.SelectedItem as string ?? "");
+            _clients[_backend] = new(Model.Text.Trim(), ClientPath.Text.Trim(), ReasoningEffort.SelectedValue as string ?? "");
         return new(_clients, StringComparer.Ordinal);
     }
 
@@ -61,11 +60,25 @@ public partial class MainWindow
         var settings = _clients.GetValueOrDefault(provider.Id) ?? new();
         Model.Text = settings.Model;
         ClientPath.Text = settings.Path;
-        ReasoningEffort.ItemsSource = provider.Efforts;
-        ReasoningEffort.SelectedItem = provider.Efforts.Contains(settings.Effort) ? settings.Effort : provider.DefaultEffort;
+        ReasoningEffort.ItemsSource = provider.Efforts
+            .Select(value => new ComboBoxItem { Tag = value, Content = ReasoningLabel(value) }).ToArray();
+        ReasoningEffort.SelectedValue = provider.Efforts.Contains(settings.Effort) ? settings.Effort : provider.DefaultEffort;
         ModelHint.Text = provider.DefaultModel.Length == 0 ? "留空使用客户端当前配置的模型。"
             : $"留空使用 {provider.DefaultModel}。";
     }
+
+    private static string ReasoningLabel(string value) => value switch
+    {
+        "default" => "默认",
+        "off" => "关闭",
+        "minimal" => "最低",
+        "low" => "低",
+        "medium" => "中",
+        "high" => "高",
+        "xhigh" => "极高",
+        "max" => "最高",
+        _ => value
+    };
 
     private void PartnerSourceSelected(object sender, SelectionChangedEventArgs e)
     {
