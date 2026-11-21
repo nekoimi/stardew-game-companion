@@ -32,7 +32,7 @@
 
 ## 模型与数据
 
-支持 DeepSeek 官方、OpenAI 官方和第三方 OpenAI Responses。第三方网关需要 Base URL、API Key 和模型 ID，桌面可以检测流式工具调用和回执。模型用量按所选服务计费。
+在「设置 → 模型连接」选择 DeepSeek 官方、OpenAI 官方或自定义接口。自定义接口支持 Chat Completions 和 Responses，可填写 HTTPS Base URL 与模型 ID，流式输出可按服务能力开启或关闭。「测试连接」会核对工具调用与回执。
 
 存档由游戏保存，伙伴资料与聊天按存档写入绿色包的 `data/companion.sqlite`，API Key 由 Windows 凭据管理器保管。运行时会向所选模型发送聊天、相关游戏状态和工具结果。[使用指南](docs/desktop-portable.md)
 

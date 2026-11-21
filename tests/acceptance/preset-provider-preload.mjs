@@ -1,5 +1,5 @@
-import { createMockDeepSeek, redirectDeepSeek } from "../../apps/runtime/tests/mock-deepseek.mjs";
-import { createMockOpenAI, redirectOpenAI } from "../../apps/runtime/tests/mock-openai.mjs";
+import { createMockDeepSeek } from "../../apps/runtime/tests/mock-deepseek.mjs";
+import { createMockOpenAI } from "../../apps/runtime/tests/mock-openai.mjs";
 
 const work = (name, params) => ({ name: "submit_work", args: { action: { [name]: params } } });
 const observe = { name: "get_status", args: {} };
@@ -91,8 +91,14 @@ function planOpenAI({ input }) {
   }));
 }
 
-const openAI = process.env.STARDEW_ACCEPTANCE_FIXTURE_PROVIDER === "openai";
+const openAI = process.env.STARDEW_ACCEPTANCE_FIXTURE_PROTOCOL === "responses";
 const server = openAI ? await createMockOpenAI(planOpenAI) : await createMockDeepSeek(planDeepSeek);
-if (openAI) redirectOpenAI(server.address);
-else redirectDeepSeek(server.address);
+const original = globalThis.fetch;
+globalThis.fetch = (input, options) => {
+  const request = new Request(input, options);
+  const url = new URL(request.url);
+  const host = openAI ? "api.openai.com" : "api.deepseek.com";
+  if (url.hostname !== host && url.hostname !== "gateway.invalid") throw new Error("Unexpected preset fixture endpoint");
+  return original(new Request(server.address + url.pathname, request));
+};
 server.unref();

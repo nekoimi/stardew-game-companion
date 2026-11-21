@@ -51,6 +51,8 @@ test("DeepSeek adapter streams tool arguments, classifies failures, and preserve
     await checkModelConnection(adapter.open({ ...selection, model: "new-model-fixture" }, "accept-usage"), AbortSignal.timeout(5000));
     assert.equal(server.calls.at(-1).model, "new-model-fixture");
     await checkModelConnection(adapter.open(selection, "accept-usage"), AbortSignal.timeout(5000));
+    await checkModelConnection(adapter.open({ ...selection, stream: false }, "accept-usage"), AbortSignal.timeout(5000), false);
+    assert.ok(server.calls.slice(-2).every(call => call.stream === false));
   } finally { restore(); await server.close(); }
 });
 
@@ -79,6 +81,9 @@ test("OpenAI Responses replays only its own tool call and normalizes reported us
     assert.equal(replay.find(item => item.type === "function_call_output").call_id,
       replay.find(item => item.type === "function_call").call_id);
     await checkModelConnection(model, AbortSignal.timeout(5000));
+    const complete = new PiModelAdapter().open({ provider: "openai", model: "gpt-5-mini", stream: false }, "test-only");
+    await checkModelConnection(complete, AbortSignal.timeout(5000), false);
+    assert.ok(server.requests.slice(-2).every(request => request.stream === false));
   } finally { restore(); await server.close(); }
 });
 

@@ -461,7 +461,8 @@ export class TurnRunner {
           const reply = { ...turn.binding, requestId, turnId: turn.id,
             status: failure ? "failed" : "completed", replyText: primary ? answer || null : null,
             error: primary ? failure || null : null,
-            ...(this.trace && this.selection ? { provider: this.selection.provider, model: this.selection.model } : {}),
+            ...(this.trace && this.selection ? { provider: this.selection.provider, model: this.selection.model,
+              protocol: this.selection.protocol ?? null, stream: this.selection.stream !== false } : {}),
             profileRevision: this.store?.profile(save).profileRevision ?? 0, memoryRevision: this.store?.memory(save).memoryRevision ?? 0 };
           try {
             this.game.notify("life.chat.reply", { ...reply, replyAlreadyDelivered: !primary || (waiting && !answer) });

@@ -20,9 +20,9 @@
 
 正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。使用 `-Provider openai -Model gpt-5-mini` 可选择 OpenAI。为任一服务商加 `-Simulated` 可用其本地流式协议跑相同的固定场景。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
 
-第三方 Responses 网关使用 `-Provider openai-compatible -Model <网关模型 ID>`。从当前进程读取 `OPENAI_COMPATIBLE_BASE_URL` 和 `OPENAI_COMPATIBLE_API_KEY`。结果以 `openai-compatible` 记录。
+第三方网关使用 `-Provider custom -Protocol responses -Model <网关模型 ID>` 或 `-Provider custom -Protocol chat-completions -Model <网关模型 ID>`。正式验收从当前进程读取 `OPENAI_COMPATIBLE_BASE_URL` 和 `OPENAI_COMPATIBLE_API_KEY`。各入口默认流式，加 `-NonStreaming` 改用完整响应。模拟网关加 `-Simulated`。
 
-每组证据在 `.test-runs/presets-*-game/evidence/<场景名>/`，总结果在该运行目录的 `summary.md`。启动游戏前测试模型工具调用及回执后的确认文本。报告记录服务商、模型、游戏和 SMAPI 版本、包清单哈希、自然语言指令、状态采样和失败原因。画面观感、选项跨天、读档与执行中退出需单独核对。
+每组证据在 `.test-runs/presets-*-game/evidence/<场景名>/`，总结果在该运行目录的 `summary.md`。启动游戏前测试模型工具调用及回执后的确认文本。报告记录服务商、模型、协议、流式开关、游戏和 SMAPI 版本、包清单哈希、自然语言指令、状态采样和失败原因。画面观感、选项跨天、读档与执行中退出需单独核对。
 
 ## 桌面与同一存档切换
 

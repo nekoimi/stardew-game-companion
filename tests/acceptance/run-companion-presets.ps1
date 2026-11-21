@@ -5,7 +5,9 @@ param(
     [ValidateSet('water-refill','harvest-store','rest-water','mature-trees','walk-pickup','walk-pickup-full','care-guidance','harvest-logistics','rest-forestry')]
     [string[]]$Cases = @('care-guidance','harvest-logistics','rest-forestry'),
     [ValidateRange(60,3600)][int]$TimeoutSeconds = 600,
-    [ValidateSet('deepseek','openai','openai-compatible')][string]$Provider = 'deepseek',
+    [ValidateSet('deepseek','openai','openai-compatible','custom')][string]$Provider = 'deepseek',
+    [ValidateSet('responses','chat-completions')][string]$Protocol,
+    [switch]$NonStreaming,
     [string]$Model,
     [switch]$Simulated,
     [string]$Python
@@ -13,15 +15,18 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
-if ($Provider -eq 'openai-compatible' -and ($Simulated -or !$Model -or
-        [string]::IsNullOrWhiteSpace($env:OPENAI_COMPATIBLE_BASE_URL))) {
-    throw 'The compatible Responses acceptance requires -Model and OPENAI_COMPATIBLE_BASE_URL.'
+if ($Provider -eq 'custom' -and !$Protocol) { throw 'Custom acceptance requires -Protocol.' }
+if ($Protocol -and $Provider -ne 'custom') { throw 'Use -Protocol with -Provider custom.' }
+if ($Provider -in 'custom','openai-compatible' -and (!$Model -or
+        (!$Simulated -and [string]::IsNullOrWhiteSpace($env:OPENAI_COMPATIBLE_BASE_URL)))) {
+    throw 'Custom acceptance requires -Model and a real run requires OPENAI_COMPATIBLE_BASE_URL.'
 }
 if (!$Python) { $Python = 'python' }
 if (!$Model) { $Model = if ($Provider -eq 'openai') { 'gpt-5-mini' } else { 'deepseek-flash' } }
 $required = switch ($Provider) {
     'openai' { 'OPENAI_API_KEY' }
     'openai-compatible' { 'OPENAI_COMPATIBLE_API_KEY' }
+    'custom' { 'OPENAI_COMPATIBLE_API_KEY' }
     default { 'DEEPSEEK_API_KEY' }
 }
 if (!$Simulated -and [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($required))) {
@@ -55,6 +60,8 @@ $launchArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',
     '-TimeoutSeconds',($budget + 420))
 if ($SavePath) { $launchArgs += @('-CustomSavePath',('"' + (Resolve-Path -LiteralPath $SavePath).Path + '"')) }
 $launchArgs += @('-ApiProvider', $Provider, '-ApiModel', $Model)
+if ($Protocol) { $launchArgs += @('-ApiProtocol', $Protocol) }
+if ($NonStreaming) { $launchArgs += '-ApiNonStreaming' }
 if ($Simulated) { $launchArgs += '-ApiSimulated' }
 try {
     $launcher = Start-Process -FilePath $shell -ArgumentList $launchArgs -WindowStyle Hidden -PassThru `

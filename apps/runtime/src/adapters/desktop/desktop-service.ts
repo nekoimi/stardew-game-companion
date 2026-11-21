@@ -6,7 +6,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { GameConnection } from "../game/game-connection.js";
 import { PiModelAdapter } from "../model/pi-model.js";
-import { listModelProviders, ModelError } from "../model/model-catalogue.js";
+import { listModelProviders, ModelError, resolveSelection } from "../model/model-catalogue.js";
 import { TurnRunner } from "../../application/turn-runner.js";
 import { object } from "../../application/model.js";
 import { CompanionStore } from "../storage/companion-store.js";
@@ -236,16 +236,19 @@ export async function startDesktopService(
           || (selection.stream !== undefined && typeof selection.stream !== "boolean")) {
           return respond(res, 400, { error: "请填写服务商、API Key 和模型。" });
         }
-        const model = provider.open(selection as unknown as ModelSelection, body.apiKey);
+        const configured = selection as unknown as ModelSelection;
+        const { model: modelId, protocol, stream } = resolveSelection(configured);
+        const effective = { ...configured, model: modelId, protocol, stream };
+        const model = provider.open(effective, body.apiKey);
         if (url === "/v2/model/configure") {
-          runner.configure(model, selection as unknown as ModelSelection);
+          runner.configure(model, effective);
           return respond(res, 200, { ready: true });
         }
         const disconnected = new AbortController();
         const abort = () => disconnected.abort();
         res.once("close", abort);
         try {
-          await checkModelConnection(model, disconnected.signal, selection.stream !== false);
+          await checkModelConnection(model, disconnected.signal, stream);
         } finally { res.off("close", abort); }
         return respond(res, 200, { ready: true, toolCalling: true });
       }

@@ -13,7 +13,9 @@ param(
     [string]$ExpectedProdDllSha256 = '',
     [string]$CustomSavePath = '',
     [switch]$PresetAcceptance,
-    [ValidateSet('deepseek','openai','openai-compatible')][string]$ApiProvider,
+    [ValidateSet('deepseek','openai','openai-compatible','custom')][string]$ApiProvider,
+    [ValidateSet('responses','chat-completions')][string]$ApiProtocol,
+    [switch]$ApiNonStreaming,
     [string]$ApiModel,
     [switch]$ApiSimulated,
     # Optional child-process environment overrides (name => value). Used by sandboxed
@@ -538,7 +540,10 @@ try {
         $runtimeHost.CreateNoWindow = $true
         $null = $runtimeHost.Environment.Remove('NODE_OPTIONS')
         $runtimeHost.Environment['STARDEW_ACCEPTANCE_SIMULATED'] = if ($ApiSimulated) { '1' } else { '0' }
-        foreach ($arg in @((Join-Path $PSScriptRoot 'run-api-runtime.mjs'), $runtime, $prodDest, $runEvidenceDir, [string]$PID, $ApiProvider, $ApiModel)) {
+        $protocol = if ($ApiProtocol) { $ApiProtocol } elseif ($ApiProvider -eq 'deepseek') { 'chat-completions' } else { 'responses' }
+        $stream = if ($ApiNonStreaming) { 'false' } else { 'true' }
+        foreach ($arg in @((Join-Path $PSScriptRoot 'run-api-runtime.mjs'), $runtime, $prodDest, $runEvidenceDir, [string]$PID,
+                $ApiProvider, $ApiModel, $protocol, $stream)) {
             $runtimeHost.ArgumentList.Add($arg)
         }
         foreach ($key in 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'OPENAI_COMPATIBLE_API_KEY', 'OPENAI_COMPATIBLE_BASE_URL', 'NODE_OPTIONS') {
@@ -553,7 +558,8 @@ try {
         Write-Utf8File (Join-Path $runEvidenceDir 'agent-package.json') ($versions | ConvertTo-Json -Compress)
         $apiHost = [Diagnostics.Process]::Start($runtimeHost)
         $readyFile = Join-Path $runEvidenceDir 'agent-runtime-ready.json'
-        $readyDeadline = [DateTime]::UtcNow.AddSeconds(75)
+        $readyBudget = if ($ApiNonStreaming) { 215 } else { 125 }
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds($readyBudget)
         while (!(Test-Path -LiteralPath $readyFile) -and !$apiHost.HasExited -and [DateTime]::UtcNow -lt $readyDeadline) {
             Start-Sleep -Milliseconds 100
         }

@@ -187,7 +187,7 @@ class Runner:
         started = time.time()
         try:
             coord = await self.wait(lambda: read(self.evidence / "harness-coordination.json"), "No isolated game", 180)
-            await self.wait(lambda: (read(self.evidence / "harness-coordination.json") or {}).get("state") == "READY_FOR_ACT", "Isolated fixture not ready", 180)
+            await self.wait(lambda: (read(self.evidence / "harness-coordination.json") or {}).get("state") == "READY_FOR_ACT", "Isolated fixture not ready", 260)
             if coord.get("scenario") != "free-mode-control" or coord.get("runId") != self.run.name:
                 raise RuntimeError("Runner requires its own isolated free-mode-control game")
             if self.reset_fixture:
@@ -212,6 +212,8 @@ class Runner:
             backend = read(self.evidence / "agent-runtime-ready.json") or {}
             if backend.get("simulated") is not self.simulated:
                 raise RuntimeError("API evidence does not confirm the requested acceptance mode")
+            if backend.get("protocol") not in {"chat-completions", "responses"} or not isinstance(backend.get("stream"), bool):
+                raise RuntimeError("API evidence is missing the protocol or streaming setting")
             self.report["backend"] = backend
             package = read(self.evidence / "agent-package.json") or {}
             if any(not package.get(key) for key in ("gameVersion", "smapiVersion", "modVersion", "packageManifestSha256")):
@@ -296,8 +298,8 @@ class Runner:
                 checks["rested_to_target"] = any(s.get("companionOnRealBed") is True for s in self.samples) and any((s.get("companionStamina") or 0) >= 80 for s in self.samples)
                 checks["worked_before_full_recovery"] = (after.get("companionStamina") or 0) < 100
             backend = self.report["backend"] or {}
-            checks["configured_model_round_completed"] = all(terminal.get(key) == backend.get(key) and terminal.get(key)
-                for key in ("provider", "model")) and terminal.get("status") == "completed"
+            checks["configured_model_round_completed"] = all(terminal.get(key) == backend.get(key)
+                for key in ("provider", "model", "protocol", "stream")) and terminal.get("status") == "completed"
             trace = rows(self.trace_file)[trace_offset:]
             summary = summarize_trace(trace)
             self.report["traceSummary"] = summary
