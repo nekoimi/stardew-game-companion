@@ -6,6 +6,8 @@
 - ZIP SHA256 `63fad08f4ad02fdbd504ae6afa55c58b89e09129ecfd5fced1cba58b18c639da`
 - 游戏与 SMAPI 测试版本 1.6.15.24356 和 4.5.2
 
+从阶段 3 提交重新克隆后构建成功，另一个 ZIP 也通过全部 11,439 个文件的清单校验。两次清单的路径完全一致，桌面 EXE 和 Mod DLL 的哈希不同，其余文件的哈希一致。上述 ZIP SHA256 对应实际跑过实机的候选包。
+
 ## 自动化与桌面
 
 - TypeScript 测试 17 项，C# 传输测试 65 项，Python 实机报告判定测试 4 项通过。C# Mod Debug 完整测试 731 项通过。原生扩展编译使用 `STAR_DOTNET_PATH` 指向隔离 .NET 6 SDK。完整 Mod 测试启动时设 `COMPlus_JitNoInline=1` 支持 Harmony 测试夹具。默认 Release 全量运行有两个混合拾取用例失败，两项单独运行通过。
