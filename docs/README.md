@@ -15,7 +15,7 @@
 - [运行时提示词](../resources/agent/prompts/agent-ts-instructions.md)与[游戏指导](../resources/agent/prompts/agent-guidance/)
 - [TypeScript 运行时方案](development/agent-runtime-rewrite.md)
 - [改造进度](development/agent-runtime-rewrite-todo.md)与[发行验收](development/agent-runtime-rewrite-phase3.md)
-- [模型接入与设置页优化方案](development/model-connection-plan.md)与[实施 TODO](development/model-connection-todo.md)
+- [模型接入与设置页优化方案](development/model-connection-plan.md)、[实施 TODO](development/model-connection-todo.md)与[最终验收](development/model-connection-acceptance.md)
 
 ## 历史设计与验证记录
 
