@@ -20,7 +20,6 @@ if (!$Python) {
     if (!(Test-Path -LiteralPath $Python -PathType Leaf)) { $Python = 'python' }
 }
 if (!$apiRelease -and ($Simulated -or $Model -or $Provider -ne 'deepseek')) { throw 'API options require a v2 green package.' }
-if ($Simulated -and $Provider -ne 'deepseek') { throw 'The fixed farm fixture currently speaks simulated DeepSeek.' }
 if ($apiRelease) {
     if (!$Model) { $Model = if ($Provider -eq 'openai') { 'gpt-5-mini' } else { 'deepseek-flash' } }
     $required = if ($Provider -eq 'openai') { 'OPENAI_API_KEY' } else { 'DEEPSEEK_API_KEY' }

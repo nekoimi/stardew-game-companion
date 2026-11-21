@@ -1,19 +1,20 @@
 import { createMockDeepSeek, redirectDeepSeek } from "../../apps/runtime-ts/tests/mock-deepseek.mjs";
+import { createMockOpenAI, redirectOpenAI } from "../../apps/runtime-ts/tests/mock-openai.mjs";
 
 const work = (name, params) => ({ name: "submit_work", args: { action: { [name]: params } } });
 const observe = { name: "get_status", args: {} };
 const parse = value => { try { return JSON.parse(value); } catch { return {}; } };
-const toolName = message => message?.tool_calls?.[0]?.function?.name;
-const operation = message => Object.keys(parse(message?.tool_calls?.[0]?.function?.arguments).action ?? {})[0];
+const call = (name, args) => ({ type: "call", name, args: parse(args) });
+const operation = message => Object.keys(message?.args.action ?? {})[0];
 
-function plan({ messages }) {
-  const firstTool = messages.findIndex(row => row.role === "tool");
+function plan(messages) {
+  const firstTool = messages.findIndex(row => row.type === "result");
   const before = firstTool < 0 ? messages : messages.slice(0, firstTool);
-  const request = String(before.findLast(row => row.role === "user")?.content ?? "");
+  const request = before.findLast(row => row.type === "user")?.text ?? "";
   if (firstTool < 0) return observe;
-  const lastCall = messages.findLast(row => row.tool_calls?.length);
-  if (toolName(lastCall) !== "get_status") {
-    const lastResult = parse(messages.findLast(row => row.role === "tool")?.content);
+  const lastCall = messages.findLast(row => row.type === "call");
+  if (lastCall?.name !== "get_status") {
+    const lastResult = messages.findLast(row => row.type === "result").result;
     const action = operation(lastCall);
     // Walking can collect every drop before the explicit pickup reaches it.
     // Read the actual backpack before deciding whether there is work left.
@@ -21,14 +22,14 @@ function plan({ messages }) {
     if (["failed", "cancelled", "rejected"].includes(lastResult.terminalState) || typeof lastResult.error === "string") return {};
     if (["deposit_to_chest", "ship_items"].includes(action)) return {};
     if (action === "withdraw_from_chest") {
-      const items = parse(lastCall.tool_calls[0].function.arguments).action.withdraw_from_chest.items;
+      const items = lastCall.args.action.withdraw_from_chest.items;
       return work("ship_items", { items });
     }
     return observe;
   }
-  const observed = messages.filter(row => row.role === "tool").map(row => parse(row.content)).filter(row => row.world);
+  const observed = messages.filter(row => row.type === "result" && row.result.world).map(row => row.result);
   const { companion, farmWork, farming, chests, inventory } = observed.at(-1).world;
-  const previous = messages.filter(row => row.tool_calls?.length).map(operation);
+  const previous = messages.filter(row => row.type === "call").map(operation);
   const position = { x: companion.tileX, y: companion.tileY };
   const farm = { location_id: "Farm" };
   const localChests = chests?.items ?? [];
@@ -70,6 +71,28 @@ function plan({ messages }) {
   return {};
 }
 
-const server = await createMockDeepSeek(plan);
-redirectDeepSeek(server.address);
+function planDeepSeek({ messages }) {
+  return plan(messages.flatMap(row => {
+    if (row.role === "user") return [{ type: "user", text: String(row.content ?? "") }];
+    if (row.role === "tool") return [{ type: "result", result: parse(row.content) }];
+    return (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments));
+  }));
+}
+
+function planOpenAI({ input }) {
+  return plan(input.flatMap(row => {
+    if (row.role === "user") {
+      const text = row.content.filter(part => part.type === "input_text").map(part => part.text).join("\n");
+      return [{ type: "user", text }];
+    }
+    if (row.type === "function_call") return [call(row.name, row.arguments)];
+    if (row.type === "function_call_output") return [{ type: "result", result: parse(row.output) }];
+    return [];
+  }));
+}
+
+const openAI = process.env.STARDEW_ACCEPTANCE_FIXTURE_PROVIDER === "openai";
+const server = openAI ? await createMockOpenAI(planOpenAI) : await createMockDeepSeek(planDeepSeek);
+if (openAI) redirectOpenAI(server.address);
+else redirectDeepSeek(server.address);
 server.unref();

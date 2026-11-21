@@ -56,12 +56,21 @@
 
 包验证接入后，三组模拟隔离实机回归全部通过，证据在 `presets-1121-184109-871b-game`。报告使用命令指定的验收模式，并与运行时的就绪证据核对。6 项 Python 判定测试通过，覆盖模拟服务启动失败时的报告分类。新报告入口的 `care-guidance` 模拟实机复测通过，证据在 `presets-1121-184411-7a04-game`。两家正式入口均因缺少本机凭据在启动前停止。
 
+### 两种流式协议的固定场景补验
+
+同一绿色候选和同一套场景判定可用 `-Provider deepseek -Simulated` 或 `-Provider openai -Simulated` 运行。两种模拟服务从各自的请求协议读取指令与原生结果，共用场景逻辑。OpenAI 模拟服务分段返回工具参数，并按请求生成独立的工具调用 ID。
+
+`gpt-5-mini` 的三组模拟隔离实机均通过，分别耗时 39.7、23.4 和 84.4 秒。SQLite 中 26 条模型请求都保存了用量回执。证据在 `presets-1121-184803-b8ea-game`，包清单 SHA256 为 `9bb524633c60f86e13acff415119442ca566ac20366ff90ca546d2e6af8efae9`。23 项 TypeScript 测试通过，覆盖 OpenAI 参数分段、回执关联和取消时关闭 HTTP 响应。
+
+`deepseek-flash` 使用同一候选包复跑三组，分别耗时 38.7、23.4 和 96.4 秒，全部通过。SQLite 中 26 条模型请求都保存了用量回执，证据在 `presets-1121-185115-7659-game`。两次运行均验证了源存档、日常存档和日常 Mod 的哈希一致。
+
 ## 复现命令
 
 ```powershell
 pwsh -File packaging/windows/build-node-release.ps1 -Output artifacts/api-preview
 pwsh -File packaging/windows/verify-node-release.ps1 -Archive <候选ZIP路径>
-pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir <解压目录> -SavePath <春季隔离来源存档> -Simulated
+pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir <解压目录> -SavePath <春季隔离来源存档> -Provider deepseek -Simulated
+pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir <解压目录> -SavePath <春季隔离来源存档> -Provider openai -Simulated
 ```
 
 实机执行由已打包的运行时和 Mod 完成，TestDriver 只布置存档、发送自然语言和采集原生结果。模拟报告单独标记，正式运行从当前进程读取模型厂商凭据。正式 DeepSeek、OpenAI API 与三组固定场景的正式验收待补，Python 生产链路随最终切换任务处理。[三组固定场景和正式入口](../repeatable-companion-acceptance.md)

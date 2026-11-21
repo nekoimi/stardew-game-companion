@@ -18,6 +18,6 @@
 
 运行 `tests/acceptance/run-companion-presets.ps1 -ReleaseDir <新解压的绿色包目录> -SavePath <春季测试存档目录>`。脚本先按发行清单校验 API 绿色包的全部文件，再复制 Mod 和存档，在隔离实例使用随包运行时。默认执行三组，也可用 `-Cases care-guidance` 单独复测。
 
-正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。用 `-Provider openai -Model gpt-5-mini` 可切换到 OpenAI，用 `-Simulated` 可运行本地 DeepSeek 测试服务。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
+正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。使用 `-Provider openai -Model gpt-5-mini` 可选择 OpenAI。为任一服务商加 `-Simulated` 可用其本地流式协议跑相同的固定场景。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
 
 每组结果在同一运行目录的 `evidence/<场景名>/`，总结果在 `.test-runs/presets-*/summary.md`。API 运行在启动游戏前测试模型工具调用以及根据工具回执生成确认文本。报告保留所用服务商、模型、游戏和 SMAPI 版本、包清单哈希、自然语言指令、状态采样和失败原因。画面观感、选项跨天、读档与执行中退出需单独核对。

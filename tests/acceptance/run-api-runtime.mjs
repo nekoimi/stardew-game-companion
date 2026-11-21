@@ -22,6 +22,7 @@ delete environment.DEEPSEEK_API_KEY;
 delete environment.OPENAI_API_KEY;
 delete environment.NODE_OPTIONS;
 delete environment.STARDEW_MODEL_TEST_ONLY;
+if (mock) environment.STARDEW_ACCEPTANCE_FIXTURE_PROVIDER = provider;
 const entry = join(runtime, "dist", "bootstrap.js");
 const options = mock ? ["--import", new URL("./preset-provider-preload.mjs", import.meta.url).href] : [];
 const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", ...options, entry, "--desktop", mod, ownerPid], {
