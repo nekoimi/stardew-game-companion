@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -21,6 +22,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
     private const int MaxReplansPerLeg = 3;
     private const long MaxNoProgressTicks = 7200;
     private const int VerificationSettleTicks = 3;
+    private const int RoutePlanningLimitSeconds = 20;
 
     private readonly IFarmerActor _actor;
     private readonly IWorldObserver _observer;
@@ -31,6 +33,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
     private NavigationSearch<PathResult>? _legSearch;
     private string? _searchLocation;
     private TileCoordinate _searchTile;
+    private long? _planningStartedAt;
     private IReadOnlyList<MapEdge> _plannedEdges = Array.Empty<MapEdge>();
     private readonly CompanionAvatar? _avatar;
     private readonly Action<string, LogLevel>? _log;
@@ -77,6 +80,8 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
     public NavigationResult? FinalResult { get; private set; }
 
     public NavigationRequest? CurrentRequest => _currentRequest;
+    internal Func<long> GetTimestamp { get; init; } = Stopwatch.GetTimestamp;
+
     public Dictionary<string, object> PreviewRoute(string location, TileCoordinate target)
     {
         using var search = BeginPreviewRoute(location, target);
@@ -170,6 +175,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
             _currentPathIndex = 0;
             _replanCount = 0;
             _replanAfterTick = 0;
+            _planningStartedAt = null;
             _nativeWalkingTile = null;
             _nativeWalkingPoint = null;
             _nativeStallTicks = 0;
@@ -272,6 +278,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
                 _pauseStartedClock = null;
                 _pauseRequested = false;
                 ClearSearches();
+                _planningStartedAt = null;
                 _locationRoute.Clear();
                 _plannedEdges = Array.Empty<MapEdge>();
                 CurrentState = ExecutionState.Preparing;
@@ -370,6 +377,17 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
             _currentExitEdge = null;
         }
         if (TryVerifyArrival()) return;
+
+        // Settle a stalled search while the runtime still waits for its native receipt.
+        // Walking and paused time are outside this planning window.
+        long now = GetTimestamp();
+        _planningStartedAt ??= now;
+        if (now - _planningStartedAt.Value >= RoutePlanningLimitSeconds * Stopwatch.Frequency)
+        {
+            FinishExecution(ExecutionState.Failed, "Route planning timed out. Inspect the approach and choose a nearer reachable waypoint.",
+                "ROUTE_PLANNING_TIMEOUT");
+            return;
+        }
 
         // If route not yet calculated, find route across maps
         if (_locationRoute.Count == 0)
@@ -480,6 +498,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
         _currentExitEdge = edge;
         _currentPath = path.Steps.ToList();
         _currentPathIndex = 0;
+        _planningStartedAt = null;
         CurrentState = ExecutionState.Navigating;
     }
 

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.Execution;
 using StardewAI.Companion.Mod.Navigation;
@@ -69,6 +70,39 @@ public class NavigationResponsivenessTests
         Assert.Equal(ExecutionState.Succeeded, machine.FinalResult!.FinalState);
         Assert.Equal(target, actor.Tile);
         Assert.Equal(beforeArrival, observer.TilePassabilityChecks);
+    }
+
+    [Fact]
+    public void RoutePlanningTimeoutSettlesAndReleasesTheActorForAnotherAction()
+    {
+        long now = 0;
+        var actor = new MechanicsActor("timeout-test", initialPose: new AuthoritativePose("Farm", 0, 1, FacingDirection.Down));
+        var observer = new SimulatedWorldObserver();
+        var machine = new NavigationStateMachine(actor, observer, new SameMapNavigator(observer), new WorldMapGraph())
+        {
+            GetTimestamp = () => now,
+        };
+        var results = new List<NavigationResult>();
+        machine.OnCompleted += results.Add;
+        var origin = actor.Tile;
+        Assert.True(machine.Start(new("stall", "task", "Farm", new(100, 100), 0), out _));
+        machine.Update(null, 1);
+        Assert.Equal(ExecutionState.Preparing, machine.CurrentState);
+
+        now += 21 * Stopwatch.Frequency;
+        for (int tick = 2; tick < 10; tick++) machine.Update(null, tick);
+        var failed = Assert.Single(results);
+        Assert.Equal("stall", failed.CommandId);
+        Assert.Equal(ExecutionState.Failed, failed.FinalState);
+        Assert.Equal("ROUTE_PLANNING_TIMEOUT", failed.ErrorCode);
+        Assert.Equal(origin, actor.Tile);
+        Assert.False(machine.IsExecuting);
+
+        Assert.True(machine.Start(new("next", "task", "Farm", origin, 0), out _));
+        for (int tick = 10; tick < 20; tick++) machine.Update(null, tick);
+        Assert.Equal(2, results.Count);
+        Assert.Equal("next", results[1].CommandId);
+        Assert.Equal(ExecutionState.Succeeded, results[1].FinalState);
     }
 
     [Fact]

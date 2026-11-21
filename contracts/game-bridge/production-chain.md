@@ -18,6 +18,7 @@ All mutations run on the game thread through the companion's real inventory and 
 ## Processing and storage
 
 - `inspect-route`: `{locationId,tile}` returns a read-only reachable entrance route, walking tiles and an estimated normal-clock travel time. Execution uses the same planner; model deliberation and service time are excluded.
+- `navigate-to` ends the planning phase with a `failed` receipt and `ROUTE_PLANNING_TIMEOUT` after 20 wall-clock seconds in that phase. Walking and paused time do not count against the planning window.
 - `inspect-livestock`: `{locationId}` observes the requested map, with `roamingScopeLocationId` and `unobservedResidentIds`. An empty companion-map snapshot cannot prove animals absent from another map.
 
 - `inspect-machines`: `{locationId}` returns `details.machines={locationId,items,truncated,capturedRevision}`; exact requested map, at most 256 machines.
