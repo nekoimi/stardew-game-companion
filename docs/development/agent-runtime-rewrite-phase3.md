@@ -80,6 +80,23 @@
 
 TS-14 开始时，先将桌面调用归到 `/v2/`，再移除 `DesktopRuntimeApi` 的版本转换、旧客户端配置和导入入口。Mod 保留原生 transport、动作及回执，将源码调试和隔离验收迁到 v2 后移除旧启动分支。最后调整 Node 打包和开发测试入口，按调用方移除 Python 生产文件及旧 CLI 脚本。独立的验收判定脚本仍由开发环境运行。
 
+### DeepSeek 官方与第三方 Responses
+
+从 `a7b5f4d` 干净克隆构建候选包，ZIP SHA256 为 `723bcc45e5e2ecfdeae733d470a59803ed8b09a4a7968b77265ea138f202950c`，包清单 SHA256 为 `38c3ac0cb4fa8a23914d53219f0034c41b4ac604a9ab058af797f3c7d98cdba6`。11,440 个文件通过校验，24 项 TypeScript、65 项 C# 传输、731 项 C# Mod 和 7 项验收判定测试通过。
+
+DeepSeek 官方 `deepseek-flash` 与第三方 Responses `gpt-6.1-sol` 均通过绿色包的「测试连接」，真实服务各完成工具调用、工具回执和确认文本。第三方端点的密钥独立于官方 OpenAI，验收从当前进程传入，临时配置留在本机。
+
+用游戏 1.6.15.24356 和 SMAPI 4.5.2 在隔离存档运行固定场景。两家首轮的 `care-guidance` 与 `harvest-logistics` 通过。首轮 `rest-forestry` 分别遇到回合超时和快照超时。第三方 Responses 按默认预算单场景复测通过。DeepSeek 首次单场景复测的原生回执确认另一个农场箱收入 34 个木材，旧脚本只采样预设箱，因此报告未通过。随后验收改为核对农场箱内木材净增量，并对 Windows 短暂占用的快照请求在下一帧重试。
+
+| 真实接口 | `care-guidance` | `harvest-logistics` | `rest-forestry` |
+| --- | --- | --- | --- |
+| DeepSeek 官方 | 通过，52.9 秒 | 通过，40.1 秒 | 修正判定后补验通过，120.7 秒 |
+| 第三方 Responses | 通过，114.5 秒 | 通过，108.7 秒 | 按默认预算补验通过，166.3 秒 |
+
+首轮入口为 `run-companion-presets.ps1 -ReleaseDir <解压目录> -SavePath <隔离来源存档> -Provider <服务商> -Model <模型> -TimeoutSeconds 150`，证据目录为 `presets-1121-200030-777a-game` 和 `presets-1121-200444-5fa7-game`。补验使用 `-Cases rest-forestry` 和默认 600 秒，最终通过的目录分别为 `presets-1121-201658-43c2-game` 和 `presets-1121-201335-68b0-game`。源存档、日常存档和日常 Mod 的哈希一致。
+
+使用 `start-desktop-acceptance.ps1` 启动隔离桌面，在同一存档从 DeepSeek 切到第三方 Responses。新模型正确复述伙伴名、手记约定和未完成目标。SQLite 确认两轮对话共用同一存档且两家都有用量回执。证据目录为 `desktop-1121-201946-8c98`。真实 API 的 F9、改派、读档、重连和待确认项仍待补验。
+
 ## 复现命令
 
 ```powershell
@@ -89,4 +106,4 @@ pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir <解压目录>
 pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir <解压目录> -SavePath <春季隔离来源存档> -Provider openai -Simulated
 ```
 
-实机执行由已打包的运行时和 Mod 完成，TestDriver 只布置存档、发送自然语言和采集原生结果。模拟报告单独标记，正式运行从当前进程读取模型厂商凭据。正式 DeepSeek、OpenAI API 与三组固定场景的正式验收待补，Python 生产链路随最终切换任务处理。[三组固定场景和正式入口](../repeatable-companion-acceptance.md)
+实机执行由已打包的运行时和 Mod 完成，TestDriver 只布置存档、发送自然语言和采集原生结果。模拟报告单独标记，真实 API 运行从当前进程读取相应厂商或网关凭据。真实桌面切换和接管补验、Python 生产链路和最终包复验仍按待办执行。[三组固定场景和正式入口](../repeatable-companion-acceptance.md)
