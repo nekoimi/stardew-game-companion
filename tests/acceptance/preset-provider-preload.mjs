@@ -14,16 +14,20 @@ function plan({ messages }) {
   const lastCall = messages.findLast(row => row.tool_calls?.length);
   if (toolName(lastCall) !== "get_status") {
     const lastResult = parse(messages.findLast(row => row.role === "tool")?.content);
+    const action = operation(lastCall);
+    // Walking can collect every drop before the explicit pickup reaches it.
+    // Read the actual backpack before deciding whether there is work left.
+    if (action === "pickup_items" && lastResult.error?.code === "no-item") return observe;
     if (["failed", "cancelled", "rejected"].includes(lastResult.terminalState) || typeof lastResult.error === "string") return {};
-    if (["deposit_to_chest", "ship_items"].includes(operation(lastCall))) return {};
-    if (operation(lastCall) === "withdraw_from_chest") {
+    if (["deposit_to_chest", "ship_items"].includes(action)) return {};
+    if (action === "withdraw_from_chest") {
       const items = parse(lastCall.tool_calls[0].function.arguments).action.withdraw_from_chest.items;
       return work("ship_items", { items });
     }
     return observe;
   }
   const observed = messages.filter(row => row.role === "tool").map(row => parse(row.content)).filter(row => row.world);
-  const { companion, farmWork, farming, chests } = observed.at(-1).world;
+  const { companion, farmWork, farming, chests, inventory } = observed.at(-1).world;
   const previous = messages.filter(row => row.tool_calls?.length).map(operation);
   const position = { x: companion.tileX, y: companion.tileY };
   const farm = { location_id: "Farm" };
@@ -59,8 +63,9 @@ function plan({ messages }) {
     .map(item => [`${item.tile.x}:${item.tile.y}`, item.tile]));
   if (drops.size && !previous.includes("pickup_items")) return work("pickup_items", { ...farm, tiles: [...drops.values()] });
   if (box && !previous.includes("deposit_to_chest")) {
-    const itemIds = request.includes("休息到 80") ? ["(O)388"] : ["(O)388", "(O)24"];
-    return work("deposit_to_chest", { ...farm, chest_tile: box.tile, item_ids: itemIds });
+    const wanted = request.includes("休息到 80") ? ["(O)388"] : ["(O)388", "(O)24"];
+    const itemIds = wanted.filter(id => inventory?.slots?.some(slot => slot.itemId === id && slot.stack > 0));
+    if (itemIds.length) return work("deposit_to_chest", { ...farm, chest_tile: box.tile, item_ids: itemIds });
   }
   return {};
 }
