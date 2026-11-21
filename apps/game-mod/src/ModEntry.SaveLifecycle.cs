@@ -125,6 +125,7 @@ public sealed partial class ModEntry
             && _preset is { Enabled: true, Phase: not (PresetGoalPhase.Done or PresetGoalPhase.Cancelled) })
             _thinking?.StopForFailure("独立测试连接中断，已保护暂停；恢复连接或接管后继续。");
         _coordinator?.ActiveMachine?.RequestCancel(reason);
+        _coordinator?.CancelRouteObservation(reason);
         _actor?.Halt();
         _authority?.Release(reason);
     }

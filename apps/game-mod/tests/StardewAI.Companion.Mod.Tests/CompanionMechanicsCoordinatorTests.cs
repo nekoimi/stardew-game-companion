@@ -63,8 +63,10 @@ public class CompanionMechanicsCoordinatorTests
         );
     }
 
-    [Fact]
-    public void RouteObservationYieldsAndCancellationDoesNotStealActiveWorkReceipt()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RouteObservationYieldsAndCancellationDoesNotStealActiveWorkReceipt(bool desktopControl)
     {
         var (coordinator, actor, observer) = CreateHarness();
         observer.SetDirt(new(10, 12), TileDirtState.DryDirt());
@@ -83,7 +85,8 @@ public class CompanionMechanicsCoordinatorTests
         Assert.True(coordinator.StateMachine.IsPaused);
         Assert.False(coordinator.TryAcceptSkillExecute(query with { CommandId = "second-query" }, queryEnvelope, out var busy));
         Assert.Equal("OBSERVATION_BUSY", busy!.Error!.Code);
-        coordinator.OnCancelSkill(new SkillCancelPayload(query.CommandId, "cancel preview", true, "safe-point"), queryEnvelope);
+        if (desktopControl) coordinator.CancelRouteObservation("cancel preview");
+        else coordinator.OnCancelSkill(new SkillCancelPayload(query.CommandId, "cancel preview", true, "safe-point"), queryEnvelope);
         Assert.Equal("cancelled", coordinator.LastSkillResultPayload!.TerminalState);
         Assert.Equal(query.CommandId, coordinator.LastSkillResultPayload.CommandId);
         int reads = observer.TilePassabilityChecks;

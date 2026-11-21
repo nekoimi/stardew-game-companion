@@ -174,6 +174,7 @@ public sealed partial class ModEntry
 
     private void CancelDesktopAction()
     {
+        _coordinator?.CancelRouteObservation("Desktop control");
         if (_coordinator?.CancelRestTask() != true)
             _coordinator?.ActiveMachine?.RequestCancel("Desktop control");
     }

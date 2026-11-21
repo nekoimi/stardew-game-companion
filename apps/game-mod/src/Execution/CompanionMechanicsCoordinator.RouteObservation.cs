@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.Navigation;
 using StardewAI.Companion.Mod.Transport;
@@ -6,9 +7,11 @@ namespace StardewAI.Companion.Mod.Execution;
 
 public sealed partial class CompanionMechanicsCoordinator
 {
+    private static readonly TimeSpan RouteObservationBudget = TimeSpan.FromSeconds(20);
+
     // One ephemeral observation, separate from the actor's active action and receipt.
     private sealed record RouteObservation(SkillExecutePayload Request, EnvelopeDto Envelope,
-        NavigationSearch<Dictionary<string, object>> Search);
+        NavigationSearch<Dictionary<string, object>> Search, long StartedAt);
     private RouteObservation? _routeObservation;
 
     private bool BeginRouteObservation(SkillExecutePayload request, EnvelopeDto envelope, out SkillResultPayload? rejection)
@@ -26,7 +29,7 @@ public sealed partial class CompanionMechanicsCoordinator
         }
         var tile = request.Parameters.Tile ?? throw new ArgumentException("Route destination tile is required.");
         _routeObservation = new(request, envelope,
-            _navigationMachine.BeginPreviewRoute(request.Parameters.LocationId, new TileCoordinate(tile.X, tile.Y)));
+            _navigationMachine.BeginPreviewRoute(request.Parameters.LocationId, new TileCoordinate(tile.X, tile.Y)), Stopwatch.GetTimestamp());
         return true;
     }
 
@@ -35,6 +38,11 @@ public sealed partial class CompanionMechanicsCoordinator
         lock (_taskLock)
         {
             if (_routeObservation is not { } query) return;
+            if (Stopwatch.GetTimestamp() - query.StartedAt >= RouteObservationBudget.TotalSeconds * Stopwatch.Frequency)
+            {
+                FinishRouteObservation("failed", code: "ROUTE_OBSERVATION_TIMEOUT", message: "Route observation ran out of time. Try a nearer destination or inspect the current map.");
+                return;
+            }
             if (_actor is PlayerActor player && !player.BindingValid)
             {
                 FinishRouteObservation("failed", code: "ACTOR_BINDING_LOST", message: "Native player binding changed.");
@@ -49,6 +57,12 @@ public sealed partial class CompanionMechanicsCoordinator
                 FinishRouteObservation("failed", code: "SPATIAL_OBSERVATION_UNAVAILABLE", message: ex.Message);
             }
         }
+    }
+
+    internal void CancelRouteObservation(string reason)
+    {
+        lock (_taskLock)
+            FinishRouteObservation("cancelled", code: "CANCELLED", message: reason);
     }
 
     private void ClearRouteObservation()
