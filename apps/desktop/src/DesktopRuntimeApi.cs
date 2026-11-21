@@ -10,12 +10,10 @@ internal sealed class DesktopRuntimeApi : IDisposable
 {
     private readonly HttpClient _client;
     private readonly CancellationToken _runtimeToken;
-    private readonly bool _node;
 
     internal DesktopRuntimeApi(RuntimeEndpoint endpoint, CancellationToken runtimeToken)
     {
         _runtimeToken = runtimeToken;
-        _node = endpoint.Node;
         _client = new HttpClient(new HttpClientHandler { UseProxy = false })
         {
             BaseAddress = new Uri($"http://127.0.0.1:{endpoint.Port}"),
@@ -29,7 +27,6 @@ internal sealed class DesktopRuntimeApi : IDisposable
 
     internal async Task<JsonElement> PostAsync(string route, object body, int timeoutSeconds = 25)
     {
-        if (_node && route.StartsWith("/v1/", StringComparison.Ordinal)) route = "/v2/" + route[4..];
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_runtimeToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         using var response = await _client.PostAsJsonAsync(route, body, timeout.Token);
@@ -46,7 +43,7 @@ internal sealed class DesktopRuntimeApi : IDisposable
         {
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, _node ? "/v2/events" : "/v1/events");
+                using var request = new HttpRequestMessage(HttpMethod.Get, "/v2/events");
                 if (cursor is not null) request.Headers.TryAddWithoutValidation("Last-Event-ID", cursor);
                 using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 response.EnsureSuccessStatusCode();

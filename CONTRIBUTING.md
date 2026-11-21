@@ -1,80 +1,24 @@
-# 参与开发
+# 参与贡献
 
-欢迎提交修复和验证结果。星露谷游戏伴侣在 `nekoimi/stardew-game-companion` 独立开发和发布，游戏版本基线为 Stardew Valley 1.6.15、SMAPI 4.2.1。[Pull Requests](https://github.com/nekoimi/stardew-game-companion/pulls)
+请在问题或 Pull Request 中附上复现步骤、涉及的玩法、版本和验证结果。分享诊断前移除 Key、私人路径和存档信息。
 
 ## 从源码构建
 
-API 绿色候选使用 .NET 10 SDK 和 PowerShell 7 构建。将 `STARDEW_GAME_PATH` 设置为含 SMAPI 的游戏目录，运行 `pwsh -File packaging/windows/build-node-release.ps1 -Output artifacts/api-preview`。构建会使用校验过的 Node ZIP 和锁定的 npm 依赖，生成候选 ZIP 与 SHA256 文件。
-
-需要游戏与 SMAPI、Python 3.11～3.13、uv，以及编译 Mod 和桌面程序所需的 .NET SDK（桌面需要 .NET 10）。在克隆的仓库根目录打开 PowerShell：
+准备 PowerShell 7、.NET 10 SDK、已安装 SMAPI 的 Windows x64 游戏。使用新输出目录，构建脚本按锁文件准备随包 Node 和模型 SDK。
 
 ```powershell
-Copy-Item .env.example .env.local
-uv sync --project apps/runtime --locked
+pwsh -File packaging/windows/build-node-release.ps1 -GamePath '<SMAPI 游戏目录>' -Output artifacts/windows-x64
+pwsh -File packaging/windows/verify-node-release.ps1 -Archive '<ZIP 路径>'
 ```
 
-编辑 `.env.local` 填写游戏与 SMAPI 路径，再构建 Mod 和桌面绿色包。将示例版本号改为 Mod 清单中的版本：
+解压 ZIP 后从根目录的「星露谷游戏伴侣.exe」启动。归档包含配套 Mod、Node、许可清单和 SHA256 文件清单。
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/dev/build-mod.ps1 -Configuration Release
-dotnet publish apps/desktop/src -c Release -o artifacts/desktop/win-x64-single-file
-uv run --project apps/runtime python packaging/windows/build-release.py --version 0.3.22 --desktop-source artifacts/desktop/win-x64-single-file
-```
+## 开发与测试
 
-桌面项目默认发布为自包含单文件。请使用新的发布目录，避免上次构建的散装 DLL 混在里面。解压后运行 `星露谷游戏伴侣.exe`。需要调试 Mod 内的原生界面或手动 MCP 接入时，源码开发脚本可同步 DLL 与本地配对清单，见[接入指南](docs/mcp.md#源码开发接入)。
+- apps/desktop/src 负责 WPF、Windows 凭据和运行时宿主。
+- apps/runtime 负责 TypeScript 回合、模型工具、SQLite 和两侧接口。
+- apps/game-mod/src 负责 SMAPI、游戏观察、主线程原生动作和回执。
 
-## 代码结构
+准备 Node 22.22.2、npm 10.9.7、可编译 Mod 的 .NET SDK，以及安装了 pytest 的开发用 Python。在仓库根目录运行 `pwsh -File tools/dev/test.ps1 -GamePath '<SMAPI 游戏目录>'`。原生扩展编译用例可通过 `-DotNet` 指向本地 .NET 6 SDK。Python 用于隔离验收报告判定。
 
-- `apps/desktop/src`：WPF 桌面界面。`DesktopSession` 协调设置、启动和重连，进程、HTTP 事件及旧数据导入各由对应服务负责。
-- `apps/game-mod/src`：SMAPI 启停、读档和控制权接线。伙伴与自玩共用 `Execution/`、`Observation/` 和 `Navigation/`。
-- `apps/runtime/src/stardew_ai_runtime`：`application/` 负责共享回合、任务派发和会话恢复，`adapters/` 存放桌面 HTTP、游戏连接、MCP 客户端、模型及持久化实现。
-- `contracts/`：桌面 HTTP、游戏 WebSocket 契约和样例。
-- `resources/agent/`：提示词、领域指导和技能。
-- `packaging/windows/`：绿色包生成和发包校验。
-- `tools/dev/`：源码调试脚本和模型配置模板。开发安装生成的模型设置和配对记录位于 `.local/`。
-- `apps/game-mod/tests/`、`apps/runtime/tests/`、`tests/`：组件测试、跨语言契约与隔离验收。
-
-游戏对象的读写在游戏主线程执行。模型发出任务意图，具体动作由 Mod 执行；修改动作逻辑时需要同时检查前置条件、物品消耗和最终结果。
-
-伙伴与自玩共用运行时，通过桌面选择模式。Mod 中的 `PlayerMode` 负责接管逻辑，原生设置入口供源码调试和隔离验收使用。项目约定见 `AGENTS.md`。
-
-部署入口和旧数据兼容边界见[架构重构实施方案](docs/development/architecture-refactor.md)与[重构 TODO](docs/development/architecture-refactor-todo.md)。
-
-## 发布
-
-维护 `CHANGELOG.md`，同步 Mod 清单和项目文件的版本，再构建 Windows ZIP 与 SHA256。验证新解压包、配套文件校验和旧版本迁移，发布时将两份构建文件上传到本项目 Releases。[更新与迁移](docs/desktop-portable.md#更新与迁移)
-
-绿色包携带项目的 `LICENSE`、`NOTICE`、.NET 与 Python 的许可声明以及依赖清单。Mod 的 SMAPI `UniqueID` 沿用旧值，供桌面识别可迁移的安装和既有存档。
-
-## 验证改动
-
-在仓库根目录运行：
-
-```powershell
-uv sync --project apps/runtime --locked
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/dev/build-mod.ps1 -Configuration Release
-uv run --project apps/runtime --locked ruff check apps/runtime tests/contracts
-uv run --project apps/runtime --locked python packaging/windows/check_release_boundaries.py
-```
-
-C# 测试需要本机游戏程序集和 .NET SDK。设置 `STARDEW_GAME_PATH` 为游戏目录，将 `STAR_DOTNET_PATH` 指向独立 .NET 6 SDK 的 `dotnet.exe`，供原生扩展编译子进程使用。运行 `pytest` 的进程也可将 `DOTNET_ROOT` 设为该 SDK 所在目录，以发现并执行需要真实编译器的测试。
-
-```powershell
-dotnet test apps/game-mod/tests/StardewAI.Companion.Mod.Tests
-dotnet test apps/game-mod/tests/StardewAI.Companion.Transport.Tests
-uv run --project apps/runtime --locked pytest
-```
-
-CI 检查 Python、协议和生产边界。C# 构建与依赖游戏的测试在本地运行，提交时注明已验证与尚未验证的范围。
-
-离线测试不应调用付费模型服务。涉及游戏动作的验证请使用备份存档，记录实际消耗与结果，不要仅凭模型回复判断成功。
-
-## 验证其他后端
-
-伙伴的行为质量取决于所选模型。欢迎为后端补充决策评测、会话接续或实机验收。[后端验证范围](docs/tested-backends.md)
-
-## 提交问题和修改
-
-通过 Pull Request 提交修复或文档补充时，请附游戏、SMAPI 和模型客户端版本、复现步骤、预期结果及实际结果。日志应去掉账号、令牌、私人路径和无关聊天内容。
-
-提交修改时说明问题、验证方式和已知限制。贡献代码按项目的 Apache-2.0 许可提供，保留已有署名和第三方许可。游戏程序集、存档、模型凭据和本地运行产物留在本机。[LICENSE](LICENSE) · [NOTICE](NOTICE)
+实际游戏测试使用复制出的隔离存档。桌面交互和三组固定场景的复现见[隔离实机回归](docs/repeatable-companion-acceptance.md)。测试用存档、截图、游戏文件和模型密钥留在本地。

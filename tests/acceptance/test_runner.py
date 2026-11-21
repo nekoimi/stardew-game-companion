@@ -44,20 +44,16 @@ def test_forestry_counts_new_wood_in_any_farm_chest():
     assert not runner.evaluate("mature-trees", before, dict(after, acceptanceFarmChestWood=None), [])["wood_stored"]
 
 
-def test_trace_retains_tool_failures_and_nonterminal_results():
-    trace = [{"event": {"item": {"type": "tool_call", "toolCall": {
-        "name": "mcp__stardew-companion__submit_work", "input": {"water_auto": {}},
-        "output": {"content": [{"type": "text", "text": 'Error executing tool: IN_PROGRESS'}]}}}}}]
-    trace.append({"event": {"item": {"type": "tool_call", "toolCall": {
-        "name": "mcp__stardew-companion__submit_work", "status": 3,
-        "output": {"content": [{"type": "text", "text": "Validation failed for tool"}]}}}}})
+def test_trace_retains_native_tool_failures():
+    trace = [{"type": "tool", "payload": {"name": "submit_work", "input": {"action": {"water_auto": {}}},
+                                         "result": {"error": "旧动作的终态待核对。"}, "error": True}}]
     summary = runner.summarize_trace(trace)
-    assert summary["errorCount"] == 2
-    assert summary["toolCalls"][0]["nonterminal"]
+    assert summary["errorCount"] == 1
+    assert summary["toolCalls"][0]["result"]["error"] == "旧动作的终态待核对。"
 
 
 def test_api_startup_failure_surfaces_before_game_ready(tmp_path):
-    case = runner.Runner(tmp_path, "care-guidance", 60, api_runtime=True)
+    case = runner.Runner(tmp_path, "care-guidance", 60)
     message = "Model test failed for deepseek/deepseek-flash (authentication)."
     runner.write(case.evidence / "agent-startup-error.json", {"error": message})
     with pytest.raises(RuntimeError, match="authentication"):
@@ -66,7 +62,7 @@ def test_api_startup_failure_surfaces_before_game_ready(tmp_path):
 
 def test_failed_simulated_launch_remains_labeled_as_simulation(tmp_path):
     runner.write(tmp_path / "evidence" / "agent-startup-error.json", {"error": "Model failed before startup"})
-    assert asyncio.run(runner.run_suite(tmp_path, ["care-guidance"], 60, None, api_runtime=True, simulated=True)) == 1
+    assert asyncio.run(runner.run_suite(tmp_path, ["care-guidance"], 60, None, simulated=True)) == 1
     summary = (tmp_path / "summary.md").read_text(encoding="utf-8")
     assert summary.startswith("# 伙伴实机回归 · 模拟 API\n")
     assert "care-guidance: error" in summary
@@ -90,8 +86,8 @@ def test_suite_keeps_game_open_and_preserves_failed_scene(tmp_path, monkeypatch)
 
     monkeypatch.setattr(runner, "Runner", FakeRunner)
     assert asyncio.run(runner.run_suite(tmp_path, ["care", "harvest", "rest"], 60, None)) == 1
-    assert calls == [("care", {"keep_open": True, "reset_fixture": False, "api_runtime": False, "simulated": False}),
-                     ("harvest", {"keep_open": True, "reset_fixture": True, "api_runtime": False, "simulated": False})]
+    assert calls == [("care", {"keep_open": True, "reset_fixture": False, "simulated": False}),
+                     ("harvest", {"keep_open": True, "reset_fixture": True, "simulated": False})]
     assert (evidence / "care/preset-report.md").read_text() == "care"
     assert runner.read(evidence / "free-mode-control-done.json") == {"success": False}
     assert "rest：未执行" in (tmp_path / "summary.md").read_text(encoding="utf-8")

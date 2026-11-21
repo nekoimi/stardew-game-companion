@@ -12,8 +12,6 @@ namespace StardewAI.Companion.Mod;
 public sealed partial class ModEntry
 {
     private readonly bool _desktopMode = Environment.GetEnvironmentVariable("STARDEW_DESKTOP_MODE") == "1";
-    private readonly bool _usesAgentProtocol = Environment.GetEnvironmentVariable("STARDEW_AGENT_PROTOCOL") == AgentProtocol.Version;
-    private bool HasDesktopControls => _desktopMode || _usesAgentProtocol;
     private bool _desktopPaused;
     private bool _desktopInterrupting;
     private bool _desktopRecoveryPending;
@@ -32,8 +30,8 @@ public sealed partial class ModEntry
     private double _desktopPreviousModMs;
     private string _desktopSlowestPhase = "";
 
-    private bool DesktopActionsAllowed => !HasDesktopControls || (!_desktopPaused && !_desktopInterrupting
-        && _desktopHandledDisconnectRevision == _transportServer?.DesktopDisconnectRevision);
+    private bool DesktopActionsAllowed => !_desktopPaused && !_desktopInterrupting
+        && _desktopHandledDisconnectRevision == _transportServer?.DesktopDisconnectRevision;
 
     private void EnableDesktopFocusPolicy()
     {
@@ -55,7 +53,6 @@ public sealed partial class ModEntry
 
     private void AttachDesktopControls(WebSocketTransportServer server)
     {
-        if (!HasDesktopControls) return;
         _desktopPaused = _desktopInterrupting = _desktopRecoveryPending = false;
         _desktopInterruptedCommandId = null;
         _desktopSnapshotGeneration = -1;
@@ -100,7 +97,7 @@ public sealed partial class ModEntry
         bool shouldRefresh = PlayerModeEnabled && (periodicPlayerSnapshot
             || !ReferenceEquals(_desktopSnapshotLocation, Game1.currentLocation)
             || !ReferenceEquals(_desktopSnapshotMenu, Game1.activeClickableMenu));
-        if (server.ProtocolVersion == AgentProtocol.Version && periodicPlayerSnapshot && Game1.timeOfDay != _desktopSnapshotTime)
+        if (periodicPlayerSnapshot && Game1.timeOfDay != _desktopSnapshotTime)
             shouldRefresh = true;
         if (_observer is not null && (newConnection || shouldRefresh))
         {
@@ -216,7 +213,7 @@ public sealed partial class ModEntry
                 if (!_desktopRecoveryPending) break;
                 if (active) error = "ACTION_STILL_RUNNING";
                 else if (receiptId is not null && (receipt is null
-                    || server.ProtocolVersion == AgentProtocol.Version && !AgentProtocol.IsTerminalState(receipt.TerminalState)))
+                    || !AgentProtocol.IsTerminalState(receipt.TerminalState)))
                     error = "TERMINAL_UNKNOWN";
                 else
                 {

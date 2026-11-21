@@ -20,11 +20,7 @@ internal sealed class GameTransportSession : IDisposable
         _discovery = discovery;
         Server = new WebSocketTransportServer(port: 0, sessionToken: _token, handler: handler,
             saveId: saveId, gameSessionId: Id, smapiLogger: monitor.Log,
-            completedArchiveDirectory: Path.Combine(modDirectory, "data", "transport-receipts", Id))
-        {
-            ProtocolVersion = Environment.GetEnvironmentVariable("STARDEW_AGENT_PROTOCOL") == AgentProtocol.Version
-                ? AgentProtocol.Version : "0.1"
-        };
+            completedArchiveDirectory: Path.Combine(modDirectory, "data", "transport-receipts", Id));
     }
 
     public void Publish() => _discovery?.Publish(_saveId, Id, Server.Port, _token, Server.ProtocolVersion);

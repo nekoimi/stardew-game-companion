@@ -37,15 +37,29 @@ public class GameExtensionHostTests
             string source="using System.Text.Json.Nodes; using Microsoft.Xna.Framework; using StardewValley; using StardewAI.Companion.Mod.Extensions; public sealed class Example : IGameExtension { public IExtensionExecution Begin(ExtensionContext c, JsonObject a) => new Run(c); sealed class Run : IExtensionExecution { readonly ExtensionContext c; public Run(ExtensionContext c) { this.c=c; } public ExtensionOutcome? Tick(GameTime time) { Farmer? farmer=c.Actor.GameFarmer; Netcode.NetInt? observed=null; return new ExtensionOutcome(true,new JsonObject { [\"location\"]=farmer?.currentLocation?.Name,[\"observed\"]=observed!=null }); } public void Cancel(){} public void Dispose(){} } }";
             string? repo=AppContext.BaseDirectory; while(repo!=null && !File.Exists(Path.Combine(repo,"Directory.Build.props"))) repo=Path.GetDirectoryName(repo.TrimEnd(Path.DirectorySeparatorChar));
             string dotnet=Environment.GetEnvironmentVariable("STAR_DOTNET_PATH") ?? Path.Combine(repo!,".local","dotnet","dotnet.exe");
-            File.WriteAllText(Path.Combine(root,"input.json"),JsonSerializer.Serialize(new { spec=new { id="contract-smoke",version="1",kind="query",entryType="Example",source,inputSchema=new {type="object"},guidance="Observe actor through the native SDK." },authoring=data["authoring"] }));
-            string script="import asyncio,json,sys\nfrom pathlib import Path\nsys.path.insert(0,str(Path(sys.argv[1])/'apps'/'runtime'/'src'))\nfrom stardew_ai_runtime.native_capabilities import NativeCapabilityStore\npayload=json.loads(Path('input.json').read_text(encoding='utf-8'))\nstore=NativeCapabilityStore(Path('built'),dotnet=sys.argv[2])\nresult=asyncio.run(store.build(payload['spec'],payload['authoring']))\nprint(json.dumps(result))\nsys.exit(0 if (Path('built')/'packages'/'contract-smoke'/'1'/'adapter.dll').is_file() else 1)\n";
-            File.WriteAllText(Path.Combine(root,"build.py"),script);
-            var info=new System.Diagnostics.ProcessStartInfo(Path.Combine(repo!,"apps","runtime",".venv","Scripts","python.exe")) { WorkingDirectory=root,UseShellExecute=false,RedirectStandardOutput=true,RedirectStandardError=true,CreateNoWindow=true };
-            foreach(string arg in new[] { "build.py",repo!,dotnet }) info.ArgumentList.Add(arg);
+            File.WriteAllText(Path.Combine(root, "Example.cs"), source);
+            var frameworkFiles = Directory.EnumerateFiles(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "*.dll")
+                .Select(Path.GetFileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var nativeReferences = references.Where(path => !frameworkFiles.Contains(Path.GetFileName(path)));
+            var project = new System.Xml.Linq.XElement("Project", new System.Xml.Linq.XAttribute("Sdk", "Microsoft.NET.Sdk"),
+                new System.Xml.Linq.XElement("PropertyGroup", new System.Xml.Linq.XElement("TargetFramework", "net6.0"),
+                    new System.Xml.Linq.XElement("Nullable", "enable")),
+                new System.Xml.Linq.XElement("ItemGroup", nativeReferences.Select(path => new System.Xml.Linq.XElement("Reference",
+                    new System.Xml.Linq.XAttribute("Include", Path.GetFileNameWithoutExtension(path)),
+                    new System.Xml.Linq.XElement("HintPath", path)))));
+            project.Save(Path.Combine(root, "Adapter.csproj"));
+            var info = new System.Diagnostics.ProcessStartInfo(dotnet) {
+                WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true,
+                RedirectStandardError = true, CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8, StandardErrorEncoding = System.Text.Encoding.UTF8
+            };
+            info.Environment["DOTNET_ROOT"] = Path.GetDirectoryName(dotnet);
+            foreach (string arg in new[] { "build", "Adapter.csproj", "--output", "built", "--nologo" }) info.ArgumentList.Add(arg);
             using var process=System.Diagnostics.Process.Start(info)!;
             var stdout=process.StandardOutput.ReadToEndAsync(); var stderr=process.StandardError.ReadToEndAsync();
             if (!process.WaitForExit(60000)) { process.Kill(true); throw new TimeoutException("SDK authoring smoke build timed out."); }
             Assert.True(process.ExitCode==0,stdout.GetAwaiter().GetResult()+stderr.GetAwaiter().GetResult());
+            Assert.True(File.Exists(Path.Combine(root, "built", "Adapter.dll")));
         } finally { Directory.Delete(root,true); }
     }
     [Fact]

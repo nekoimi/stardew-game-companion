@@ -82,9 +82,6 @@ public sealed class WebSocketTransportServer : ITransportServer
     public bool IsChatConnected => _chatSocket is { State: WebSocketState.Open };
     public long ChatGeneration => Interlocked.Read(ref _chatSocketGeneration);
     public event Action<ChatReplyPayload>? OnChatReplyReceived;
-    public event Action<ConnectionStatePayload>? OnConnectionStateReceived;
-    public Task<bool> SendConnectionSourceAsync(string requestId, string source) => SendChatEnvelopeAsync(
-        CreateEnvelope("connection.source.set", new JsonObject { ["requestId"] = requestId, ["source"] = source }));
     public event Action<AutonomyStatePayload>? OnAutonomyStateReceived;
     public event Action<string?, string?, string>? OnChatChannelProblem;
     public string ActorMode { get; set; } = "companion";
@@ -93,7 +90,7 @@ public sealed class WebSocketTransportServer : ITransportServer
     public event Action<string, JsonObject>? OnPlayerMessage;
     public event Action<JsonObject>? OnDesktopControl;
     public bool DesktopClientEnabled { get; set; }
-    public string ProtocolVersion { get; init; } = "0.1";
+    public string ProtocolVersion => AgentProtocol.Version;
     private long _desktopDisconnectRevision;
     internal long DesktopDisconnectRevision => Interlocked.Read(ref _desktopDisconnectRevision);
     public Task<bool> SendDesktopStateAsync(string type, JsonObject payload, long? expectedGeneration = null) =>
@@ -1699,11 +1696,10 @@ public sealed class WebSocketTransportServer : ITransportServer
                     {
                         using var doc = JsonDocument.Parse(jsonString);
                         var root = doc.RootElement;
-                        if (ProtocolVersion == AgentProtocol.Version &&
-                            (!root.TryGetProperty("protocolVersion", out var version) || version.GetString() != ProtocolVersion
+                        if (!root.TryGetProperty("protocolVersion", out var version) || version.GetString() != ProtocolVersion
                             || !root.TryGetProperty("saveId", out var originSave) || originSave.GetString() != _saveId
                             || !root.TryGetProperty("gameSessionId", out var originSession) || originSession.GetString() != _gameSessionId
-                            || gen != ChatGeneration))
+                            || gen != ChatGeneration)
                             continue;
                         ChatReplyPayload? reply = null;
                         var playerType = root.TryGetProperty("messageType",out var pt) ? pt.GetString() : null;
@@ -1742,13 +1738,7 @@ public sealed class WebSocketTransportServer : ITransportServer
 
                         bool hasPayload = root.TryGetProperty("payload", out var payloadElem);
 
-                        if (msgType == "connection.state" && hasPayload)
-                        {
-                            if (gen != Interlocked.Read(ref _chatSocketGeneration)) continue;
-                            var state = payloadElem.Deserialize<ConnectionStatePayload>(JsonOptions);
-                            if (state != null) OnConnectionStateReceived?.Invoke(state);
-                        }
-                        else if (string.Equals(msgType, "autonomy.state", StringComparison.OrdinalIgnoreCase) && hasPayload)
+                        if (string.Equals(msgType, "autonomy.state", StringComparison.OrdinalIgnoreCase) && hasPayload)
                         {
                             var state = payloadElem.Deserialize<AutonomyStatePayload>(JsonOptions);
                             if (state != null) OnAutonomyStateReceived?.Invoke(state);

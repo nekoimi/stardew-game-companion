@@ -60,7 +60,7 @@ public partial class MainWindow
             return;
         }
 
-        var dialog = new CloseWindowDialog(allowHide, _importing, _session is not null);
+        var dialog = new CloseWindowDialog(allowHide, _session is not null);
         if (IsVisible && WindowState != WindowState.Minimized)
         {
             dialog.Owner = this;
@@ -78,7 +78,6 @@ public partial class MainWindow
             return;
         }
 
-        if (_importing) return;
         _closing = true;
         if (_session is { } session)
         {

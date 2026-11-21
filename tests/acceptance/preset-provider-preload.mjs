@@ -1,5 +1,5 @@
-import { createMockDeepSeek, redirectDeepSeek } from "../../apps/runtime-ts/tests/mock-deepseek.mjs";
-import { createMockOpenAI, redirectOpenAI } from "../../apps/runtime-ts/tests/mock-openai.mjs";
+import { createMockDeepSeek, redirectDeepSeek } from "../../apps/runtime/tests/mock-deepseek.mjs";
+import { createMockOpenAI, redirectOpenAI } from "../../apps/runtime/tests/mock-openai.mjs";
 
 const work = (name, params) => ({ name: "submit_work", args: { action: { [name]: params } } });
 const observe = { name: "get_status", args: {} };

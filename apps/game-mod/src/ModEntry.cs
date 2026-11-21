@@ -49,10 +49,6 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     private DateTime _autonomySentAt;
     private DateTime _chatActivityAt = DateTime.UtcNow;
     private string? _watchedChatRequest;
-    private readonly ReleaseBridgeStartupState _bridgeStartup = new();
-    private readonly object _bridgeLaunchGate = new();
-    private ReleaseBridgeLaunch? _ownedBridgeLaunch;
-    private bool _gameExiting;
     private Microsoft.Xna.Framework.Rectangle _companionHudBounds;
 
     // -----------------------------------------------------------------------
@@ -80,18 +76,9 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
 
     public override void Entry(IModHelper helper)
     {
-        if (!_desktopMode && File.Exists(Path.Combine(helper.DirectoryPath, "desktop-providers.json"))
-            && !File.Exists(Path.Combine(helper.DirectoryPath, "tools", "start-companion.ps1")))
-        {
-            Monitor.Log("请从绿色包根目录打开「星露谷游戏伴侣.exe」，再点击「启动游戏」。", LogLevel.Warn);
-            return;
-        }
-
         Monitor.Log("Stardew Game Companion initializing game events and transport.", LogLevel.Info);
 
         _config = Helper.ReadConfig<ModConfig>();
-        _connectionState.Initialize(_config.ConnectionSource);
-        _config.ConnectionSource = _connectionState.Source;
         _savedMode = _config.Mode;
         if (!_desktopMode && !PlayerModeEnabled) CompanionMenuClock.Install();
         _discoveryService = new DiscoveryService(helper.DirectoryPath, Monitor);
@@ -115,7 +102,6 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         };
         helper.Events.GameLoop.Saving += OnSaving;
         helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
-        AppDomain.CurrentDomain.ProcessExit += OnGameProcessExit;
         helper.Events.Input.ButtonPressed += OnButtonPressed;
         if (!_desktopMode) InstallNativeChat();
         else EnableDesktopFocusPolicy();
@@ -184,7 +170,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         TickUnattendedPassoutGuard();
         if (!_desktopMode && PlayerModeEnabled && e.IsMultipleOf(30) && _coordinator != null && _transportServer != null)
             _ = _transportServer.SendSnapshotAsync(_coordinator.CaptureCurrentSnapshot(_observer!.WorldRevision), _observer.WorldRevision);
-        if (HasDesktopControls && e.IsMultipleOf(30)) PublishDesktopControlState(e.IsMultipleOf(120));
+        if (e.IsMultipleOf(30)) PublishDesktopControlState(e.IsMultipleOf(120));
         MeasureDesktopPhase("snapshot");
         if (PlayerModeEnabled && _actor != null) _knowledge?.NoteLocationVisited(_actor.LocationName);
         if (_decisionEdits.Count > 0 && DateTime.UtcNow - _decisionEditSentAt > TimeSpan.FromSeconds(30))
@@ -231,12 +217,8 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
                 if (Game1.activeClickableMenu is CompanionConversationMenu or CompanionCommandMenu or CompanionDashboardMenu or CompanionLifeMenu) Game1.activeClickableMenu.exitThisMenu();
             } else _thinking?.ResumeAfterAction();
         }
-        if (!_desktopMode) UpdateConnectionSelection();
-        UpdateBridgeStartup();
-        // A mid-session bridge death must not orphan the run: poll the launcher
-        // while disconnected; ReleaseBridgeStartupState.CanStart throttles retries.
-        if (Context.IsWorldReady && _transportServer != null && _transportServer.IsChatConnected != true)
-            TryAutoStartChatBridge();
+        var connectionProblem = GetBridgeConnectionProblem();
+        if (CompanionCommandMenu.TaskState.ConnectionProblem != connectionProblem) ProjectBridgeConnection();
 
         // A native command can arrive after the player requested pause but
         // before its machine existed. Apply the shared gate to the new machine
@@ -249,7 +231,7 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         }
 
         // 2. Only advance game action if not cancelled or paused
-        if (_coordinator != null) _coordinator.Rest.Paused = _chatUiState.ShouldPauseNative || (HasDesktopControls && (_desktopPaused || _desktopInterrupting));
+        if (_coordinator != null) _coordinator.Rest.Paused = _chatUiState.ShouldPauseNative || _desktopPaused || _desktopInterrupting;
         MeasureDesktopPhase("before-native-action");
         _coordinator?.Update(Game1.currentGameTime, e.Ticks);
         MeasureDesktopPhase("native-action");

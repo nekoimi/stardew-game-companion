@@ -247,7 +247,6 @@ public sealed partial class ModEntry
 
     private void OpenCompanionOptions(string source)
     {
-        TryAutoStartChatBridge();
         GetCompanionDialogue().OpenF8();
         Monitor.Log($"Companion options opened ({source}).", LogLevel.Info);
         ProjectBridgeConnection();

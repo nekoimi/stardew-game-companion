@@ -4076,7 +4076,6 @@ public sealed class TestDriverMod : Mod
         {
             ["runId"] = _runId, ["label"] = label, ["action"] = action,
             ["timestampUtc"] = DateTime.UtcNow.ToString("o"),
-            ["productionOwnedBridgeLaunchObserved"] = ReadNativeMember(modEntry, "_ownedBridgeLaunch") != null,
             ["productionChatConnected"] = ReadNativeMember(ReadNativeMember(modEntry, "_transportServer"), "IsChatConnected"),
             ["connectionSource"] = ReadNativeMember(ReadNativeMember(modEntry, "_connectionState"), "Source"),
             ["connectionStatus"] = ReadNativeMember(ReadNativeMember(modEntry, "_connectionState"), "Status"),
@@ -8670,15 +8669,10 @@ public sealed class TestDriverMod : Mod
             var info = Helper.ModRegistry.Get("CSXizhang.StardewAICompanion");
             var instance = info?.GetType().GetProperty("Mod")?.GetValue(info);
             var transport = instance?.GetType().GetField("_transportServer", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(instance);
-            var owned = instance?.GetType().GetField("_ownedBridgeLaunch", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(instance);
-            var process = owned?.GetType().GetField("_process", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(owned) as System.Diagnostics.Process;
-            int? launcherPid = null;
-            try { if (process != null && !process.HasExited) launcherPid = process.Id; } catch (InvalidOperationException) { }
             var snapshot = new {
                 action, label, gamePid = Environment.ProcessId, worldReady = Context.IsWorldReady,
                 saveName = Constants.SaveFolderName, menu = Game1.activeClickableMenu?.GetType().FullName,
-                chatConnected = transport?.GetType().GetProperty("IsChatConnected")?.GetValue(transport),
-                launcherPid, ownsLaunch = owned != null
+                chatConnected = transport?.GetType().GetProperty("IsChatConnected")?.GetValue(transport)
             };
             File.WriteAllText(Path.Combine(_evidenceDir, $"lifecycle-{label}.json"), JsonSerializer.Serialize(snapshot), new System.Text.UTF8Encoding(false));
             if (action == "save-exit") Game1.quit = true;

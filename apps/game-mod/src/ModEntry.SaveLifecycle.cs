@@ -222,7 +222,6 @@ public sealed partial class ModEntry
 
         // 5. Publish local restricted discovery (never log sessionToken!)
         transport.Publish();
-        TryAutoStartChatBridge();
 
 
         Monitor.Log($"Player binding active: save={saveId} id={Game1.player.UniqueMultiplayerID}, no companion actor.", LogLevel.Info);
@@ -468,7 +467,6 @@ public sealed partial class ModEntry
 
             // 5. Publish local restricted discovery (never log sessionToken!)
             transport.Publish();
-            TryAutoStartChatBridge();
 
             Monitor.Log($"Companion Mechanics Actor and Transport online on port {transport.Server.Port} (Save: {saveId}).", LogLevel.Info);
         }
@@ -554,7 +552,6 @@ public sealed partial class ModEntry
         _nativeChatDecisionSave = null;
         _unsentChatText = null;
         ReleasePlayerControl("unload");
-        StopOwnedBridgeLauncher();
         ChineseUiLocale.Restore();
         _dayTransition = false;
         try
@@ -565,8 +562,6 @@ public sealed partial class ModEntry
             _transportServer = null;
             _mainThreadActions.Clear();
             _decisionEdits.Clear();
-            _bridgeStartup.Reset();
-            _connectionState.ResetConnection();
 
             _actor = null;
             _avatar = null;

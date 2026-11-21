@@ -34,11 +34,14 @@ function Add-Check {
 $git = Get-Command git -ErrorAction SilentlyContinue
 Add-Check 'Git' $true ([bool]$git) $(if ($git) { & git --version } else { 'not found' })
 
-$uv = Get-Command uv -ErrorAction SilentlyContinue
-Add-Check 'uv' $true ([bool]$uv) $(if ($uv) { & uv --version } else { 'not found' })
+$node = Get-Command node -ErrorAction SilentlyContinue
+Add-Check 'Node (source tests)' $false ([bool]$node) $(if ($node) { & node --version } else { 'not found' })
+
+$npm = Get-Command npm -ErrorAction SilentlyContinue
+Add-Check 'npm (source tests)' $false ([bool]$npm) $(if ($npm) { & npm --version } else { 'not found' })
 
 $python = Get-Command python -ErrorAction SilentlyContinue
-Add-Check 'Python' $true ([bool]$python) $(if ($python) { & python --version 2>&1 } else { 'not found' })
+Add-Check 'Python (acceptance)' $false ([bool]$python) $(if ($python) { & python --version 2>&1 } else { 'not found' })
 
 $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
 $dotnetPath = if ($env:STAR_DOTNET_PATH -and (Test-Path -LiteralPath $env:STAR_DOTNET_PATH)) {
@@ -72,7 +75,7 @@ $checks | Format-Table -AutoSize
 
 $missing = @($checks | Where-Object { $_.Required -and $_.Status -ne 'ready' })
 if ($missing.Count -gt 0) {
-    Write-Warning ("Baseline has {0} missing required item(s): {1}" -f $missing.Count, (($missing | Select-Object -ExpandProperty Name) -join ', '))
+    Write-Warning ("Missing {0} required item(s): {1}" -f $missing.Count, (($missing | Select-Object -ExpandProperty Name) -join ', '))
     if ($Strict) {
         exit 1
     }

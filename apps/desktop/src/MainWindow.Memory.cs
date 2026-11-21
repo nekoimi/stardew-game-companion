@@ -86,7 +86,7 @@ public partial class MainWindow
         RefreshMemoryControls(true);
         try
         {
-            var result = await session.PostAsync("/v1/memory", body);
+            var result = await session.PostAsync("/v2/memory", body);
             if (view != _saveViewGeneration) return;
             _memoryRevision = Number(result, "memoryRevision");
             var entries = Rows(result, "entries").Reverse().Select(MemoryEntry).ToArray();

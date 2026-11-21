@@ -1,5 +1,5 @@
-import { createMockDeepSeek } from "../../apps/runtime-ts/tests/mock-deepseek.mjs";
-import { createMockOpenAI } from "../../apps/runtime-ts/tests/mock-openai.mjs";
+import { createMockDeepSeek } from "../../apps/runtime/tests/mock-deepseek.mjs";
+import { createMockOpenAI } from "../../apps/runtime/tests/mock-openai.mjs";
 
 const deepseek = await createMockDeepSeek();
 const openai = await createMockOpenAI();

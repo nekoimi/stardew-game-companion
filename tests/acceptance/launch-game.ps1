@@ -451,30 +451,6 @@ try {
         if ($Scenario -ne 'free-mode-control' -or $Mode -ne 'scenario') {
             throw 'Preset acceptance requires the isolated free-mode-control scenario.'
         }
-        # Fresh runtime state is essential: never copy a live installed mod here.
-        if (Test-Path -LiteralPath (Join-Path $prodDest 'chat_sessions.json')) {
-            throw 'Use a clean release stage, not an installed Mod with session history.'
-        }
-        if (!$ApiProvider) {
-            $presetTools = Join-Path $prodDest 'tools'
-            if (-not (Test-Path -LiteralPath (Join-Path $presetTools 'start-companion.ps1'))) {
-                [void][IO.Directory]::CreateDirectory($presetTools)
-                Copy-Item -LiteralPath (Join-Path $repoRoot 'tools/dev/start-companion.ps1'),
-                    (Join-Path $repoRoot 'packaging/windows/release-package.ps1') -Destination $presetTools
-            }
-            $presetConfig = Join-Path $prodDest 'config'
-            New-Item -ItemType Directory -Path $presetConfig -Force | Out-Null
-            Write-Utf8File (Join-Path $presetConfig 'chat-backend.json') '{"backend":"mcode","effort":"default","model":""}'
-        }
-        # This suite explicitly exercises the built-in entry. Keep the choice
-        # inside its isolated Mod copy; never change the player's installation.
-        $presetModConfigPath = Join-Path $prodDest 'config.json'
-        $presetModConfig = if (Test-Path -LiteralPath $presetModConfigPath) {
-            Get-Content -LiteralPath $presetModConfigPath -Raw | ConvertFrom-Json
-        } else { [pscustomobject]@{} }
-        $presetModConfig | Add-Member -NotePropertyName ConnectionSource -NotePropertyValue 'builtin' -Force
-        $presetModConfig | Add-Member -NotePropertyName ConnectionSourceChosen -NotePropertyValue $true -Force
-        Write-Utf8File $presetModConfigPath ($presetModConfig | ConvertTo-Json -Depth 20)
     }
 
     # 6b. TestDriver Mod
@@ -553,7 +529,7 @@ try {
     }
     $psi.UseShellExecute = $false
     if ($ApiProvider) {
-        if (!$PresetAcceptance -or !$ApiModel) { throw 'API runtime requires isolated preset acceptance and a model.' }
+        if (!$FrozenProdDir -or !$ApiModel) { throw 'API runtime requires a built green package and a model.' }
         $runtime = Join-Path (Resolve-Path -LiteralPath $FrozenProdDir).Path 'runtime'
         $node = Join-Path $runtime 'node.exe'
         if (!(Test-Path -LiteralPath $node -PathType Leaf)) { throw 'The candidate package does not contain Node.' }
@@ -568,7 +544,6 @@ try {
         foreach ($key in 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'OPENAI_COMPATIBLE_API_KEY', 'OPENAI_COMPATIBLE_BASE_URL', 'NODE_OPTIONS') {
             $psi.EnvironmentVariables.Remove($key)
         }
-        $psi.EnvironmentVariables['STARDEW_AGENT_PROTOCOL'] = '2'
         $versions = [ordered]@{
             gameVersion = (Get-Item -LiteralPath (Join-Path $gamePath 'Stardew Valley.dll')).VersionInfo.FileVersion
             smapiVersion = (Get-Item -LiteralPath (Join-Path $gamePath 'StardewModdingAPI.dll')).VersionInfo.FileVersion

@@ -49,7 +49,7 @@ public class WebSocketTransportServerTests
         while (!server.IsChatConnected) await Task.Delay(15, timeout.Token);
         Task Send(string requestId, string saveId, string gameSessionId) => SendRawJsonAsync(client,
             JsonSerializer.Serialize(new {
-                messageType = "desktop.control", saveId, gameSessionId, payload = new { requestId, action = "takeover" },
+                protocolVersion = AgentProtocol.Version, messageType = "desktop.control", saveId, gameSessionId, payload = new { requestId, action = "takeover" },
             }));
         server.DesktopClientEnabled = true;
         await Send("stale-session", "save", "old");
@@ -70,7 +70,7 @@ public class WebSocketTransportServerTests
         var receive = typeof(WebSocketTransportServer).GetMethod("ProcessIncomingRawMessage", BindingFlags.Instance | BindingFlags.NonPublic)!;
         foreach (var type in new[] { "skill.cancel", "skill.result.query" })
         {
-            var envelope = new EnvelopeDto("0.1", type, type, "test", 1, 1, DateTimeOffset.UtcNow,
+            var envelope = new EnvelopeDto(AgentProtocol.Version, type, type, "test", 1, 1, DateTimeOffset.UtcNow,
                 new JsonObject { ["commandId"] = "done" }, SaveId: "save", GameSessionId: "session");
             receive.Invoke(server, new object[] { JsonSerializer.Serialize(envelope), 0L });
             server.Update();
@@ -106,7 +106,7 @@ public class WebSocketTransportServerTests
         async Task SendCancel(string command)
         {
             await SendRawJsonAsync(client, JsonSerializer.Serialize(new {
-                protocolVersion = "0.1", messageType = "skill.cancel", messageId = command,
+                protocolVersion = AgentProtocol.Version, messageType = "skill.cancel", messageId = command,
                 saveId = "save-123", gameSessionId = "session-456", senderInstanceId = "test",
                 sequenceNumber = 1, worldRevision = 1, sentAt = DateTimeOffset.UtcNow,
                 payload = new { commandId = command, reason = "player", requestedByPlayer = true, cancelPolicy = "safe-point" }
@@ -128,33 +128,6 @@ public class WebSocketTransportServerTests
         typeof(WebSocketTransportServer).GetField("_chatSocketGeneration", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(server, server.ChatGeneration + 1);
         server.Update();
         Assert.Equal(1, handler.CancelCount);
-        client.Abort();
-    }
-
-    [Fact]
-    public async Task SourceSelectionAndOriginalConversationStatusUseTheExistingChatChannel()
-    {
-        using var server = new WebSocketTransportServer(0, "connection-token", new TestTransportHandler());
-        server.Start();
-        var received = new TaskCompletionSource<ConnectionStatePayload>(TaskCreationOptions.RunContinuationsAsynchronously);
-        server.OnConnectionStateReceived += state => received.TrySetResult(state);
-        using var client = new ClientWebSocket();
-        client.Options.SetRequestHeader("Authorization", "Bearer connection-token");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/chat"), timeout.Token);
-        while (!server.IsChatConnected) await Task.Delay(10, timeout.Token);
-        Assert.True(await server.SendConnectionSourceAsync("source-1", "external"));
-        var request = await ReceiveEnvelopeAsync(client);
-        Assert.Equal("connection.source.set", request.MessageType);
-        Assert.Equal("external", request.Payload["source"]!.GetValue<string>());
-        await SendRawJsonAsync(client, JsonSerializer.Serialize(new {
-            messageType = "connection.state",
-            payload = new { requestId = "source-1", source = "external", status = "connected", clientName = "mcode", conversationName = "原伙伴" }
-        }));
-        var state = await received.Task.WaitAsync(timeout.Token);
-        Assert.Equal("source-1", state.RequestId);
-        Assert.Equal("原伙伴", state.ConversationName);
-        Assert.Equal("mcode", state.ClientName);
         client.Abort();
     }
 
@@ -500,7 +473,7 @@ public class WebSocketTransportServerTests
     {
         return JsonSerializer.Serialize(new
         {
-            protocolVersion = "0.1",
+            protocolVersion = AgentProtocol.Version,
             messageType = "runtime.hello",
             messageId = "msg-hello-1",
             senderInstanceId = "runtime-test",
@@ -509,7 +482,7 @@ public class WebSocketTransportServerTests
             sentAt = DateTimeOffset.UtcNow.ToString("O"),
             payload = new
             {
-                supportedProtocolVersions = new[] { "0.1" },
+                supportedProtocolVersions = new[] { AgentProtocol.Version },
                 runtimeVersion = "0.1.0",
                 sessionToken = token,
                 features = new Dictionary<string, bool>()
@@ -527,7 +500,7 @@ public class WebSocketTransportServerTests
     {
         return JsonSerializer.Serialize(new
         {
-            protocolVersion = "0.1",
+            protocolVersion = AgentProtocol.Version,
             messageType = "skill.execute",
             messageId = $"msg-exec-{commandId}",
             saveId = "save-123",
@@ -629,7 +602,7 @@ public class WebSocketTransportServerTests
         // 2. Send skill.execute with missing idempotencyKey (must NOT be synthesized)
         var missingIdemJson = JsonSerializer.Serialize(new
         {
-            protocolVersion = "0.1",
+            protocolVersion = AgentProtocol.Version,
             messageType = "skill.execute",
             messageId = "msg-missing-idem",
             saveId = "save-123",
@@ -737,7 +710,7 @@ public class WebSocketTransportServerTests
 
     private static string CreateResultQueryJson(string commandId, string? saveId = "save-123", string? sessionId = "session-456") =>
         JsonSerializer.Serialize(new {
-            protocolVersion = "0.1", messageType = "skill.result.query", messageId = $"query-{commandId}",
+            protocolVersion = AgentProtocol.Version, messageType = "skill.result.query", messageId = $"query-{commandId}",
             senderInstanceId = "runtime-restarted", sequenceNumber = 2, worldRevision = 1,
             sentAt = DateTimeOffset.UtcNow.ToString("O"), saveId, gameSessionId = sessionId,
             payload = new { commandId }
@@ -984,7 +957,7 @@ public class WebSocketTransportServerTests
         // 2. IMMEDIATELY send cancel before server.Update() is called!
         var cancelJson = JsonSerializer.Serialize(new
         {
-            protocolVersion = "0.1",
+            protocolVersion = AgentProtocol.Version,
             messageType = "skill.cancel",
             messageId = "msg-cancel-1",
             correlationId = "msg-exec-cmd-cancel-target",
@@ -1076,7 +1049,7 @@ public class WebSocketTransportServerTests
         {
             var pauseJson = JsonSerializer.Serialize(new
             {
-                protocolVersion = "0.1",
+                protocolVersion = AgentProtocol.Version,
                 messageType = "skill.pause",
                 messageId = $"msg-pause-{i}",
                 senderInstanceId = "runtime-test",
@@ -1143,7 +1116,7 @@ public class WebSocketTransportServerTests
         // Command targets wrong save
         var wrongSaveJson = JsonSerializer.Serialize(new
         {
-            protocolVersion = "0.1",
+            protocolVersion = AgentProtocol.Version,
             messageType = "skill.execute",
             messageId = "msg-wrong-save",
             saveId = "different-save-B",
@@ -1449,61 +1422,44 @@ public class WebSocketTransportServerTests
     }
 
     [Fact]
-    public async Task Test_ActualPythonClient_ConnectsToCSharpServer()
+    public async Task TypeScriptGameConnectionBindsToTheVersionTwoServer()
     {
-        var handler = new TestTransportHandler();
-        var logs = new List<string>();
-        string token = "test-token-" + Guid.NewGuid().ToString("N");
-        using var server = new WebSocketTransportServer(
-            0,
-            token,
-            handler,
-            saveId: "save-123",
-            gameSessionId: "session-456",
-            logger: (msg, lvl) => logs.Add($"{lvl}: {msg}")
-        );
+        using var server = new WebSocketTransportServer(0, "test-token", new TestTransportHandler(), "save-123", "session-456");
         server.Start();
-
-        string scriptPath = Path.Combine(Path.GetTempPath(), $"test_connect_{Guid.NewGuid():N}.py");
-        string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        string pyCode = $@"
-import asyncio, sys
-from pathlib import Path
-repo = Path(r'{repoRoot}')
-sys.path.insert(0, str(repo / 'apps' / 'runtime' / 'src'))
-from stardew_ai_runtime.client import TransportClient
-
-async def main():
-    c = TransportClient(host='127.0.0.1', port={server.Port}, session_token='{token}')
-    await c.connect(timeout=5.0)
-    await c.handshake(timeout=5.0)
-    await c.close()
-    print('SUCCESS')
-
-asyncio.run(main())
-";
-        File.WriteAllText(scriptPath, pyCode);
-
+        string directory = Path.Combine(Path.GetTempPath(), $"star-game-contract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(directory, "data"));
         try
         {
-            var psi = new ProcessStartInfo("uv", $"run --project \"{Path.Combine(repoRoot, "apps", "runtime")}\" python \"{scriptPath}\"")
+            string script = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+                "tests", "contracts", "connect-game.mjs"));
+            File.WriteAllText(Path.Combine(directory, "data", "transport-discovery.json"), JsonSerializer.Serialize(new
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
+                protocolVersion = AgentProtocol.Version, port = server.Port, sessionToken = server.SessionToken,
+                saveId = "save-123", gameSessionId = "session-456"
+            }));
+            var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("STAR_NODE_PATH") ?? "node")
+            {
+                UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true
             };
-            using var proc = Process.Start(psi)!;
-            string stdout = await proc.StandardOutput.ReadToEndAsync();
-            string stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            Assert.True(proc.ExitCode == 0, $"Python exited with code {proc.ExitCode}.\nStdout: {stdout}\nStderr: {stderr}\nServer logs: {string.Join("\n", logs)}");
-            Assert.Contains("SUCCESS", stdout);
+            start.ArgumentList.Add(script);
+            start.ArgumentList.Add(directory);
+            using var child = Process.Start(start)!;
+            var stderr = child.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+            try
+            {
+                while (!child.HasExited)
+                {
+                    server.Update();
+                    if (server.IsChatConnected)
+                        await server.SendDesktopStateAsync("desktop.control.result", new JsonObject { ["recoveryPending"] = false });
+                    await Task.Delay(30, timeout.Token);
+                }
+            }
+            finally { if (!child.HasExited) child.Kill(); }
+            Assert.True(child.ExitCode == 0, await stderr);
         }
-        finally
-        {
-            if (File.Exists(scriptPath)) File.Delete(scriptPath);
-        }
+        finally { Directory.Delete(directory, recursive: true); }
     }
 
     [Fact]
@@ -1537,141 +1493,18 @@ asyncio.run(main())
     }
 
     [Fact]
-    public async Task Test_ActualPythonClient_WrongToken_RejectionLogged()
-    {
-        var handler = new TestTransportHandler();
-        var logs = new List<string>();
-        using var server = new WebSocketTransportServer(
-            0,
-            "correct-token",
-            handler,
-            logger: (msg, lvl) => logs.Add($"{lvl}: {msg}")
-        );
-        server.Start();
-
-        string scriptPath = Path.Combine(Path.GetTempPath(), $"test_wrong_token_{Guid.NewGuid():N}.py");
-        string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        string pyCode = $@"
-import asyncio, sys
-from pathlib import Path
-repo = Path(r'{repoRoot}')
-sys.path.insert(0, str(repo / 'apps' / 'runtime' / 'src'))
-from stardew_ai_runtime.client import TransportClient, TransportClientError
-
-async def main():
-    c = TransportClient(host='127.0.0.1', port={server.Port}, session_token='wrong-token')
-    try:
-        await c.connect(timeout=5.0)
-        print('UNEXPECTED_CONNECT')
-        sys.exit(1)
-    except TransportClientError as ex:
-        print(f'CAUGHT_EXPECTED: {{ex}}')
-        sys.exit(0)
-    finally:
-        await c.close()
-
-asyncio.run(main())
-";
-        File.WriteAllText(scriptPath, pyCode);
-
-        try
-        {
-            var psi = new ProcessStartInfo("uv", $"run --project \"{Path.Combine(repoRoot, "apps", "runtime")}\" python \"{scriptPath}\"")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            using var proc = Process.Start(psi)!;
-            string stdout = await proc.StandardOutput.ReadToEndAsync();
-            string stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            Assert.True(proc.ExitCode == 0, $"Python exited with code {proc.ExitCode}.\nStdout: {stdout}\nStderr: {stderr}\nServer logs: {string.Join("\n", logs)}");
-            Assert.Contains("CAUGHT_EXPECTED", stdout);
-            Assert.Contains(logs, l => l.Contains("401 Unauthorized") && l.Contains("HasAuthHeader=True"));
-        }
-        finally
-        {
-            if (File.Exists(scriptPath)) File.Delete(scriptPath);
-        }
-    }
-
-    [Fact]
-    public async Task Test_ActualPythonClient_Conflict_RejectionLogged()
-    {
-        var handler = new TestTransportHandler();
-        var logs = new List<string>();
-        string token = "token-" + Guid.NewGuid().ToString("N");
-        using var server = new WebSocketTransportServer(
-            0,
-            token,
-            handler,
-            logger: (msg, lvl) => logs.Add($"{lvl}: {msg}")
-        );
-        server.Start();
-
-        // Connect first client and keep open
-        var client1 = await ConnectClientAsync(server.Port, token);
-
-        string scriptPath = Path.Combine(Path.GetTempPath(), $"test_conflict_{Guid.NewGuid():N}.py");
-        string repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        string pyCode = $@"
-import asyncio, sys
-from pathlib import Path
-repo = Path(r'{repoRoot}')
-sys.path.insert(0, str(repo / 'apps' / 'runtime' / 'src'))
-from stardew_ai_runtime.client import TransportClient, TransportClientError
-
-async def main():
-    c = TransportClient(host='127.0.0.1', port={server.Port}, session_token='{token}')
-    try:
-        await c.connect(timeout=5.0)
-        print('UNEXPECTED_CONNECT')
-        sys.exit(1)
-    except TransportClientError as ex:
-        print(f'CAUGHT_CONFLICT: {{ex}}')
-        sys.exit(0)
-    finally:
-        await c.close()
-
-asyncio.run(main())
-";
-        File.WriteAllText(scriptPath, pyCode);
-
-        try
-        {
-            var psi = new ProcessStartInfo("uv", $"run --project \"{Path.Combine(repoRoot, "apps", "runtime")}\" python \"{scriptPath}\"")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            using var proc = Process.Start(psi)!;
-            string stdout = await proc.StandardOutput.ReadToEndAsync();
-            string stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            Assert.True(proc.ExitCode == 0, $"Python exited with code {proc.ExitCode}.\nStdout: {stdout}\nStderr: {stderr}\nServer logs: {string.Join("\n", logs)}");
-            Assert.Contains("CAUGHT_CONFLICT", stdout);
-            Assert.Contains(logs, l => l.Contains("409 Conflict"));
-        }
-        finally
-        {
-            if (File.Exists(scriptPath)) File.Delete(scriptPath);
-            client1.Dispose();
-        }
-    }
-
-    [Fact]
     public async Task Test_ChatChannel_SubmitAndReply_Roundtrip()
     {
+        const string saveId = "Farm_Save01";
+        const string gameSessionId = "session-chat-01";
         var handler = new TestTransportHandler();
         var logs = new List<string>();
         using var server = new WebSocketTransportServer(
             0,
             "test-token",
             handler,
+            saveId: saveId,
+            gameSessionId: gameSessionId,
             logger: (msg, lvl) => logs.Add($"{lvl}: {msg}")
         );
         server.Start();
@@ -1690,7 +1523,7 @@ asyncio.run(main())
         Assert.True(server.IsChatConnected);
 
         // Server sends chat submit
-        var submitPayload = new ChatSubmitPayload("req-chat-01", "帮我把箱子里的种子种下", "text", "Farm_Save01");
+        var submitPayload = new ChatSubmitPayload("req-chat-01", "帮我把箱子里的种子种下", "text", saveId);
         bool sent = await server.SendChatSubmitAsync(submitPayload);
         Assert.True(sent);
 
@@ -1708,7 +1541,10 @@ asyncio.run(main())
         // Client replies with chat.reply
         var replyJson = JsonSerializer.Serialize(new
         {
+            protocolVersion = AgentProtocol.Version,
             messageType = "chat.reply",
+            saveId,
+            gameSessionId,
             payload = new
             {
                 requestId = "req-chat-01",

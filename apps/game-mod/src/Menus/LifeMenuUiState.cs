@@ -159,30 +159,15 @@ public sealed class LifeMenuUiState
     /// <summary>Whether the player explicitly skipped setup.</summary>
     public bool IsSkipped { get; private set; }
 
-    /// <summary>The built-in profile name, kept separate from an external connection's display alias.</summary>
-    public string ProfileCompanionName { get; private set; } = "阿星";
-    private string? _connectionDisplayName;
-    public string CompanionName => _connectionDisplayName ?? ProfileCompanionName;
-
-    /// <summary>Projects the acknowledged connection; existing conversation speakers remain historical facts.</summary>
-    public void ApplyConnectionName(string source, string? conversationName)
-    {
-        _connectionDisplayName = source == "external"
-            ? string.IsNullOrWhiteSpace(conversationName) ? "已有伙伴" : conversationName.Trim()
-            : null;
-    }
-
-    /// <summary>
-    /// Play-style: <c>"earn"</c>, <c>"workhorse"</c>, <c>"community"</c>, or <c>"decor"</c>.
-    /// </summary>
+    public string CompanionName { get; private set; } = "阿星";
     public int Bedtime { get; set; } = 2400;
-    /// <summary>Projects the normalized preference and reports an actual actor-state change.</summary>
     public bool ApplyBedtime(int bedtime, int? actorBedtime = null)
     {
         int previous = actorBedtime ?? Bedtime;
         Bedtime = CompanionBedtime.Normalize(bedtime);
         return Bedtime != previous;
     }
+
     public string PlayStyle { get; private set; } = "earn";
 
     /// <summary>
@@ -428,7 +413,7 @@ public sealed class LifeMenuUiState
     {
         IsOnboarded = onboarded;
         IsSkipped = skipped;
-        ProfileCompanionName = companionName;
+        CompanionName = companionName;
         PlayStyle = playStyle;
         Personality = personality;
         CareFrequency = careFrequency;
@@ -530,7 +515,6 @@ public sealed class LifeMenuUiState
     /// <summary>Resets transient state (e.g. on return-to-title).</summary>
     public void Reset()
     {
-        _connectionDisplayName = null;
         _conversation.Clear();
         ConversationRevision++;
         _decisionNoticeKeys.Clear();

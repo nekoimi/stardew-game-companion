@@ -13,7 +13,7 @@ public sealed partial class ModEntry
         Action back = () => { if (Context.IsWorldReady) OpenCompanionHub(2); else Game1.exitActiveMenu(); };
         string mode = _savedMode == "player" ? "AI 自己玩" : "伙伴模式";
         string message = $"游戏模式：{mode}" + (_savedMode != _config.Mode ? "（保存并重启游戏后生效）" : "") +
-            $"\n{_connectionState.Description}\nF8 随时指导。自玩模式按 {_config.TakeoverKey} 接管或交还。";
+            $"\n{GetBridgeConnectionProblem() ?? "伙伴服务已连接。"}\nF8 随时指导。自玩模式按 {_config.TakeoverKey} 接管或交还。";
         var choices = new List<(string Label, Action Click)>();
         if (PlayerModeEnabled && _authority != null)
             choices.Add((_authority.AgentOwns ? "接管玩家" : "开始托管", () => {
@@ -21,7 +21,6 @@ public sealed partial class ModEntry
                 else { _playerControlApproved = true; _authority.RequestAgent("human-explicit-handoff"); }
                 OpenGameSettings();
             }));
-        choices.Add(("选择伙伴接入方式", OpenConnectionSelection));
         choices.Add(("切换为" + (_savedMode == "player" ? "伙伴模式" : "AI 自己玩"), ChangeGameMode));
         choices.Add(("返回", back));
         Game1.activeClickableMenu = new CompanionOptionsMenu("游戏模式", message, back, choices.ToArray());

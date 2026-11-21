@@ -61,23 +61,6 @@ def summarize_trace(trace):
         if row.get("type") == "life.chat.reply":
             messages += bool(row["payload"].get("replyText"))
             continue
-        item = (row.get("event") or {}).get("item") or {}
-        messages += item.get("type") == "agent_message"
-        if item.get("type") != "tool_call":
-            continue
-        call = item.get("toolCall") or {}
-        output = call.get("output") or {}
-        text = "\n".join(c.get("text", "") for c in output.get("content", []) if isinstance(c, dict))
-        details = output.get("details") or {}
-        result = (details.get("mcp") or {}).get("structuredContent")
-        if result is None:
-            try:
-                result = json.loads(text.removeprefix("[MCP structured content]\n"))
-            except ValueError:
-                result = None
-        calls.append({"name": call.get("name"), "input": call.get("input"), "result": result,
-                      "error": call.get("status") == 3 or bool(details.get("is_error")) or text.startswith("Error executing tool"),
-                      "nonterminal": "IN_PROGRESS" in text})
     return {"toolCalls": calls, "toolCount": len(calls), "errorCount": sum(c["error"] for c in calls),
             "publicMessages": messages}
 
@@ -140,7 +123,7 @@ def evaluate(case, before, after, samples):
 
 class Runner:
     def __init__(self, run, case, timeout, cases_file=None, *, keep_open=False, reset_fixture=False,
-                 api_runtime=False, simulated=False):
+                 simulated=False):
         self.run = run.resolve()
         self.evidence = self.run / "evidence"
         self.mod = self.run / "mods" / "StardewAI.Companion.Mod"
@@ -148,17 +131,13 @@ class Runner:
         self.cases_file = cases_file or Path(__file__).with_name("cases.json")
         self.token = uuid.uuid4().hex[:8]
         self.keep_open, self.reset_fixture = keep_open, reset_fixture
-        self.api_runtime = api_runtime
         self.simulated = simulated
-        self.trace_file = self.evidence / "agent-runtime-events.jsonl" if api_runtime else self.mod / "data/mcode-public-events.jsonl"
+        self.trace_file = self.evidence / "agent-runtime-events.jsonl"
         self.number = 0
         self.samples = []
         self.report = {"case": case, "status": "error", "checks": {}, "realGame": True}
 
-    def terminal(self, instruction, command_offset, trace_offset):
-        if not self.api_runtime:
-            return next((row for row in rows(self.mod / "chat_commands.jsonl")[command_offset:]
-                         if row.get("prompt") == instruction), None)
+    def terminal(self, instruction, trace_offset):
         events = rows(self.trace_file)[trace_offset:]
         submit = next((row["payload"] for row in events if row.get("type") == "submitted"
                        and row["payload"].get("text") == instruction), None)
@@ -170,10 +149,9 @@ class Runner:
     async def wait(self, predicate, message, timeout=30):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.api_runtime:
-                startup_error = read(self.evidence / "agent-startup-error.json")
-                if startup_error and startup_error.get("error"):
-                    raise RuntimeError(startup_error["error"])
+            startup_error = read(self.evidence / "agent-startup-error.json")
+            if startup_error and startup_error.get("error"):
+                raise RuntimeError(startup_error["error"])
             value = predicate()
             if value:
                 return value
@@ -231,17 +209,14 @@ class Runner:
             self.report["caseDefinitionSha256"] = hashlib.sha256(spec_path.read_bytes()).hexdigest()
             dll = self.mod / "StardewAI.Companion.Mod.dll"
             self.report["modSha256"] = hashlib.sha256(dll.read_bytes()).hexdigest()
-            if self.api_runtime:
-                backend = read(self.evidence / "agent-runtime-ready.json") or {}
-                if backend.get("simulated") is not self.simulated:
-                    raise RuntimeError("API evidence does not confirm the requested acceptance mode")
-                self.report["backend"] = backend
-                package = read(self.evidence / "agent-package.json") or {}
-                if any(not package.get(key) for key in ("gameVersion", "smapiVersion", "modVersion", "packageManifestSha256")):
-                    raise RuntimeError("Missing package or game version evidence")
-                self.report.update(package)
-            else:
-                self.report["backend"] = read(self.mod / "config" / "chat-backend.json")
+            backend = read(self.evidence / "agent-runtime-ready.json") or {}
+            if backend.get("simulated") is not self.simulated:
+                raise RuntimeError("API evidence does not confirm the requested acceptance mode")
+            self.report["backend"] = backend
+            package = read(self.evidence / "agent-package.json") or {}
+            if any(not package.get(key) for key in ("gameVersion", "smapiVersion", "modVersion", "packageManifestSha256")):
+                raise RuntimeError("Missing package or game version evidence")
+            self.report.update(package)
             # Only normal chat/menu input; no test-side action dispatch.
             await self.request("close")
             before = await self.native()
@@ -264,7 +239,6 @@ class Runner:
                 if time.monotonic() > deadline:
                     raise TimeoutError("Production bridge did not become ready")
                 await asyncio.sleep(1)
-            command_offset = len(rows(self.mod / "chat_commands.jsonl"))
             trace_offset = len(rows(self.trace_file))
             self.report["traceOffset"] = trace_offset
             await self.request("open-conversation")
@@ -285,7 +259,7 @@ class Runner:
                     await self.request("close")
                     guidance_sent = True
                     self.report["guidanceSentAt"] = time.time()
-                terminal = self.terminal(instruction, command_offset, trace_offset)
+                terminal = self.terminal(instruction, trace_offset)
                 if terminal:
                     break
                 await asyncio.sleep(1)
@@ -308,7 +282,7 @@ class Runner:
                 followup = None
                 while time.monotonic() < deadline:
                     await self.native()
-                    followup = self.terminal(spec["then"], command_offset, trace_offset)
+                    followup = self.terminal(spec["then"], trace_offset)
                     if followup:
                         break
                     await asyncio.sleep(1)
@@ -322,11 +296,8 @@ class Runner:
                 checks["rested_to_target"] = any(s.get("companionOnRealBed") is True for s in self.samples) and any((s.get("companionStamina") or 0) >= 80 for s in self.samples)
                 checks["worked_before_full_recovery"] = (after.get("companionStamina") or 0) < 100
             backend = self.report["backend"] or {}
-            if self.api_runtime:
-                checks["configured_model_round_completed"] = all(terminal.get(key) == backend.get(key) and terminal.get(key)
-                    for key in ("provider", "model")) and terminal.get("status") == "completed"
-            else:
-                checks["real_mcode_round_completed"] = terminal.get("provider") == "mcode" and terminal.get("status") == "completed"
+            checks["configured_model_round_completed"] = all(terminal.get(key) == backend.get(key) and terminal.get(key)
+                for key in ("provider", "model")) and terminal.get("status") == "completed"
             trace = rows(self.trace_file)[trace_offset:]
             summary = summarize_trace(trace)
             self.report["traceSummary"] = summary
@@ -338,12 +309,11 @@ class Runner:
                 checks["no_unrequested_clearing"] = self.report["extraClearingCalls"] == 0
             if spec.get("duringAction"):
                 delivered = any(row.get("type") == "player-update" and row["payload"].get("text") == spec["duringAction"]
-                                and row["payload"].get("turnId") == terminal.get("turnId") for row in trace) if self.api_runtime else any(
-                    spec["duringAction"] in json.dumps(c.get("result"), ensure_ascii=False) for c in summary["toolCalls"])
+                                and row["payload"].get("turnId") == terminal.get("turnId") for row in trace)
                 checks["player_message_delivered_at_tool_boundary"] = guidance_sent and delivered
             operations = {"water_auto", "water_zone", "water_tiles", "refill_watering_can", "harvest_auto", "harvest_crop", "chop_tree",
                           "pickup_items", "deposit_to_chest", "withdraw_from_chest", "ship_items", "rest", "navigate_to"}
-            actions = [c for c in summary["toolCalls"] if (c["name"] == "submit_work" if self.api_runtime else str(c["name"]).endswith("__submit_work"))
+            actions = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
                        and operations.intersection((c.get("input") or {}).get("action") or {})]
             checks["real_action_tools_observed"] = any(not c["error"] and isinstance(c["result"], dict) for c in actions)
             checks["action_calls_returned_terminal_results"] = bool(actions) and all(
@@ -384,13 +354,13 @@ class Runner:
         return 0 if self.report["status"] == "passed" else 1
 
 
-async def run_suite(run, cases, timeout, cases_file, api_runtime=False, simulated=False):
+async def run_suite(run, cases, timeout, cases_file, simulated=False):
     import shutil
     reports = []
     try:
         for index, case in enumerate(cases):
             runner = Runner(run, case, timeout, cases_file, keep_open=True, reset_fixture=index > 0,
-                            api_runtime=api_runtime, simulated=simulated)
+                            simulated=simulated)
             code = await runner.execute()
             reports.append(runner.report)
             folder = run / "evidence" / case
@@ -404,7 +374,7 @@ async def run_suite(run, cases, timeout, cases_file, api_runtime=False, simulate
     finally:
         success = len(reports) == len(cases) and all(r["status"] == "passed" for r in reports)
         write(run / "evidence/free-mode-control-done.json", {"success": success})
-        mode = "模拟 API" if simulated else "厂商 API" if api_runtime else "旧版客户端"
+        mode = "模拟 API" if simulated else "厂商 API"
         lines = [f"- {r['case']}: {r['status']} ({r['elapsedSeconds']} 秒)" for r in reports]
         lines.extend(f"- {case}：未执行" for case in cases[len(reports):])
         (run / "summary.md").write_text(f"# 伙伴实机回归 · {mode}\n\n一次启动、同一存档和会话，场景间只重置测试布置。\n\n"
@@ -419,12 +389,9 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--cases-file", type=Path, help="Frozen suite definitions")
     parser.add_argument("--suite", nargs="+")
-    parser.add_argument("--api-runtime", action="store_true")
     parser.add_argument("--simulated", action="store_true")
     args = parser.parse_args()
-    if args.simulated and not args.api_runtime:
-        parser.error("--simulated requires --api-runtime")
     raise SystemExit(asyncio.run(
-        run_suite(args.run_dir, args.suite, args.timeout, args.cases_file, args.api_runtime, args.simulated) if args.suite
+        run_suite(args.run_dir, args.suite, args.timeout, args.cases_file, args.simulated) if args.suite
         else Runner(args.run_dir, args.case, args.timeout, args.cases_file,
-                    api_runtime=args.api_runtime, simulated=args.simulated).execute()))
+                    simulated=args.simulated).execute()))

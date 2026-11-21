@@ -20,7 +20,7 @@ public class HandshakeObservationOrderingTests
         await client.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Port}/"), deadline.Token);
         // A native observation from the independent life channel can arrive here.
         await server.SendSnapshotAsync(handler.CaptureCurrentSnapshot(7), 7);
-        var hello = Encoding.UTF8.GetBytes("{\"protocolVersion\":\"0.1\",\"messageType\":\"runtime.hello\",\"messageId\":\"hello\",\"senderInstanceId\":\"test\",\"sequenceNumber\":0,\"worldRevision\":1,\"sentAt\":\"2026-10-07T00:00:00Z\",\"payload\":{\"runtimeVersion\":\"test\",\"supportedProtocolVersions\":[\"0.1\"]}}");
+        var hello = Encoding.UTF8.GetBytes("{\"protocolVersion\":\"2\",\"messageType\":\"runtime.hello\",\"messageId\":\"hello\",\"senderInstanceId\":\"test\",\"sequenceNumber\":0,\"worldRevision\":1,\"sentAt\":\"2026-10-07T00:00:00Z\",\"payload\":{\"runtimeVersion\":\"test\",\"supportedProtocolVersions\":[\"2\"]}}");
         await client.SendAsync(new ArraySegment<byte>(hello), WebSocketMessageType.Text, true, deadline.Token);
         byte[] buffer = new byte[8192];
         var first = await client.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);

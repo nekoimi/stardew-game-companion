@@ -30,7 +30,7 @@ public sealed class DiscoveryService
     /// <summary>
     /// Publishes discovery file for external runtime without logging secret token.
     /// </summary>
-    public void Publish(string saveId, string gameSessionId, int port, string sessionToken, string protocolVersion = "0.1")
+    public void Publish(string saveId, string gameSessionId, int port, string sessionToken, string protocolVersion = "2")
     {
         lock (_lock)
         {

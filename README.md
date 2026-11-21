@@ -7,15 +7,13 @@
 
 [下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases) · [使用指南](docs/desktop-portable.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
-API 绿色候选内置 Node 和 Pi 模型 SDK，可填写 DeepSeek 或 OpenAI 官方 API Key，也支持填写第三方 OpenAI Responses 的 Base URL、API Key 和模型 ID。启动前可测试模型的工具调用和回执处理，断线后可在桌面核对旧动作再继续派工。[候选包使用说明](docs/desktop-api-preview.md) · [改造方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)
+## 快速开始
 
-## 已发布版本的快速开始
+1. 准备 Windows x64、《星露谷物语》和 SMAPI。[SMAPI](https://smapi.io/)
+2. 完整解压绿色包，双击根目录的 **星露谷游戏伴侣.exe**。桌面运行库和 Node 随包提供。
+3. 在「设置」选择游戏目录、玩法及模型，填写 API Key 后点击「测试连接」。再点击「启动游戏」，进入单人存档后在桌面「今天」发送指令。
 
-1. 准备 Windows x64、《星露谷物语》、[SMAPI](https://smapi.io/) 和已登录的模型客户端。项目的游戏和 SMAPI 基线为 1.6.15 和 4.2.1。
-2. 完整解压 Release 中的 `StardewGameCompanion-版本号-windows-x64.zip`，双击根目录的 **星露谷游戏伴侣.exe**。桌面运行库已打包到 EXE 中，Python 和配套 Mod 位于 `Mods/`，更新日志和许可在 `docs/`。
-3. 在左侧「设置」选择游戏目录、游玩方式和伙伴来源，再点击「启动游戏」。进入单人存档后，回到桌面「今天」发送第一条要求。
-
-若 Releases 中还没有绿色包，可[从源码构建](CONTRIBUTING.md#从源码构建)。旧安装的数据可在「设置 → 从原安装导入」迁移。
+可从源码构建 Windows 绿色包，旧版可保存在独立目录用于回退。[构建说明](CONTRIBUTING.md#从源码构建)
 
 关闭窗口时可选「最小化到托盘」，让伴侣继续运行。双击 Windows 通知区域的伴侣图标可重新打开窗口。
 
@@ -30,21 +28,21 @@ API 绿色候选内置 Node 和 Pi 模型 SDK，可填写 DeepSeek 或 OpenAI �
 
 目前主要支持单人农场协作，包括种植、收获、动物照料、加工、仓储和部分布局施工。社区中心献祭由玩家提交。[农场工作与施工范围](docs/farm-projects.md)
 
-API 候选版会在收获和清障后查看附近的可拾取物和背包，伙伴据此安排剩余工作。[API 候选版使用说明](docs/desktop-api-preview.md)
+伙伴会根据收获和清障后的掉落物、背包和原生回执安排剩余工作。
 
 ## 模型与数据
 
-支持 Pi、DeepSeek（dsh）、Codex 和 MiniMax Code，可在 GUI 配置模型与推理档位，也可接续选定的 MiniMax Code 原会话。模型客户端自行安装与登录，订阅或 API 用量按所选服务计费。
+支持 DeepSeek 官方、OpenAI 官方和第三方 OpenAI Responses。第三方网关需要 Base URL、API Key 和模型 ID，桌面可以检测流式工具调用和回执。模型用量按所选服务计费。
 
-存档由游戏保存，桌面设置写入绿色包的 `data/desktop-settings.json`，伙伴数据随绿色包保存。运行时会向玩家选用的模型发送聊天、相关游戏状态和工具结果。[后端验证范围](docs/tested-backends.md)
+存档由游戏保存，伙伴资料与聊天按存档写入绿色包的 `data/companion.sqlite`，API Key 由 Windows 凭据管理器保管。运行时会向所选模型发送聊天、相关游戏状态和工具结果。[使用指南](docs/desktop-portable.md)
 
 ## 开发与贡献
 
-桌面使用 C# / WPF，模型适配、会话和任务管理由 Python 运行时处理，SMAPI Mod 负责读取游戏状态和执行原生动作。欢迎提交可复现的问题报告、修复和验证结果。
+桌面使用 C# / WPF，TypeScript 运行时负责模型接入、伙伴数据和任务调度，SMAPI Mod 负责读取游戏状态和执行原生动作。欢迎提交可复现的问题报告、修复和验证结果。
 
 [参与开发](CONTRIBUTING.md) · [文档索引](docs/README.md) · [通信协议](contracts/game-bridge/README.md) · [隔离实机回归](docs/repeatable-companion-acceptance.md)
 
-`apps/` 分别存放 Windows 桌面程序、共享 Python 运行时和 SMAPI Mod。协议位于 `contracts/`，游戏提示词与技能位于 `resources/agent/`。[架构实施方案](docs/development/architecture-refactor.md) · [重构 TODO](docs/development/architecture-refactor-todo.md)
+`apps/` 存放 Windows 桌面程序、共享 TypeScript 运行时和 SMAPI Mod。协议位于 `contracts/`，游戏提示词与指导位于 `resources/agent/prompts/`。[架构方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)
 
 ## 许可与致谢
 

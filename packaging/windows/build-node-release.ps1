@@ -22,12 +22,12 @@ if ($LASTEXITCODE) { throw 'Desktop publish failed.' }
 $game = (Resolve-Path -LiteralPath $GamePath).Path
 & $DotNet build (Join-Path $repository 'apps/game-mod/src') -c Release -o $mod "-p:StardewGamePath=$game"
 if ($LASTEXITCODE) { throw 'Mod build failed.' }
-$built = & (Join-Path $PSScriptRoot 'build-node-preview.ps1') -Output $payload -DesktopSource $desktop -ModSource $mod -Cache $Cache
+$built = & (Join-Path $PSScriptRoot 'stage-windows-release.ps1') -Output $payload -DesktopSource $desktop -ModSource $mod -Cache $Cache
 $built | Write-Output
 $root = $built[-1]
 
 $version = (Get-Content -LiteralPath (Join-Path $mod 'manifest.json') -Raw | ConvertFrom-Json).Version
-$archive = Join-Path $destination "StardewGameCompanion-$version-api-preview-windows-x64.zip"
+$archive = Join-Path $destination "StardewGameCompanion-$version-windows-x64.zip"
 [IO.Compression.ZipFile]::CreateFromDirectory($root, $archive, [IO.Compression.CompressionLevel]::Optimal, $false)
 & (Join-Path $PSScriptRoot 'verify-node-release.ps1') -Archive $archive
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()

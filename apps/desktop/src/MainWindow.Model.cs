@@ -11,7 +11,6 @@ public sealed record ApiModelOption(string Id, string Name, string[] Reasoning);
 
 public partial class MainWindow
 {
-    private bool NodeRuntime => DesktopInstallation.UsesNode(_root);
     private bool _testingModel;
     private bool UsesCompatibleResponses => ApiProvider.SelectedValue as string == ApiModelSettings.CompatibleProvider;
     private ApiModelSettings ApiSelection() => UsesCompatibleResponses
@@ -46,9 +45,6 @@ public partial class MainWindow
 
     private void InitializeApiModel(ApiModelSettings settings, ApiModelSettings? compatible)
     {
-        if (!NodeRuntime) return;
-        PartnerSourceLabel.Visibility = PartnerSource.Visibility = BuiltinFields.Visibility = LegacyImportFields.Visibility = Visibility.Collapsed;
-        ApiModelFields.Visibility = Visibility.Visible;
         try
         {
             var file = Path.Combine(_root, "runtime", "models.json");
@@ -142,7 +138,7 @@ public partial class MainWindow
 
     private async void TestModelClicked(object sender, RoutedEventArgs e)
     {
-        if (!NodeRuntime || _testingModel || _closing) return;
+        if (_testingModel || _closing) return;
         _testingModel = true;
         RefreshControls();
         try
@@ -161,7 +157,7 @@ public partial class MainWindow
 
     private async void ApplyModelClicked(object sender, RoutedEventArgs e)
     {
-        if (!NodeRuntime || _testingModel || _closing || _session is not { } session) return;
+        if (_testingModel || _closing || _session is not { } session) return;
         _testingModel = true;
         RefreshControls();
         try

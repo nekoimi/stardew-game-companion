@@ -34,7 +34,7 @@ public class BoundedMessageQueueTests
         }
 
         return new EnvelopeDto(
-            ProtocolVersion: "0.1",
+            ProtocolVersion: AgentProtocol.Version,
             MessageType: messageType,
             MessageId: messageId,
             SenderInstanceId: "sender-1",

@@ -106,11 +106,6 @@ MagicMock/
 /tools/dev/*
 !/tools/dev/bootstrap-dotnet.ps1
 !/tools/dev/build-mod.ps1
-!/tools/dev/candidate-package.ps1
 !/tools/dev/detect-game.ps1
 !/tools/dev/preflight.ps1
-!/tools/dev/register-mcp.ps1
-!/tools/dev/setup-companion.ps1
-!/tools/dev/start-companion.ps1
-!/tools/dev/templates/
 !/tools/dev/test.ps1

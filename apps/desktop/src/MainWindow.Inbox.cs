@@ -142,7 +142,7 @@ public partial class MainWindow
         RefreshInboxControls(true);
         try
         {
-            await session.PostAsync("/v1/milestones", new { gameSessionId = game, saveId = _saveId, action, nodeId = item.Id, updatedAt = item.UpdatedAt });
+            await session.PostAsync("/v2/milestones", new { gameSessionId = game, saveId = _saveId, action, nodeId = item.Id, updatedAt = item.UpdatedAt });
             if (view == _saveViewGeneration) MilestoneStatus.Text = action == "adopt" ? "计划已采纳。" : "计划已暂缓。";
         }
         catch (Exception ex) { if (view == _saveViewGeneration) MilestoneStatus.Text = ex.Message; }
@@ -213,8 +213,8 @@ public partial class MainWindow
         RefreshInboxControls(true);
         try
         {
-            if (readId is not null) await session.PostAsync("/v1/messages", new { gameSessionId = game, saveId = _saveId, readId });
-            var page = await session.PostAsync("/v1/messages", new { gameSessionId = game, saveId = _saveId, before });
+            if (readId is not null) await session.PostAsync("/v2/messages", new { gameSessionId = game, saveId = _saveId, readId });
+            var page = await session.PostAsync("/v2/messages", new { gameSessionId = game, saveId = _saveId, before });
             if (view != _saveViewGeneration) return;
             var entries = Rows(page, "entries").Select(row =>
             {
@@ -257,7 +257,7 @@ public partial class MainWindow
         RefreshInboxControls(true);
         try
         {
-            await session.PostAsync("/v1/notices", new { gameSessionId = game, saveId = _saveId, action, noticeId = decision.Id });
+            await session.PostAsync("/v2/notices", new { gameSessionId = game, saveId = _saveId, action, noticeId = decision.Id });
             if (view == _saveViewGeneration) feedback.Text = action == "dismiss"
                 ? "已关闭，可在「伙伴消息」恢复。" : "已恢复，可返回「今天」回复。";
         }

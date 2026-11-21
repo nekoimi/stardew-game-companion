@@ -58,14 +58,12 @@ public sealed partial class ModEntry
     /// </summary>
     private void OpenLifeMenu()
     {
-        TryAutoStartChatBridge();
         if (_lifeMenuUiState.IsOnboarded || _lifeMenuUiState.IsSkipped) OpenCompanionConversation();
         else GetCompanionDialogue().Open();
     }
 
     private void OpenLifeDirections()
     {
-        TryAutoStartChatBridge();
         GetCompanionDialogue().OpenDirections();
     }
 
@@ -91,8 +89,7 @@ public sealed partial class ModEntry
                 !_chatUiState.HasActiveCommand && !_chatUiState.HasPendingControl &&
                 !_lifeMenuUiState.IsChatPending && (_coordinator == null || _coordinator.GetActivityStatus() == "idle"),
             OpenTaskPanel, GetBridgeConnectionProblem, OpenCompanionConversation,
-            () => OpenCompanionHub(0), () => OpenCompanionHub(2), () => OpenCompanionReplyInput(null),
-            () => _config.ConnectionSource == "external");
+            () => OpenCompanionHub(0), () => OpenCompanionHub(2), () => OpenCompanionReplyInput(null));
         return _companionDialogue;
     }
 
@@ -189,15 +186,8 @@ public sealed partial class ModEntry
     /// </summary>
     private void OpenSetupMenu()
     {
-        if (_config.ConnectionSource == "external")
-        {
-            Game1.activeClickableMenu = new CompanionOptionsMenu("已有 AI 伙伴",
-                "姓名、性格与关系沿用原会话。想调整称呼或交流方式，可以在聊天中告诉原伙伴。",
-                OpenGameSettings, ("打开聊天", OpenCompanionConversation), ("接入设置", OpenConnectionSelection));
-            return;
-        }
         Game1.activeClickableMenu = new CompanionSetupMenu(
-            companionName: _lifeMenuUiState.ProfileCompanionName,
+            companionName: _lifeMenuUiState.CompanionName,
             playStyle: _lifeMenuUiState.PlayStyle,
             personality: _lifeMenuUiState.Personality,
             careFrequency: _lifeMenuUiState.CareFrequency,
@@ -252,11 +242,8 @@ public sealed partial class ModEntry
         }
         if (_transportServer == null || !_transportServer.IsChatConnected)
         {
-            TryAutoStartChatBridge();
-            return Reject("消息尚未发送：伙伴服务正在连接，原文已保留。");
+                return Reject("消息尚未发送：伙伴服务正在连接，原文已保留。");
         }
-        if (_connectionState.IsSwitching)
-            return Reject("消息尚未发送：正在切换伙伴连接，原文已保留。");
         if (_coordinator == null || _observer == null)
             return Reject("消息尚未发送：请等待存档载入，原文已保留。");
         if (string.IsNullOrWhiteSpace(text)) return Reject("请先输入要对伙伴说的话。");

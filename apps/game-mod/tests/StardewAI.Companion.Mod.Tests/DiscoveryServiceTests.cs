@@ -44,7 +44,7 @@ public class DiscoveryServiceTests : IDisposable
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        Assert.Equal("0.1", root.GetProperty("protocolVersion").GetString());
+        Assert.Equal("2", root.GetProperty("protocolVersion").GetString());
         Assert.Equal("ws://127.0.0.1:54321/", root.GetProperty("endpoint").GetString());
         Assert.Equal("127.0.0.1", root.GetProperty("host").GetString());
         Assert.Equal(54321, root.GetProperty("port").GetInt32());

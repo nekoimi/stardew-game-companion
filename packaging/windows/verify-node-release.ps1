@@ -7,11 +7,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $entries = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::OrdinalIgnoreCase)
 $zip = $null
+$allowed = '^(星露谷游戏伴侣\.exe|release-manifest\.json|docs/(LICENSE|NOTICE|CHANGELOG\.md|desktop-portable\.md|DotNet-(LICENSE|ThirdPartyNotices)\.txt)|runtime/(node\.exe|models\.json|package(-lock)?\.json|licenses/(node/LICENSE|npm\.json)|(dist|node_modules)/.+)|Mods/StardewAI\.Companion\.Mod/(manifest\.json|StardewAI\.Companion\.Mod\.(dll|deps\.json)|docs/(agent-ts-instructions\.md|agent-guidance/[a-z-]+\.md)))$'
 
 function Add-ReleaseEntry([string]$Name, $Entry) {
     if ($Name -match '(^/|\\|:|(^|/)\.\.?(/|$)|//)' -or
-        $Name -notmatch '^(星露谷游戏伴侣\.exe$|release-manifest\.json$|docs/|runtime/|Mods/StardewAI\.Companion\.Mod/)' -or
-        $Name -match '^Mods/StardewAI\.Companion\.Mod/(data/|config(?:/|\.json$))|(^|/)(\.git|\.env)(/|\.|$)|\.(py|pyc|pdb|sqlite|pem|key)$') {
+        $Name -notmatch $allowed -or
+        $Name -match '(^|/)(\.git|\.env)(/|\.|$)|\.(py|pyc|pdb|sqlite|pem|key)$') {
         throw "Unexpected release path: $Name"
     }
     if (!$entries.TryAdd($Name, $Entry)) { throw "Duplicate release path: $Name" }
@@ -42,10 +43,11 @@ try {
         $source = 'extracted release'
     }
     foreach ($required in @('星露谷游戏伴侣.exe', 'release-manifest.json', 'docs/LICENSE', 'docs/NOTICE',
-        'docs/DotNet-LICENSE.txt', 'docs/DotNet-ThirdPartyNotices.txt', 'docs/desktop-api-preview.md', 'runtime/node.exe',
+        'docs/DotNet-LICENSE.txt', 'docs/DotNet-ThirdPartyNotices.txt', 'docs/desktop-portable.md', 'docs/CHANGELOG.md', 'runtime/node.exe',
         'runtime/dist/bootstrap.js', 'runtime/models.json', 'runtime/licenses/node/LICENSE',
         'runtime/licenses/npm.json', 'runtime/package-lock.json', 'Mods/StardewAI.Companion.Mod/manifest.json',
-        'Mods/StardewAI.Companion.Mod/StardewAI.Companion.Mod.dll', 'Mods/StardewAI.Companion.Mod/docs/agent-ts-instructions.md')) {
+        'Mods/StardewAI.Companion.Mod/StardewAI.Companion.Mod.dll', 'Mods/StardewAI.Companion.Mod/docs/agent-ts-instructions.md',
+        'Mods/StardewAI.Companion.Mod/docs/agent-guidance/execution.md')) {
         if (!$entries.ContainsKey($required)) { throw "Missing release file: $required" }
     }
     $reader = [IO.StreamReader]::new((Open-ReleaseEntry $entries['release-manifest.json']))

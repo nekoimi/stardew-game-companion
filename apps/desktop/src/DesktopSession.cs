@@ -43,14 +43,12 @@ internal sealed class DesktopSession
             var gameDirectory = Path.GetFullPath(settings.GameDirectory);
             if (!DesktopInstallation.IsGameDirectory(gameDirectory))
                 throw new FileNotFoundException("请选择包含星露谷和 StardewModdingAPI.exe 的游戏目录。");
-            string python = DesktopInstallation.ResolveRuntime(_root);
+            string node = DesktopInstallation.ResolveRuntime(_root);
             _packageLease = DesktopInstallation.AcquirePackageLease(_root);
-            if (!DesktopInstallation.UsesNode(_root) && DesktopInstallation.ImportPending(_root))
-                throw new InvalidOperationException("请在「设置」完成上次导入后再启动游戏。");
             DesktopInstallation.ConfigureGame(_root, settings);
 
             _settings = settings;
-            await StartRuntimeAsync(python, settings);
+            await StartRuntimeAsync(node, settings);
             _lifetime.Token.ThrowIfCancellationRequested();
             if (!_processes.RuntimeRunning)
                 throw new InvalidOperationException("伴侣服务提前退出，请查看诊断。");
@@ -77,20 +75,17 @@ internal sealed class DesktopSession
         finally { _lifecycle.Release(); }
     }
 
-    private async Task StartRuntimeAsync(string python, DesktopSettings settings)
+    private async Task StartRuntimeAsync(string node, DesktopSettings settings)
     {
         var generation = ++_runtimeGeneration;
         _runtimeLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         var token = _runtimeLifetime.Token;
-        var endpoint = await _processes.StartRuntimeAsync(python, settings, generation, token);
+        var endpoint = await _processes.StartRuntimeAsync(node, generation, token);
         token.ThrowIfCancellationRequested();
         _api = new DesktopRuntimeApi(endpoint, token);
-        if (endpoint.Node)
-        {
-            var selected = settings.ApiModel ?? new();
-            string key = ModelCredential.Read(_root, selected);
-            await _api.PostAsync("/v2/model/configure", ModelRequest(selected, key));
-        }
+        var selected = settings.ApiModel ?? new();
+        string key = ModelCredential.Read(_root, selected);
+        await _api.PostAsync("/v2/model/configure", ModelRequest(selected, key));
         _api.StartEvents(message => EventReceived?.Invoke(generation, message),
             () => generation == _runtimeGeneration && _processes.RuntimeRunning, _log);
     }
@@ -104,7 +99,7 @@ internal sealed class DesktopSession
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         try
         {
-            var endpoint = await processes.StartRuntimeAsync(DesktopInstallation.ResolveRuntime(root), new(), 0, cancellation.Token, modelTestOnly: true);
+            var endpoint = await processes.StartRuntimeAsync(DesktopInstallation.ResolveRuntime(root), 0, cancellation.Token, modelTestOnly: true);
             using var api = new DesktopRuntimeApi(endpoint, cancellation.Token);
             await api.PostAsync("/v2/model/test", ModelRequest(selected, key), timeoutSeconds: 40);
         }
