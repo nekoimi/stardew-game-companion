@@ -150,7 +150,7 @@
             </Setter.Value>
         </Setter>
     </Style>
-    <Style x:Key="SettingsTabsStyle" TargetType="TabControl">
+    <Style x:Key="SectionTabs" TargetType="TabControl">
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabControl">
@@ -168,7 +168,7 @@
             </Setter.Value>
         </Setter>
     </Style>
-    <Style x:Key="SettingsTab" TargetType="TabItem">
+    <Style x:Key="SectionTab" TargetType="TabItem">
         <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
         <Setter Property="Padding" Value="14,6" />
         <Setter Property="Cursor" Value="Hand" />

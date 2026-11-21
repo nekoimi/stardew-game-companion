@@ -273,9 +273,9 @@
                 </DockPanel>
             </TabItem>
             <TabItem x:Name="MessagesPage" Header="伙伴消息" Tag="&#xE715;" Style="{StaticResource RoomPage}">
-                <TabControl x:Name="MessageViews" Padding="8" SelectionChanged="SaveViewSelected">
-                    <TabItem x:Name="CarePage" Header="提醒">
-                        <DockPanel>
+                <TabControl x:Name="MessageViews" Style="{StaticResource SectionTabs}" SelectionChanged="SaveViewSelected">
+                    <TabItem x:Name="CarePage" Header="提醒" Style="{StaticResource SectionTab}">
+                        <DockPanel Margin="8,16,8,8">
                             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                 <Button x:Name="RefreshMessagesButton" Content="刷新提醒" Click="RefreshMessagesClicked" />
                                 <Button x:Name="OlderMessagesButton" Content="查看更早消息" Click="OlderMessagesClicked" />
@@ -297,8 +297,8 @@
                             </ListBox>
                         </DockPanel>
                     </TabItem>
-                    <TabItem Header="已关闭事项">
-                        <DockPanel>
+                    <TabItem Header="已关闭事项" Style="{StaticResource SectionTab}">
+                        <DockPanel Margin="8,16,8,8">
                             <TextBlock x:Name="ClosedDecisionStatus" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" />
                             <Button x:Name="RestoreDecisionButton" Content="恢复所选事项" DockPanel.Dock="Bottom" Click="RestoreDecisionClicked"
                                     HorizontalAlignment="Left" Margin="0,8,0,0" />
@@ -353,8 +353,8 @@
                 </Grid>
             </TabItem>
             <TabItem x:Name="SettingsPage" Header="设置" Tag="&#xE713;" Style="{StaticResource RoomPage}">
-                <TabControl x:Name="SettingsTabs" Style="{StaticResource SettingsTabsStyle}" SelectionChanged="SaveViewSelected">
-                    <TabItem x:Name="LaunchSettingsTab" Header="游戏启动" Style="{StaticResource SettingsTab}">
+                <TabControl x:Name="SettingsTabs" Style="{StaticResource SectionTabs}" SelectionChanged="SaveViewSelected">
+                    <TabItem x:Name="LaunchSettingsTab" Header="游戏启动" Style="{StaticResource SectionTab}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel x:Name="SettingsFields" Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock Text="游戏目录" FontWeight="SemiBold" Margin="0,0,0,6" />
@@ -380,7 +380,7 @@
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
-                    <TabItem x:Name="ModelSettingsTab" Header="模型连接" Style="{StaticResource SettingsTab}">
+                    <TabItem x:Name="ModelSettingsTab" Header="模型连接" Style="{StaticResource SectionTab}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel x:Name="ApiModelFields" Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock Text="模型服务商" FontWeight="SemiBold" Margin="0,0,0,6" />
@@ -430,7 +430,7 @@
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
-                    <TabItem x:Name="ProfileSettingsTab" Header="存档偏好" Style="{StaticResource SettingsTab}">
+                    <TabItem x:Name="ProfileSettingsTab" Header="存档偏好" Style="{StaticResource SectionTab}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
