@@ -567,15 +567,26 @@ try {
         }
         foreach ($key in 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'NODE_OPTIONS') { $psi.EnvironmentVariables.Remove($key) }
         $psi.EnvironmentVariables['STARDEW_AGENT_PROTOCOL'] = '2'
-        Write-Utf8File (Join-Path $runEvidenceDir 'package-manifest.sha256') (
-            (Get-FileHash -LiteralPath (Join-Path $FrozenProdDir 'release-manifest.json')).Hash.ToLowerInvariant())
+        $versions = [ordered]@{
+            gameVersion = (Get-Item -LiteralPath (Join-Path $gamePath 'Stardew Valley.dll')).VersionInfo.FileVersion
+            smapiVersion = (Get-Item -LiteralPath (Join-Path $gamePath 'StardewModdingAPI.dll')).VersionInfo.FileVersion
+            modVersion = (Get-Content -LiteralPath (Join-Path $prodDest 'manifest.json') -Raw | ConvertFrom-Json).Version
+            packageManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $FrozenProdDir 'release-manifest.json')).Hash.ToLowerInvariant()
+        }
+        Write-Utf8File (Join-Path $runEvidenceDir 'agent-package.json') ($versions | ConvertTo-Json -Compress)
         $apiHost = [Diagnostics.Process]::Start($runtimeHost)
         $readyFile = Join-Path $runEvidenceDir 'agent-runtime-ready.json'
-        $readyDeadline = [DateTime]::UtcNow.AddSeconds(35)
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(60)
         while (!(Test-Path -LiteralPath $readyFile) -and !$apiHost.HasExited -and [DateTime]::UtcNow -lt $readyDeadline) {
             Start-Sleep -Milliseconds 100
         }
-        if (!(Test-Path -LiteralPath $readyFile) -or $apiHost.HasExited) { throw 'API runtime did not become ready.' }
+        if (!(Test-Path -LiteralPath $readyFile) -or $apiHost.HasExited) {
+            $failure = Join-Path $runEvidenceDir 'agent-startup-error.json'
+            if (!(Test-Path -LiteralPath $failure)) {
+                Write-Utf8File $failure '{"error":"API runtime did not become ready."}'
+            }
+            throw 'API runtime did not become ready.'
+        }
     }
 
     Write-Host "Launching process: $($psi.FileName) $($psi.Arguments)"

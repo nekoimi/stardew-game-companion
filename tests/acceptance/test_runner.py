@@ -3,6 +3,8 @@ import importlib.util
 import asyncio
 from pathlib import Path
 
+import pytest
+
 spec = importlib.util.spec_from_file_location("preset_runner", Path(__file__).with_name("runner.py"))
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
@@ -44,6 +46,14 @@ def test_trace_retains_tool_failures_and_nonterminal_results():
     assert summary["toolCalls"][0]["nonterminal"]
 
 
+def test_api_startup_failure_surfaces_before_game_ready(tmp_path):
+    case = runner.Runner(tmp_path, "care-guidance", 60, api_runtime=True)
+    message = "Model test failed for deepseek/deepseek-flash (authentication)."
+    runner.write(case.evidence / "agent-startup-error.json", {"error": message})
+    with pytest.raises(RuntimeError, match="authentication"):
+        asyncio.run(case.wait(lambda: None, "No isolated game", timeout=0.1))
+
+
 def test_suite_keeps_game_open_and_preserves_failed_scene(tmp_path, monkeypatch):
     calls = []
     evidence = tmp_path / "evidence"
@@ -66,3 +76,4 @@ def test_suite_keeps_game_open_and_preserves_failed_scene(tmp_path, monkeypatch)
                      ("harvest", {"keep_open": True, "reset_fixture": True, "api_runtime": False})]
     assert (evidence / "care/preset-report.md").read_text() == "care"
     assert runner.read(evidence / "free-mode-control-done.json") == {"success": False}
+    assert "rest：未执行" in (tmp_path / "summary.md").read_text(encoding="utf-8")

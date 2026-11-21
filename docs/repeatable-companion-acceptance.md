@@ -20,4 +20,4 @@
 
 正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。用 `-Provider openai -Model gpt-5-mini` 可切换到 OpenAI，用 `-Simulated` 可运行本地 DeepSeek 测试服务。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
 
-每组结果在同一运行目录的 `evidence/<场景名>/`；总结果在 `.test-runs/presets-*/summary.md`，保留状态采样、trace、版本哈希和失败原因。缺少证据不能通过。画面观感、选项跨天、读档与执行中退出需单独验收，不由三组成功推定通过。
+每组结果在同一运行目录的 `evidence/<场景名>/`，总结果在 `.test-runs/presets-*/summary.md`。API 运行在启动游戏前测试模型工具调用，报告保留所用服务商、模型、游戏和 SMAPI 版本、包清单哈希、自然语言指令、状态采样和失败原因。画面观感、选项跨天、读档与执行中退出需单独核对。

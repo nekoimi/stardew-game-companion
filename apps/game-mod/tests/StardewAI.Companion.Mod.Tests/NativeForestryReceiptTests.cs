@@ -7,6 +7,7 @@ using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.Execution;
 using StardewAI.Companion.Mod.Navigation;
 using StardewValley;
+using StardewValley.Network;
 using StardewValley.TerrainFeatures;
 using StardewValley.Tools;
 using Xunit;
@@ -28,8 +29,6 @@ public sealed class NativeForestryReceiptTests
         return false;
     }
 
-    private static bool NotHostPaused(ref bool __result) { __result = false; return false; }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -39,13 +38,15 @@ public sealed class NativeForestryReceiptTests
         var harmony = new Harmony("StardewAI.Tests.MixedPickupReceipt");
         var collect = AccessTools.Method(typeof(Debris), nameof(Debris.collect), new[] { typeof(Farmer), typeof(Chunk) });
         harmony.Patch(collect, prefix: new HarmonyMethod(typeof(NativeForestryReceiptTests), nameof(AcceptCollection)));
-        var hostPaused = AccessTools.PropertyGetter(typeof(Game1), nameof(Game1.HostPaused));
-        harmony.Patch(hostPaused, prefix: new HarmonyMethod(typeof(NativeForestryReceiptTests), nameof(NotHostPaused)));
         var oldPlayer = Game1.player;
+        var oldWorldState = Game1.netWorldState;
         var playerField = AccessTools.GetDeclaredFields(typeof(Game1)).Single(field => field.FieldType == typeof(Farmer));
         var game = AccessTools.Field(typeof(Game1), "game1").GetValue(null);
         try
         {
+            // Reading a native drop position checks HostPaused. A real world
+            // state also works when the getter was inlined by an earlier test.
+            Game1.netWorldState = new NetRoot<NetWorldState>(new NetWorldState());
             collectionCalls = 0;
             refuseSecondCollection = rejectSecond;
             playerField.SetValue(game, ((IFarmerActor)world.Actor).GameFarmer);
@@ -98,8 +99,8 @@ public sealed class NativeForestryReceiptTests
         finally
         {
             playerField.SetValue(game, oldPlayer);
+            Game1.netWorldState = oldWorldState;
             harmony.Unpatch(collect, HarmonyPatchType.Prefix, harmony.Id);
-            harmony.Unpatch(hostPaused, HarmonyPatchType.Prefix, harmony.Id);
         }
     }
 

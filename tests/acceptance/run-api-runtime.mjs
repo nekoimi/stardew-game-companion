@@ -34,12 +34,23 @@ try {
     setTimeout(20_000, undefined, { ref: false })]);
   const endpoint = JSON.parse(handshake?.value ?? "{}");
   if (!Number.isInteger(endpoint.port) || endpoint.protocolVersion !== 2) throw new Error("No v2 runtime endpoint.");
-  const response = await fetch(`http://127.0.0.1:${endpoint.port}/v2/model/configure`, {
-    method: "POST", signal: AbortSignal.timeout(10_000),
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ selection: { provider, model }, apiKey }),
-  });
-  if (!response.ok) throw new Error("The v2 runtime refused the model configuration.");
+  const selection = JSON.stringify({ selection: { provider, model }, apiKey });
+  for (const [operation, timeout] of [["test", 25_000], ["configure", 10_000]]) {
+    const response = await fetch(`http://127.0.0.1:${endpoint.port}/v2/model/${operation}`, {
+      method: "POST", signal: AbortSignal.timeout(timeout),
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: selection,
+    });
+    const result = await response.json();
+    if (!response.ok || result.ready !== true || (operation === "test" && result.toolCalling !== true)) {
+      const category = new Set(["authentication", "model-unavailable", "rate-limited", "network",
+        "invalid-tool-response", "cancelled", "unsupported", "provider"]);
+      const reason = category.has(result.code) ? result.code : `HTTP ${response.status}`;
+      const message = `Model ${operation} failed for ${provider}/${model} (${reason}).`;
+      await writeFile(join(evidence, "agent-startup-error.json"), JSON.stringify({ error: message }));
+      throw new Error(message);
+    }
+  }
   await writeFile(join(evidence, "agent-runtime-ready.json"), JSON.stringify({ provider, model, simulated: mock }));
   process.exitCode = (await exited) === 0 ? 0 : 1;
 } finally {

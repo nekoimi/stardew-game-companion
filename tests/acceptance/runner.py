@@ -165,6 +165,10 @@ class Runner:
     async def wait(self, predicate, message, timeout=30):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if self.api_runtime:
+                startup_error = read(self.evidence / "agent-startup-error.json")
+                if startup_error and startup_error.get("error"):
+                    raise RuntimeError(startup_error["error"])
             value = predicate()
             if value:
                 return value
@@ -224,7 +228,10 @@ class Runner:
             self.report["modSha256"] = hashlib.sha256(dll.read_bytes()).hexdigest()
             if self.api_runtime:
                 self.report["backend"] = read(self.evidence / "agent-runtime-ready.json")
-                self.report["packageManifestSha256"] = (self.evidence / "package-manifest.sha256").read_text().strip()
+                package = read(self.evidence / "agent-package.json") or {}
+                if any(not package.get(key) for key in ("gameVersion", "smapiVersion", "modVersion", "packageManifestSha256")):
+                    raise RuntimeError("Missing package or game version evidence")
+                self.report.update(package)
             else:
                 self.report["backend"] = read(self.mod / "config" / "chat-backend.json")
             # Only normal chat/menu input; no test-side action dispatch.
@@ -240,6 +247,7 @@ class Runner:
                     raise RuntimeError("Observer did not arrive outside the task area; refuse a blocked or pre-collected fixture")
             instruction = spec["instruction"]
             self.report["instruction"] = instruction
+            self.report["followupInstructions"] = [spec[key] for key in ("duringAction", "then") if spec.get(key)]
             deadline = time.monotonic() + self.timeout
             while True:
                 ui = await self.request("snapshot")
@@ -389,8 +397,10 @@ async def run_suite(run, cases, timeout, cases_file, api_runtime=False):
         write(run / "evidence/free-mode-control-done.json", {"success": success})
         backend = reports[0].get("backend") or {} if reports else {}
         mode = "模拟 API" if backend.get("simulated") else "厂商 API" if api_runtime else "旧版客户端"
+        lines = [f"- {r['case']}: {r['status']} ({r['elapsedSeconds']} 秒)" for r in reports]
+        lines.extend(f"- {case}：未执行" for case in cases[len(reports):])
         (run / "summary.md").write_text(f"# 伙伴实机回归 · {mode}\n\n一次启动、同一存档和会话，场景间只重置测试布置。\n\n"
-            + "\n".join(f"- {r['case']}: {r['status']} ({r['elapsedSeconds']} 秒)" for r in reports), encoding="utf-8")
+            + "\n".join(lines) + "\n", encoding="utf-8")
     return 0 if success else 1
 
 
