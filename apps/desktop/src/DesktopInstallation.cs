@@ -1,15 +1,25 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace StardewAI.Companion.Desktop;
 
-internal sealed record ApiModelSettings(string Provider = "deepseek", string Model = "deepseek-flash", string Reasoning = "", string BaseUrl = "")
+internal sealed record ApiModelSettings(string Provider = "deepseek", string Model = "deepseek-flash",
+    string Reasoning = "", string BaseUrl = "",
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Protocol = null, bool Stream = true)
 {
-    internal const string CompatibleProvider = "openai-compatible";
-    internal string CredentialScope => Provider == CompatibleProvider ? $"{Provider}/{BaseUrl}" : Provider;
+    internal const string CustomProvider = "custom";
+    private const string LegacyProvider = "openai-compatible";
+    internal bool IsCustom => Provider == CustomProvider;
+    // Keep the original target for saved gateway credentials. The same endpoint
+    // may expose both OpenAI protocols and has one credential.
+    internal string CredentialScope => IsCustom ? $"{LegacyProvider}/{BaseUrl.Trim().TrimEnd('/')}" : Provider;
+
+    internal ApiModelSettings Upgrade() => Provider == LegacyProvider
+        ? this with { Provider = CustomProvider, Protocol = "responses" } : this;
 }
 internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "player",
     ApiModelSettings? ApiModel = null, ApiModelSettings? CompatibleResponses = null);
@@ -21,7 +31,8 @@ internal static class DesktopInstallation
     internal static DesktopSettings LoadSettings(string root)
     {
         var path = SettingsFile(root);
-        return File.Exists(path) ? JsonSerializer.Deserialize<DesktopSettings>(File.ReadAllText(path)) ?? new() : new();
+        var settings = File.Exists(path) ? JsonSerializer.Deserialize<DesktopSettings>(File.ReadAllText(path)) ?? new() : new();
+        return settings with { ApiModel = settings.ApiModel?.Upgrade(), CompatibleResponses = settings.CompatibleResponses?.Upgrade() };
     }
 
     internal static void SaveSettings(string root, DesktopSettings settings) => WriteJson(SettingsFile(root), settings);

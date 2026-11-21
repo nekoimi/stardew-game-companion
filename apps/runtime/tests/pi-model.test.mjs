@@ -3,8 +3,25 @@ import { test } from "node:test";
 import { setTimeout } from "node:timers/promises";
 import { PiModelAdapter } from "../dist/adapters/model/pi-model.js";
 import { checkModelConnection } from "../dist/adapters/model/connection-check.js";
+import { listModelProviders, resolveSelection } from "../dist/adapters/model/model-catalogue.js";
 import { createMockDeepSeek, redirectDeepSeek } from "./mock-deepseek.mjs";
 import { createMockOpenAI, redirectOpenAI } from "./mock-openai.mjs";
+
+test("catalogue defaults resolve and legacy custom settings preserve the endpoint", () => {
+  const catalogue = listModelProviders();
+  assert.deepEqual(catalogue.map(item => item.id), ["deepseek", "openai", "custom"]);
+  for (const preset of catalogue.slice(0, 2)) {
+    assert.ok(preset.models.some(model => model.id === preset.defaultModel));
+    assert.equal(resolveSelection({ provider: preset.id, model: preset.defaultModel }).protocol, preset.protocol);
+  }
+  const old = { provider: "openai-compatible", model: "gateway-model", baseUrl: " https://gateway.invalid/tenant/v1/ " };
+  const upgraded = { ...old, provider: "custom", protocol: "responses", stream: true };
+  assert.deepEqual(resolveSelection(old), resolveSelection(upgraded));
+  assert.equal(resolveSelection(old).baseUrl, "https://gateway.invalid/tenant/v1");
+  assert.throws(() => resolveSelection({ ...upgraded, protocol: "unknown" }), { code: "unsupported" });
+  assert.throws(() => resolveSelection({ ...upgraded, stream: "false" }), { code: "unsupported" });
+  assert.throws(() => resolveSelection({ provider: "openai", model: "gpt-5-mini", protocol: "chat-completions" }), { code: "unsupported" });
+});
 
 test("DeepSeek adapter streams tool arguments, classifies failures, and preserves unknown usage", async () => {
   const server = await createMockDeepSeek();

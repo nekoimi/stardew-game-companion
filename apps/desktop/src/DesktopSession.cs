@@ -107,7 +107,7 @@ internal sealed class DesktopSession
     }
 
     private static object ModelRequest(ApiModelSettings selected, string key) => new {
-        selection = new { provider = selected.Provider, model = selected.Model, reasoning = selected.Reasoning, baseUrl = selected.BaseUrl },
+        selection = selected,
         apiKey = key,
     };
 

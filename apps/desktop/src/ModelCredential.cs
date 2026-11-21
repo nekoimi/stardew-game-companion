@@ -9,7 +9,7 @@ internal static class ModelCredential
 {
     private static string Target(string root, ApiModelSettings selection) =>
         "StardewGameCompanion/" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root.ToUpperInvariant()))) + "/" +
-        (selection.Provider == ApiModelSettings.CompatibleProvider
+        (selection.IsCustom
             ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(selection.CredentialScope)))
             : selection.Provider);
 

@@ -6,19 +6,19 @@ using System.Windows.Controls;
 
 namespace StardewAI.Companion.Desktop;
 
-public sealed record ApiProviderOption(string Id, string Name, ApiModelOption[] Models);
+public sealed record ApiProviderOption(string Id, string Name, ApiModelOption[] Models, string Protocol, string DefaultModel, bool Stream);
 public sealed record ApiModelOption(string Id, string Name, string[] Reasoning);
 
 public partial class MainWindow
 {
     private bool _testingModel;
-    private bool UsesCompatibleResponses => ApiProvider.SelectedValue as string == ApiModelSettings.CompatibleProvider;
+    private bool UsesCompatibleResponses => ApiProvider.SelectedValue as string == ApiModelSettings.CustomProvider;
     private ApiModelSettings ApiSelection() => UsesCompatibleResponses
         ? CompatibleResponsesSelection()
         : new(ApiProvider.SelectedValue as string ?? "deepseek", ApiModel.SelectedValue as string ?? "", ApiReasoning.SelectedValue as string ?? "");
 
-    private ApiModelSettings CompatibleResponsesSelection() => new(ApiModelSettings.CompatibleProvider,
-        ApiCustomModel.Text.Trim(), BaseUrl: ApiBaseUrl.Text.Trim().TrimEnd('/'));
+    private ApiModelSettings CompatibleResponsesSelection() => new(ApiModelSettings.CustomProvider,
+        ApiCustomModel.Text.Trim(), BaseUrl: ApiBaseUrl.Text.Trim().TrimEnd('/'), Protocol: "responses");
 
     private ApiModelSettings? CompatibleResponsesSettings()
     {
@@ -77,8 +77,7 @@ public partial class MainWindow
         ApiEndpointFields.Visibility = ApiCustomModel.Visibility = UsesCompatibleResponses ? Visibility.Visible : Visibility.Collapsed;
         ApiModel.Visibility = UsesCompatibleResponses ? Visibility.Collapsed : Visibility.Visible;
         ApiModel.ItemsSource = provider.Models;
-        var preferred = provider.Id == "openai" ? "gpt-5-mini" : "deepseek-flash";
-        ApiModel.SelectedValue = provider.Models.FirstOrDefault(model => model.Id == preferred)?.Id
+        ApiModel.SelectedValue = provider.Models.FirstOrDefault(model => model.Id == provider.DefaultModel)?.Id
             ?? provider.Models.FirstOrDefault()?.Id;
         ApiKey.Clear();
         ShowApiCredentialState();
@@ -131,7 +130,7 @@ public partial class MainWindow
 
     private static void ValidateApiSelection(ApiModelSettings selected)
     {
-        if (selected.Provider == ApiModelSettings.CompatibleProvider && !ValidResponsesBaseUrl(selected.BaseUrl))
+        if (selected.IsCustom && !ValidResponsesBaseUrl(selected.BaseUrl))
             throw new InvalidOperationException("请填写 HTTPS Base URL，保留接口前缀，例如 /v1，去掉 /responses。");
         if (selected.Model.Length == 0) throw new InvalidOperationException("请填写模型名称。");
     }

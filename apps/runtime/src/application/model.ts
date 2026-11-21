@@ -9,6 +9,8 @@ export interface ModelSelection {
   model: string;
   reasoning?: string;
   baseUrl?: string;
+  protocol?: string;
+  stream?: boolean;
 }
 
 export interface ToolDefinition {

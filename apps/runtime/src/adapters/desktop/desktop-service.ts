@@ -230,7 +230,9 @@ export async function startDesktopService(
         const selection = object(body.selection);
         if (typeof selection.provider !== "string" || typeof selection.model !== "string" || typeof body.apiKey !== "string"
           || (selection.baseUrl !== undefined && typeof selection.baseUrl !== "string")
-          || (selection.reasoning !== undefined && typeof selection.reasoning !== "string")) {
+          || (selection.reasoning !== undefined && typeof selection.reasoning !== "string")
+          || (selection.protocol !== undefined && typeof selection.protocol !== "string")
+          || (selection.stream !== undefined && typeof selection.stream !== "boolean")) {
           return respond(res, 400, { error: "请填写服务商、API Key 和模型。" });
         }
         const model = provider.open(selection as unknown as ModelSelection, body.apiKey);

@@ -1,44 +1,12 @@
 import { createModels, InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import type { AssistantMessage, Message, ThinkingLevel } from "@earendil-works/pi-ai";
-import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import type {
   JsonObject, ModelAdapter, ModelContext, ModelErrorCode, ModelEvent, ModelMessage, ModelSelection,
 } from "../../application/model.js";
 
-const providers = { deepseek: deepseekProvider, openai: openaiProvider };
-const enabledModels: Record<keyof typeof providers, ReadonlySet<string>> = {
-  deepseek: new Set(["deepseek-flash", "deepseek-v4-pro"]),
-  openai: new Set(["gpt-5-mini"]),
-};
-const thinkingLevels: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-
-export class ModelError extends Error {
-  constructor(readonly code: ModelErrorCode, message: string) { super(message); }
-}
-
-export function listModelProviders() {
-  const catalogue = (Object.keys(providers) as (keyof typeof providers)[]).map(id => {
-    const factory = providers[id];
-    const provider = factory();
-    return { id: provider.id, name: provider.name, models: provider.getModels().filter(model => enabledModels[id].has(model.id)).map(model => ({
-      id: model.id, name: model.name, reasoning: model.reasoning
-        ? thinkingLevels.filter(level => model.thinkingLevelMap?.[level] !== null) : [],
-    })) };
-  });
-  return [...catalogue, { id: "openai-compatible", name: "OpenAI 兼容（Responses）", models: [] }];
-}
-
-function responsesBaseUrl(value: string | undefined): string {
-  try {
-    const url = new URL(value ?? "");
-    if (url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash) {
-      const base = url.href.replace(/\/+$/, "");
-      if (!/\/(responses|chat\/completions)$/i.test(base)) return base;
-    }
-  } catch { /* Keep the address out of errors. */ }
-  throw new ModelError("unsupported", "请填写 HTTPS Base URL，保留接口前缀，例如 /v1，去掉 /responses。");
-}
+import { ModelError, resolveSelection, thinkingLevels } from "./model-catalogue.js";
+export { ModelError, listModelProviders } from "./model-catalogue.js";
 
 function classifyFailure(text: string | undefined, cancelled: boolean): ModelError {
   if (cancelled) return new ModelError("cancelled", "模型请求已取消。");
@@ -57,21 +25,19 @@ function classifyFailure(text: string | undefined, cancelled: boolean): ModelErr
 
 export class PiModelAdapter implements ModelAdapter {
   open(selection: ModelSelection, apiKey: string): ModelContext {
-    const compatible = selection.provider === "openai-compatible";
-    const id = (compatible ? "openai" : selection.provider) as keyof typeof providers;
-    if (!Object.hasOwn(providers, id) || (!compatible && selection.baseUrl)) throw new ModelError("unsupported", "该模型服务商或端点暂不支持。");
+    const resolved = resolveSelection(selection);
     if (!apiKey.trim()) throw new ModelError("authentication", "请填写 API Key。");
-    if (compatible ? !selection.model.trim() : !enabledModels[id].has(selection.model)) {
-      throw new ModelError("model-unavailable", "请填写或选择有效的模型 ID。");
+    if (!resolved.stream || (!resolved.preset && resolved.protocol !== "responses")) {
+      throw new ModelError("unsupported", "当前运行时尚未启用所选请求方式。");
     }
-    const provider = providers[id]();
+    const provider = resolved.preset?.factory() ?? openaiProvider();
     const credentials = new InMemoryCredentialStore();
     const models = createModels({ credentials });
     models.setProvider(provider);
-    const known = models.getModel(provider.id, compatible ? "gpt-5-mini" : selection.model);
+    const known = models.getModel(provider.id, resolved.preset ? resolved.model : "gpt-5-mini");
     if (!known) throw new ModelError("model-unavailable", "模型不在当前服务商目录中。");
-    const model = compatible ? { ...known, id: selection.model.trim(), name: selection.model.trim(),
-      baseUrl: responsesBaseUrl(selection.baseUrl), reasoning: false } : known;
+    const model = resolved.baseUrl ? { ...known, id: resolved.model, name: resolved.model,
+      baseUrl: resolved.baseUrl, reasoning: false } : known;
     const reasoning = thinkingLevels.find(level => level === selection.reasoning);
     if (selection.reasoning && (!reasoning || !model.reasoning || model.thinkingLevelMap?.[reasoning] === null)) {
       throw new ModelError("unsupported", "该模型不支持所选推理档位。");
