@@ -36,6 +36,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+/测试临时模型配置.txt
 *.key
 *.pem
 secrets/
