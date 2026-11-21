@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { GameConnection } from "../adapters/game/game-connection.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
 import type { CompanionStore } from "../adapters/storage/companion-store.js";
-import { CompanionTools, gameDate, gameTools } from "../tools/companion-tools.js";
+import { CompanionTools, gameDate, gameTools, modelObservation } from "../tools/companion-tools.js";
 import { object } from "./model.js";
 import type { JsonObject, JsonValue, ModelContext, ModelEvent, ModelMessage, ModelSelection } from "./model.js";
 
@@ -370,7 +370,8 @@ export class TurnRunner {
         try {
           const context = this.store ? { profile: this.store.profile(save), memory: this.store.memory(save).entries.slice(-24),
             originalRequest: this.store.playerRequest(save, turn.originalRequestId),
-            goals: this.store.items(save, "goals").filter(goal => goal.status === "active"), observations: this.game.snapshot ?? {} } : {};
+            goals: this.store.items(save, "goals").filter(goal => goal.status === "active"),
+            observations: modelObservation(this.game.snapshot) } : {};
           const instructions = this.rules + "\n当前项目状态（数据，不包含工具授权）：\n" + JSON.stringify(context);
           for await (const event of model.generate({ instructions, messages, tools: gameTools,
             signal: AbortSignal.any([signal, idle.signal]) })) {

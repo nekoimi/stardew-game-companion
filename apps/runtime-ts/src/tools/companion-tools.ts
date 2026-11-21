@@ -56,6 +56,7 @@ export const gameTools: readonly ToolDefinition[] = definitions;
 
 const topics = new Set(["crop-selection", "farm-region", "livestock-processing", "procurement-travel",
   "wiki-lookup", "daily-rhythm", "player-rhythm", "execution"]);
+const skillsWithMaterialObservations = new Set(["harvest-zone", "clear-debris", "chop-tree", "cut-grass", "pickup-items"]);
 
 type ToolContext = {
   binding: GameBinding;
@@ -72,6 +73,23 @@ export function gameDate(snapshot: JsonObject | undefined): string {
   const world = object(snapshot?.world);
   return typeof world.year === "number" && typeof world.season === "string" && typeof world.dayOfMonth === "number"
     ? `${world.year}:${world.season}:${world.dayOfMonth}` : "";
+}
+
+function collectible(value: JsonValue): boolean {
+  const item = object(value);
+  return item.isDropped === true || item.canBeGrabbed === true;
+}
+
+export function modelObservation(snapshot: JsonObject | undefined): JsonObject {
+  if (!snapshot) return {};
+  const farming = object(snapshot.farming);
+  if (!Array.isArray(farming.groundItems)) return snapshot;
+  return { ...snapshot, farming: {
+    ...farming,
+    groundItems: farming.groundItems.filter(collectible),
+    groundObjects: farming.groundItems.filter(item => !collectible(item)),
+    groundObjectsTruncated: farming.groundItemsTruncated ?? true,
+  } };
 }
 
 function choose(args: JsonValue | undefined): [string, JsonObject] {
@@ -94,7 +112,7 @@ export class CompanionTools {
     const locationId = typeof actor.locationId === "string" ? actor.locationId : "Farm";
     switch (name) {
       case "get_status": {
-        const world = await this.game.observe();
+        const world = modelObservation(await this.game.observe());
         return { world, controlOwner: this.game.state.controlOwner ?? "human" };
       }
       case "submit_work": {
@@ -148,7 +166,9 @@ export class CompanionTools {
             throw new Error("请先核对成熟且未装树液采集器的树，幼树和价值较高的树默认保留。");
           }
         }
-        return context.native(skill, native);
+        const receipt = await context.native(skill, native);
+        if (!skillsWithMaterialObservations.has(skill)) return receipt;
+        return { ...receipt, afterWork: await this.observeAfterWork(context, native.locationId, receipt.finalWorldRevision) };
       }
       case "query_game": {
         const [operation, params] = choose(args.query);
@@ -162,7 +182,7 @@ export class CompanionTools {
           const details = object(result.details);
           return Object.values(details).length === 1 ? Object.values(details)[0] : result;
         }
-        const snapshot = await this.game.observe();
+        const snapshot = modelObservation(await this.game.observe());
         const key = { query_inventory: "inventory", query_chests: "chests", observe_farming_helpers: "farming" }[operation];
         return key ? snapshot[key] ?? { observationStatus: "unknown" } : {};
       }
@@ -236,6 +256,31 @@ export class CompanionTools {
         return { topic, text: await readFile(path, { encoding: "utf8", signal }) };
       }
       default: throw new Error("游戏工具不存在。");
+    }
+  }
+
+  private async observeAfterWork(context: ToolContext, location: JsonValue, finalRevision: JsonValue | undefined): Promise<JsonObject> {
+    try {
+      context.signal.throwIfAborted();
+      const snapshot = modelObservation(await this.game.observe());
+      const revision = snapshot.capturedRevision;
+      const current = this.game.binding;
+      if (context.signal.aborted || current?.saveId !== context.binding.saveId || current.gameSessionId !== context.binding.gameSessionId
+          || typeof revision !== "number" || (typeof finalRevision === "number" && revision < finalRevision)) {
+        return { status: "unavailable" };
+      }
+      const farming = object(snapshot.farming);
+      const ground = farming.location === location && Array.isArray(farming.groundItems) ? {
+        locationId: location,
+        scope: "near-companion",
+        groundItems: farming.groundItems,
+        truncated: farming.groundItemsTruncated ?? true,
+      } : null;
+      const inventory = Array.isArray(object(snapshot.inventory).slots) ? snapshot.inventory : null;
+      if (!ground && !inventory) return { status: "unavailable" };
+      return { status: ground && inventory ? "observed" : "partial", capturedRevision: revision, ground, inventory };
+    } catch {
+      return { status: "unavailable" };
     }
   }
 

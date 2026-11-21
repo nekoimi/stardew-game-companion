@@ -30,6 +30,8 @@ API 绿色候选内置 Node 和 Pi 模型 SDK，可直接填写厂商 API Key。
 
 目前主要支持单人农场协作，包括种植、收获、动物照料、加工、仓储和部分布局施工。社区中心献祭由玩家提交。[农场工作与施工范围](docs/farm-projects.md)
 
+API 候选版会在收获和清障后查看附近的可拾取物和背包，伙伴据此安排剩余工作。[API 候选版使用说明](docs/desktop-api-preview.md)
+
 ## 模型与数据
 
 支持 Pi、DeepSeek（dsh）、Codex 和 MiniMax Code，可在 GUI 配置模型与推理档位，也可接续选定的 MiniMax Code 原会话。模型客户端自行安装与登录，订阅或 API 用量按所选服务计费。

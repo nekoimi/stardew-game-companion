@@ -117,21 +117,65 @@ test("a reply still streaming when another save is loaded can neither act nor en
   } finally { await runner.stop(); store.close(); }
 });
 
-test("automatic harvest passes only native observed x/y coordinates to the action", async () => {
+test("harvest returns the native receipt and fresh collectible and inventory observations", async () => {
   const game = new FakeGame();
-  game.snapshot.farmWork = { locationId: "Farm", observationStatus: "observed",
-    matureCrops: [{ x: 5, y: 6, cropId: "parsnip" }, { cropId: "invalid" }] };
+  const weed = { itemId: "(O)674", canBeGrabbed: false, isDropped: false };
+  const drop = { itemId: "(O)24", canBeGrabbed: true, isDropped: true };
+  game.snapshot = { ...game.snapshot, capturedRevision: 1,
+    farming: { location: "Farm", groundItems: [weed], groundItemsTruncated: false },
+    inventory: { slots: [] },
+    farmWork: { locationId: "Farm", observationStatus: "observed",
+      matureCrops: [{ x: 5, y: 6, cropId: "parsnip" }, { cropId: "invalid" }] } };
+  const observe = { id: "status", name: "get_status", arguments: {} };
   const harvest = { id: "harvest", name: "submit_work", arguments: { action: { harvest_auto: {} } } };
+  let before;
+  let result;
   const { runner, events } = fixture(game, { async *generate({ messages }) {
-    yield messages.at(-1).role === "tool" ? done() : done([harvest]);
+    const last = messages.at(-1);
+    if (last.role === "user") { yield done([observe]); return; }
+    if (last.callId === "status") { before = last.result.world; yield done([harvest]); return; }
+    result = last.result;
+    yield done();
   } });
   game.nativeResult = (commandId, skill, parameters) => {
     assert.equal(skill, "harvest-zone");
     assert.deepEqual(parameters.tiles, [{ x: 5, y: 6 }]);
-    return { commandId, skillId: skill, terminalState: "succeeded", completedCount: 1 };
+    game.snapshot = { ...game.snapshot, capturedRevision: 2,
+      farming: { ...game.snapshot.farming, groundItems: [weed, drop] },
+      inventory: { slots: [{ itemId: "(O)24", stack: 1 }] } };
+    return { commandId, skillId: skill, terminalState: "succeeded", completedCount: 1, finalWorldRevision: 2 };
   };
   await runner.submit(binding, "harvest", "把成熟的收了", "send");
-  await waitFor(() => events.some(event => event.type === "result"));
+  await waitFor(() => events.some(event => event.type === "life.chat.reply"));
+  assert.deepEqual(before.farming.groundItems, []);
+  assert.deepEqual(before.farming.groundObjects, [weed]);
+  assert.equal(result.terminalState, "succeeded");
+  assert.equal(result.completedCount, 1);
+  assert.equal(result.afterWork.capturedRevision, 2);
+  assert.deepEqual(result.afterWork.ground.groundItems, [drop]);
+  assert.deepEqual(result.afterWork.inventory.slots, [{ itemId: "(O)24", stack: 1 }]);
+  await runner.stop();
+});
+
+test("a stale post-action snapshot cannot erase a confirmed clearing receipt", async () => {
+  const game = new FakeGame();
+  game.snapshot.capturedRevision = 1;
+  game.nativeResult = commandId => ({ commandId, terminalState: "partially-succeeded", completedCount: 1, finalWorldRevision: 2 });
+  const clear = { id: "clear", name: "submit_work", arguments: { action: {
+    clear_debris: { tiles: [{ x: 3, y: 4 }, { x: 3, y: 5 }] },
+  } } };
+  let result;
+  const { runner, events } = fixture(game, { async *generate({ messages }) {
+    const last = messages.at(-1);
+    if (last.role === "user") { yield done([clear]); return; }
+    result = last.result;
+    yield done();
+  } });
+  await runner.submit(binding, "clear", "清理路上的障碍", "send");
+  await waitFor(() => events.some(event => event.type === "life.chat.reply"));
+  assert.equal(result.terminalState, "partially-succeeded");
+  assert.equal(result.completedCount, 1);
+  assert.deepEqual(result.afterWork, { status: "unavailable" });
   await runner.stop();
 });
 
