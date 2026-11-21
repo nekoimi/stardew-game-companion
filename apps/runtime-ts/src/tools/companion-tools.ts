@@ -113,14 +113,23 @@ export class CompanionTools {
           if (operation === "refill_watering_can" && farming.location !== native.locationId) {
             throw new Error("当前没有该地图的水源观察。");
           }
-          const source = operation === "water_auto" ? farm.cropUnwateredTiles
+          let source = operation === "water_auto" ? farm.cropUnwateredTiles
             : operation === "harvest_auto" ? farm.matureCrops : farming.refillWaterTiles;
+          if (operation === "refill_watering_can" && Array.isArray(source) && !source.length) {
+            const result = await context.native("inspect-water-sources", { locationId: native.locationId }, true);
+            if (result.terminalState !== "succeeded") return result;
+            source = object(result.details).tiles;
+          }
           if (!Array.isArray(source)) throw new Error("尚未取得目标观察。");
-          const all = source.map(value => operation === "harvest_auto" ? object(value).tile : value);
+          const all = source.flatMap(value => {
+            const { x, y } = object(value);
+            return typeof x === "number" && Number.isSafeInteger(x) && typeof y === "number" && Number.isSafeInteger(y)
+              ? [{ x, y }] : [];
+          });
           const selected = Array.isArray(params.target_tiles)
             ? all.filter(value => (params.target_tiles as JsonValue[]).some(target =>
                 object(value).x === object(target).x && object(value).y === object(target).y)) : all;
-          native.tiles = selected.slice(0, Number(params.max_tiles ?? (operation === "refill_watering_can" ? 4 : 128)));
+          native.tiles = selected.slice(0, Number(params.max_tiles ?? (operation === "refill_watering_can" ? 4 : 100)));
           delete native.maxTiles;
           delete native.targetTiles;
           if (!native.tiles.length) return { terminalState: "no-observed-targets", observedTargets: 0 };

@@ -1,6 +1,6 @@
 # 伙伴实机回归
 
-“伙伴实机回归”固定指：隔离存档中，由正式 mcode 接收自然语言请求并执行，依据原生状态和 trace 验收。自动化单元测试不属于此名称。
+“伙伴实机回归”使用隔离存档，由正式模型接收自然语言请求，依据原生状态和工具回执验收。API 绿色候选使用厂商 API，历史绿色包使用 mcode。模拟服务可在同一套场景中回归运行时与原生链路，报告单独标注「模拟 API」。
 
 默认固定运行三组，起点、请求和判定均版本化保存在 `tests/acceptance/cases.json`。固定的是目标与验收，不规定模型的坐标、工具顺序或推理路径。
 
@@ -16,8 +16,8 @@
 
 涉及掉落物时，旁观玩家停在远离任务区的农场可通行位置，并核对实际落点，避免抢先吸取物品或被农舍入口重定位后堵门。
 
-运行 `tests/acceptance/run-companion-presets.ps1 -ReleaseDir <新解压的绿色包目录>`。脚本从中复制 Mod 到隔离目录，并为该实例加入源码测试启动脚本。默认执行三组，也可用 `-Cases care-guidance` 单独复测。
+运行 `tests/acceptance/run-companion-presets.ps1 -ReleaseDir <新解压的绿色包目录> -SavePath <春季测试存档目录>`。脚本复制 Mod 和存档，在隔离实例使用随包运行时。默认执行三组，也可用 `-Cases care-guidance` 单独复测。
 
-需要已登录 mcode、游戏和本地春季基础存档；可用 `-SavePath <存档目录>` 指定只读来源。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒；此预算属于测试，不是生产模型整轮时限。
+正式 API 验收从当前进程读取 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。用 `-Provider openai -Model gpt-5-mini` 可切换到 OpenAI，用 `-Simulated` 可运行本地 DeepSeek 测试服务。已有游戏运行时拒绝启动。每组验收预算由 `-TimeoutSeconds` 设置，默认 600 秒。
 
 每组结果在同一运行目录的 `evidence/<场景名>/`；总结果在 `.test-runs/presets-*/summary.md`，保留状态采样、trace、版本哈希和失败原因。缺少证据不能通过。画面观感、选项跨天、读档与执行中退出需单独验收，不由三组成功推定通过。

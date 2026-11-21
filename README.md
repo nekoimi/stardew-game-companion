@@ -7,9 +7,9 @@
 
 [下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases) · [使用指南](docs/desktop-portable.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
-下一代绿色包内置 Node 和 Pi 模型 SDK。隔离候选已通过模拟模型的原生移动、F9 和同存档模型切换，正式 API 验收另行记录。[改造方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)
+API 绿色候选内置 Node 和 Pi 模型 SDK，可直接填写厂商 API Key。隔离候选已通过模拟模型的原生移动、F9、同存档模型切换和断线重连。[候选包使用说明](docs/desktop-api-preview.md) · [改造方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)
 
-## 快速开始
+## 已发布版本的快速开始
 
 1. 准备 Windows x64、《星露谷物语》、[SMAPI](https://smapi.io/) 和已登录的模型客户端。项目的游戏和 SMAPI 基线为 1.6.15 和 4.2.1。
 2. 完整解压 Release 中的 `StardewGameCompanion-版本号-windows-x64.zip`，双击根目录的 **星露谷游戏伴侣.exe**。桌面运行库已打包到 EXE 中，Python 和配套 Mod 位于 `Mods/`，更新日志和许可在 `docs/`。

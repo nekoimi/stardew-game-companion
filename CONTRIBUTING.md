@@ -4,6 +4,8 @@
 
 ## 从源码构建
 
+API 绿色候选使用 .NET 10 SDK 和 PowerShell 7 构建。将 `STARDEW_GAME_PATH` 设置为含 SMAPI 的游戏目录，运行 `pwsh -File packaging/windows/build-node-release.ps1 -Output artifacts/api-preview`。构建会使用校验过的 Node ZIP 和锁定的 npm 依赖，生成候选 ZIP 与 SHA256 文件。
+
 需要游戏与 SMAPI、Python 3.11～3.13、uv，以及编译 Mod 和桌面程序所需的 .NET SDK（桌面需要 .NET 10）。在克隆的仓库根目录打开 PowerShell：
 
 ```powershell

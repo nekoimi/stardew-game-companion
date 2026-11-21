@@ -41,6 +41,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
     private List<PathStep> _currentPath = new();
     private int _currentPathIndex;
     private int _replanCount;
+    private readonly HashSet<TileCoordinate> _blockedApproach = new();
 
     private readonly List<ShippedItemInfo> _shippedItems = new();
     private readonly List<SkippedShippingItemInfo> _skippedItems = new();
@@ -118,6 +119,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
             _progressWatchdog.Reset();
             _walkingProgress.Reset();
             _replanCount = 0;
+            _blockedApproach.Clear();
             _startClock = _observer.TimeOfDay;
             _pauseStartedClock = null;
             _pausedGameMinutes = 0;
@@ -368,7 +370,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
         foreach (var footprintTile in _shippingBinFootprint)
         {
             var path = _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
-                _currentRequest!.LocationId, footprintTile);
+                _currentRequest!.LocationId, footprintTile, _blockedApproach);
             yield return path;
             if (path.Result.Success && path.Result.Steps.Count > 0 && (best is null || path.Result.Steps.Count < best.Steps.Count))
             {
@@ -392,8 +394,13 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
         var step = _currentPath[_currentPathIndex];
         if (!ActorGuards.IsPlayerBound(_actor) && _walkingProgress.IsBlocked(_actor, step.Tile))
         {
-            FinishExecution(ExecutionState.Failed,
-                $"Walking blocked on '{_actor.LocationName}' at {_actor.Tile} toward {step.Tile}; pixel={_actor.PixelPosition}. Inspect the obstruction before choosing clearance or another route.", "MOVEMENT_BLOCKED");
+            _actor.Halt();
+            _walkingProgress.Reset();
+            if (!_blockedApproach.Add(step.Tile) || _blockedApproach.Count > MaxReplansPerTarget)
+                FinishExecution(ExecutionState.Failed,
+                    $"Walking blocked on '{_actor.LocationName}' at {_actor.Tile} toward {step.Tile}.", "MOVEMENT_BLOCKED");
+            else
+                PlanPathToShippingBin();
             return;
         }
         if (ActorGuards.HasReachedWalkingTile(_actor, step.Tile)) {

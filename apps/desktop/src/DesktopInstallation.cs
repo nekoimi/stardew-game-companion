@@ -25,7 +25,13 @@ internal static class DesktopInstallation
         return File.Exists(path) ? JsonSerializer.Deserialize<DesktopSettings>(File.ReadAllText(path)) ?? new() : new();
     }
 
-    internal static void SaveSettings(string root, DesktopSettings settings) => WriteJson(SettingsFile(root), settings);
+    internal static void SaveSettings(string root, DesktopSettings settings)
+    {
+        if (UsesNode(root))
+            WriteJson(SettingsFile(root), new { settings.GameDirectory, settings.ActorMode, settings.ApiModel });
+        else
+            WriteJson(SettingsFile(root), settings);
+    }
 
     internal static string NodeRuntime(string root) => Path.Combine(root, "runtime", "node.exe");
     internal static bool UsesNode(string root) => File.Exists(Path.Combine(root, "runtime", "dist", "bootstrap.js"));

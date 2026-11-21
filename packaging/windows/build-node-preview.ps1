@@ -28,7 +28,7 @@ foreach ($name in 'LICENSE', 'NOTICE') { Copy-Item -LiteralPath (Join-Path $repo
 Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/prompts/agent-ts-instructions.md') -Destination $modDocs
 Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/prompts/agent-guidance') -Destination $modDocs -Recurse
 Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/skills') -Destination (Join-Path $mod 'agent-skills') -Recurse
-Copy-Item -LiteralPath (Join-Path $repo 'docs/development/agent-runtime-rewrite.md') -Destination $docs
+Copy-Item -LiteralPath (Join-Path $repo 'docs/desktop-api-preview.md') -Destination $docs
 $files = @(Get-ChildItem -LiteralPath $root -File -Recurse | Sort-Object FullName | ForEach-Object {
     [ordered]@{
         path = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\','/')

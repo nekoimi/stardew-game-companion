@@ -36,7 +36,8 @@ export class TurnRunner {
 
   constructor(private readonly game: GameConnection, private model: ModelContext | undefined,
               private readonly publish: (type: string, payload: JsonObject) => void,
-              private readonly rules: string, private readonly store?: CompanionStore, directory = "") {
+              private readonly rules: string, private readonly store?: CompanionStore, directory = "",
+              private readonly trace?: (type: string, payload: JsonObject) => void) {
     this.tools = new CompanionTools(game, directory, store);
     game.on("changed", () => {
       const binding = game.binding;
@@ -225,8 +226,8 @@ export class TurnRunner {
     const save = binding.saveId;
     if (this.store.items(save, "decisions").some(item => item.status === "pending")) return;
     const goal = this.store.items(save, "goals").findLast(item => item.status === "active");
-    const initiative = this.store.profile(save).initiativeMode;
-    if (!goal && initiative !== "free") return;
+    const profile = this.store.profile(save);
+    if (!goal && (profile.initiativeMode !== "free" || profile.idlePreference === "wait")) return;
     if (goal && goal.continuation !== "continue" && goal.continuation !== "wait") return;
     const date = gameDate(this.game.snapshot);
     if (goal?.continuation === "wait") {
@@ -344,7 +345,10 @@ export class TurnRunner {
     let repeatCount = 0;
     const acknowledgeAdditional = (): boolean => {
       const arrived = turn.additional.splice(0);
-      for (const item of arrived) messages.push({ role: "user", text: item.text });
+      for (const item of arrived) {
+        messages.push({ role: "user", text: item.text });
+        this.trace?.("player-update", { turnId: turn.id, requestId: item.requestId, text: item.text });
+      }
       return arrived.length > 0;
     };
     const lease = (state: string) => {
@@ -413,6 +417,7 @@ export class TurnRunner {
             if (call.name === "request_player_decision") waiting = true;
           }
           catch (error) { failed = true; result = { error: error instanceof Error ? error.message : "工具执行失败。" }; }
+          this.trace?.("tool", { turnId: turn.id, requestId: turn.requestId, name: call.name, input: call.arguments, result, error: failed });
           if (this.uncertain) throw new Error("旧动作终态待核对，已停止继续派工。");
           messages.push({ role: "tool", callId: call.id, name: call.name, result, failed });
           if (waiting) break;
@@ -439,6 +444,7 @@ export class TurnRunner {
           const reply = { ...turn.binding, requestId, turnId: turn.id,
             status: failure ? "failed" : "completed", replyText: primary ? answer || null : null,
             error: primary ? failure || null : null,
+            ...(this.trace && this.selection ? { provider: this.selection.provider, model: this.selection.model } : {}),
             profileRevision: this.store?.profile(save).profileRevision ?? 0, memoryRevision: this.store?.memory(save).memoryRevision ?? 0 };
           try {
             this.game.notify("life.chat.reply", { ...reply, replyAlreadyDelivered: !primary || (waiting && !answer) });

@@ -21,7 +21,7 @@ class FakeGame extends EventEmitter {
   queryCount = 0;
   notify() {}
   async control(action) { this.controls.push(action); return {}; }
-  async execute(id) { this.executed.push(id); return this.nativeResult?.(); }
+  async execute(id, turn, skill, parameters) { this.executed.push(id); return this.nativeResult?.(id, skill, parameters); }
   async queryAction() { this.queryCount++; return this.recovered; }
   async observe() { return this.snapshot; }
 }
@@ -32,8 +32,8 @@ function fixture(game, model) {
   return { runner, events };
 }
 
-async function waitFor(check) {
-  for (let attempt = 0; attempt < 100; attempt++) {
+async function waitFor(check, attempts = 100) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (check()) return;
     await setTimeout(5);
   }
@@ -114,6 +114,75 @@ test("a reply still streaming when another save is loaded can neither act nor en
     assert.ok(!events.some(e => e.type === "life.chat.reply"));
     assert.equal(store.history("other").entries.length, 0);
     assert.equal(store.history("farm").entries.length, 1);
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("automatic harvest passes only native observed x/y coordinates to the action", async () => {
+  const game = new FakeGame();
+  game.snapshot.farmWork = { locationId: "Farm", observationStatus: "observed",
+    matureCrops: [{ x: 5, y: 6, cropId: "parsnip" }, { cropId: "invalid" }] };
+  const harvest = { id: "harvest", name: "submit_work", arguments: { action: { harvest_auto: {} } } };
+  const { runner, events } = fixture(game, { async *generate({ messages }) {
+    yield messages.at(-1).role === "tool" ? done() : done([harvest]);
+  } });
+  game.nativeResult = (commandId, skill, parameters) => {
+    assert.equal(skill, "harvest-zone");
+    assert.deepEqual(parameters.tiles, [{ x: 5, y: 6 }]);
+    return { commandId, skillId: skill, terminalState: "succeeded", completedCount: 1 };
+  };
+  await runner.submit(binding, "harvest", "把成熟的收了", "send");
+  await waitFor(() => events.some(event => event.type === "result"));
+  await runner.stop();
+});
+
+test("a decision persists immediately and prevents a following native call in the same response", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  const decision = { id: "decision", name: "request_player_decision", arguments: {
+    message: "继续做什么？", choices: ["浇水", "等我"],
+  } };
+  const events = [];
+  const runner = new TurnRunner(game, { async *generate({ messages }) {
+    yield messages.at(-1).text?.includes("选择：") ? done([], "我会等你。") : done([decision, action]);
+  } }, (type, payload) => events.push({ type, payload }), "", store);
+  try {
+    await runner.submit(binding, "ask", "先问我下一步", "send");
+    await waitFor(() => events.some(event => event.type === "life.chat.reply"));
+    const pending = store.items(binding.saveId, "decisions")[0];
+    assert.equal(pending.status, "pending");
+    assert.equal(game.executed.length, 0);
+    await runner.submit(binding, "answer", "等我", "send", true, pending.id);
+    assert.equal(store.items(binding.saveId, "decisions")[0].status, "answered");
+    assert.equal(store.items(binding.saveId, "decisions")[0].answer, "等我");
+    await waitFor(() => events.some(event => event.payload.replyText === "我会等你。"));
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("a persisted goal resumes only after authority is handed back", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  game.state.controlOwner = "human";
+  const save = binding.saveId;
+  store.append(save, "farm-request:player", "player", { text: "先打理一下农场" });
+  store.updateItem(save, "goals", "farm-goal", { text: "先浇水", requestId: "farm-request",
+    status: "active", continuation: "continue" });
+  const finish = { id: "finished", name: "manage_arrangements", arguments: {
+    change: { manage_goal: { action: "complete" } },
+  } };
+  const observed = [];
+  const runner = new TurnRunner(game, { async *generate({ instructions, messages }) {
+    observed.push({ instructions, message: messages.at(-1) });
+    yield messages.at(-1).role === "tool" ? done() : done([finish]);
+  } }, () => undefined, "", store);
+  try {
+    game.emit("changed");
+    await setTimeout(800);
+    assert.equal(observed.length, 0);
+    game.state.controlOwner = "agent";
+    game.emit("changed");
+    await waitFor(() => store.items(save, "goals")[0].status === "completed", 300);
+    assert.match(observed[0].message.text, /继续当前目标：先浇水/);
+    assert.match(observed[0].instructions, /先打理一下农场/);
   } finally { await runner.stop(); store.close(); }
 });
 

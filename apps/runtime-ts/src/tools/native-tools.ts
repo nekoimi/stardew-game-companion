@@ -4,7 +4,7 @@ import { object } from "../application/model.js";
 type Schema = JsonObject;
 const text = (maxLength = 100): Schema => ({ type: "string", minLength: 1, maxLength });
 const integer = (minimum: number, maximum: number): Schema => ({ type: "integer", minimum, maximum });
-const list = (items: Schema, maxItems = 128): Schema => ({ type: "array", minItems: 1, maxItems, items });
+const list = (items: Schema, maxItems = 100): Schema => ({ type: "array", minItems: 1, maxItems, items });
 export const fields = (properties: Record<string, Schema>, required = Object.keys(properties)): Schema =>
   ({ type: "object", properties, required, additionalProperties: false });
 export const oneOperation = (operations: Record<string, Schema>): Schema => ({
@@ -16,7 +16,7 @@ const tiles = list(tile);
 const location = { location_id: text() };
 const tileFields = { ...location, tiles };
 const chest = { ...location, chest_tile: tile };
-const items = list(fields({ item_id: text(), count: integer(1, 999999) }), 64);
+const items = list(fields({ item_id: text(), count: integer(1, 999999) }), 36);
 const region = fields({ x: integer(0, 4096), y: integer(0, 4096), width: integer(1, 512), height: integer(1, 512) });
 const withLocation = (properties: Record<string, Schema>, required = Object.keys(properties)) =>
   fields({ ...location, ...properties }, required);
@@ -24,9 +24,9 @@ const withLocation = (properties: Record<string, Schema>, required = Object.keys
 export const actions: Record<string, [string, Schema]> = {
   navigate_to: ["navigate-to", withLocation({ tile }, ["location_id", "tile"])],
   water_tiles: ["water-zone", fields(tileFields, ["tiles"])],
-  water_auto: ["water-zone", withLocation({ max_tiles: integer(1, 128), target_tiles: tiles }, [])],
+  water_auto: ["water-zone", withLocation({ max_tiles: integer(1, 100), target_tiles: tiles }, [])],
   refill_watering_can: ["refill-watering-can", withLocation({ tiles }, [])],
-  harvest_auto: ["harvest-zone", withLocation({ max_tiles: integer(1, 128), target_tiles: tiles }, [])],
+  harvest_auto: ["harvest-zone", withLocation({ max_tiles: integer(1, 100), target_tiles: tiles }, [])],
   harvest_tiles: ["harvest-zone", fields(tileFields, ["tiles"])],
   clear_debris: ["clear-debris", fields(tileFields, ["tiles"])],
   cut_grass: ["cut-grass", fields(tileFields, ["tiles"])],
@@ -35,7 +35,7 @@ export const actions: Record<string, [string, Schema]> = {
   hoe_tiles: ["hoe-tiles", fields({ ...tileFields, include_empty_tiles: bool }, ["tiles"])],
   plant_seeds: ["plant-seeds", fields({ ...tileFields, seed_item_id: text() }, ["tiles", "seed_item_id"])],
   apply_fertilizer: ["apply-fertilizer", fields({ ...tileFields, fertilizer_item_id: text() }, ["tiles", "fertilizer_item_id"])],
-  deposit_to_chest: ["deposit-chest", fields({ ...chest, item_ids: list(text(), 64), items }, ["chest_tile"])],
+  deposit_to_chest: ["deposit-chest", fields({ ...chest, item_ids: list(text(), 36), items }, ["chest_tile"])],
   withdraw_from_chest: ["withdraw-chest", fields({ ...chest, items }, ["chest_tile", "items"])],
   organize_chest: ["organize-chest", fields(chest, ["chest_tile"])],
   open_chest: ["open-chest", fields(chest, ["chest_tile"])],

@@ -1330,6 +1330,12 @@ public sealed class WebSocketTransportServer : ITransportServer
             return false;
         }
 
+        if (payload.Parameters.Tiles?.Any(tile => tile is null) == true)
+        {
+            error = "Tiles list cannot contain null entries.";
+            return false;
+        }
+
         if (payload.Budgets.MaxGameMinutes < 0)
         {
             error = "MaxGameMinutes must be non-negative; 0 means no time limit.";
@@ -1543,7 +1549,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         return Task.CompletedTask;
     }
 
-    private static bool IsObservationSkill(string? skillId) => skillId is "inspect-player-activities" or "inspect-location" or "inspect-map-image" or "inspect-crafting" or "inspect-machines" or "inspect-production" or "inspect-building-services" or "inspect-planting" or "inspect-route" or "inspect-livestock" or "inspect-shop";
+    private static bool IsObservationSkill(string? skillId) => skillId is "inspect-player-activities" or "inspect-location" or "inspect-map-image" or "inspect-crafting" or "inspect-machines" or "inspect-production" or "inspect-building-services" or "inspect-planting" or "inspect-route" or "inspect-livestock" or "inspect-shop" or "inspect-water-sources";
 
     public Task SendProtocolErrorAsync(string code, string message, string? correlationId = null)
     {

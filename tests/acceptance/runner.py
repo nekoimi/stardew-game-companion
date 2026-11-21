@@ -55,6 +55,12 @@ def summarize_trace(trace):
     calls = []
     messages = 0
     for row in trace:
+        if row.get("type") == "tool":
+            calls.append({**row["payload"], "nonterminal": False})
+            continue
+        if row.get("type") == "life.chat.reply":
+            messages += bool(row["payload"].get("replyText"))
+            continue
         item = (row.get("event") or {}).get("item") or {}
         messages += item.get("type") == "agent_message"
         if item.get("type") != "tool_call":
@@ -130,7 +136,7 @@ def evaluate(case, before, after, samples):
 
 
 class Runner:
-    def __init__(self, run, case, timeout, cases_file=None, *, keep_open=False, reset_fixture=False):
+    def __init__(self, run, case, timeout, cases_file=None, *, keep_open=False, reset_fixture=False, api_runtime=False):
         self.run = run.resolve()
         self.evidence = self.run / "evidence"
         self.mod = self.run / "mods" / "StardewAI.Companion.Mod"
@@ -138,9 +144,23 @@ class Runner:
         self.cases_file = cases_file or Path(__file__).with_name("cases.json")
         self.token = uuid.uuid4().hex[:8]
         self.keep_open, self.reset_fixture = keep_open, reset_fixture
+        self.api_runtime = api_runtime
+        self.trace_file = self.evidence / "agent-runtime-events.jsonl" if api_runtime else self.mod / "data/mcode-public-events.jsonl"
         self.number = 0
         self.samples = []
         self.report = {"case": case, "status": "error", "checks": {}, "realGame": True}
+
+    def terminal(self, instruction, command_offset, trace_offset):
+        if not self.api_runtime:
+            return next((row for row in rows(self.mod / "chat_commands.jsonl")[command_offset:]
+                         if row.get("prompt") == instruction), None)
+        events = rows(self.trace_file)[trace_offset:]
+        submit = next((row["payload"] for row in events if row.get("type") == "submitted"
+                       and row["payload"].get("text") == instruction), None)
+        if not submit:
+            return None
+        return next((row["payload"] for row in events if row.get("type") == "life.chat.reply"
+                     and row["payload"].get("requestId") == submit["requestId"]), None)
 
     async def wait(self, predicate, message, timeout=30):
         deadline = time.monotonic() + timeout
@@ -202,7 +222,11 @@ class Runner:
             self.report["caseDefinitionSha256"] = hashlib.sha256(spec_path.read_bytes()).hexdigest()
             dll = self.mod / "StardewAI.Companion.Mod.dll"
             self.report["modSha256"] = hashlib.sha256(dll.read_bytes()).hexdigest()
-            self.report["backend"] = read(self.mod / "config" / "chat-backend.json")
+            if self.api_runtime:
+                self.report["backend"] = read(self.evidence / "agent-runtime-ready.json")
+                self.report["packageManifestSha256"] = (self.evidence / "package-manifest.sha256").read_text().strip()
+            else:
+                self.report["backend"] = read(self.mod / "config" / "chat-backend.json")
             # Only normal chat/menu input; no test-side action dispatch.
             await self.request("close")
             before = await self.native()
@@ -225,7 +249,7 @@ class Runner:
                     raise TimeoutError("Production bridge did not become ready")
                 await asyncio.sleep(1)
             command_offset = len(rows(self.mod / "chat_commands.jsonl"))
-            trace_offset = len(rows(self.mod / "data" / "mcode-public-events.jsonl"))
+            trace_offset = len(rows(self.trace_file))
             self.report["traceOffset"] = trace_offset
             await self.request("open-conversation")
             await self.request("text", field="_input", text=instruction)
@@ -245,8 +269,7 @@ class Runner:
                     await self.request("close")
                     guidance_sent = True
                     self.report["guidanceSentAt"] = time.time()
-                new_commands = rows(self.mod / "chat_commands.jsonl")[command_offset:]
-                terminal = next((r for r in new_commands if r.get("prompt") == instruction), None)
+                terminal = self.terminal(instruction, command_offset, trace_offset)
                 if terminal:
                     break
                 await asyncio.sleep(1)
@@ -259,8 +282,9 @@ class Runner:
             after = await self.native()
             self.report["after"] = after
             checks = evaluate(spec.get("fixture", self.case), before, after, self.samples)
-            if spec.get("then"):
+            if spec.get("then") and terminal.get("status") == "completed" and native_finished(after):
                 self.report["intermediate"] = after
+                deadline = time.monotonic() + self.timeout
                 await self.request("open-conversation")
                 await self.request("text", field="_input", text=spec["then"])
                 await self.request("key", key="Enter")
@@ -268,8 +292,7 @@ class Runner:
                 followup = None
                 while time.monotonic() < deadline:
                     await self.native()
-                    followup = next((r for r in rows(self.mod / "chat_commands.jsonl")[command_offset:]
-                                     if r.get("prompt") == spec["then"]), None)
+                    followup = self.terminal(spec["then"], command_offset, trace_offset)
                     if followup:
                         break
                     await asyncio.sleep(1)
@@ -282,8 +305,13 @@ class Runner:
             if self.case == "rest-forestry":
                 checks["rested_to_target"] = any(s.get("companionOnRealBed") is True for s in self.samples) and any((s.get("companionStamina") or 0) >= 80 for s in self.samples)
                 checks["worked_before_full_recovery"] = (after.get("companionStamina") or 0) < 100
-            checks["real_mcode_round_completed"] = terminal.get("provider") == "mcode" and terminal.get("status") == "completed"
-            trace = rows(self.mod / "data" / "mcode-public-events.jsonl")[trace_offset:]
+            backend = self.report["backend"] or {}
+            if self.api_runtime:
+                checks["configured_model_round_completed"] = all(terminal.get(key) == backend.get(key) and terminal.get(key)
+                    for key in ("provider", "model")) and terminal.get("status") == "completed"
+            else:
+                checks["real_mcode_round_completed"] = terminal.get("provider") == "mcode" and terminal.get("status") == "completed"
+            trace = rows(self.trace_file)[trace_offset:]
             summary = summarize_trace(trace)
             self.report["traceSummary"] = summary
             if self.case == "harvest-logistics":
@@ -293,19 +321,20 @@ class Runner:
                 # This fixture provides a reachable chest and shipping route.
                 checks["no_unrequested_clearing"] = self.report["extraClearingCalls"] == 0
             if spec.get("duringAction"):
-                checks["player_message_delivered_at_tool_boundary"] = guidance_sent and any(
-                    spec["duringAction"] in json.dumps(c.get("result"), ensure_ascii=False)
-                    for c in summary["toolCalls"])
+                delivered = any(row.get("type") == "player-update" and row["payload"].get("text") == spec["duringAction"]
+                                and row["payload"].get("turnId") == terminal.get("turnId") for row in trace) if self.api_runtime else any(
+                    spec["duringAction"] in json.dumps(c.get("result"), ensure_ascii=False) for c in summary["toolCalls"])
+                checks["player_message_delivered_at_tool_boundary"] = guidance_sent and delivered
             operations = {"water_auto", "water_zone", "water_tiles", "refill_watering_can", "harvest_auto", "harvest_crop", "chop_tree",
                           "pickup_items", "deposit_to_chest", "withdraw_from_chest", "ship_items", "rest", "navigate_to"}
-            actions = [c for c in summary["toolCalls"] if str(c["name"]).endswith("__submit_work")
+            actions = [c for c in summary["toolCalls"] if (c["name"] == "submit_work" if self.api_runtime else str(c["name"]).endswith("__submit_work"))
                        and operations.intersection((c.get("input") or {}).get("action") or {})]
             checks["real_action_tools_observed"] = any(not c["error"] and isinstance(c["result"], dict) for c in actions)
             checks["action_calls_returned_terminal_results"] = bool(actions) and all(
                 not c["nonterminal"] and (c["error"] or isinstance(c["result"], dict)
                     and (c["result"].get("status") in {"executed", "completed", "failed", "cancelled", "rejected", "player_update"}
                          or c["result"].get("status") == "no-work" and c["result"].get("targetCount") == 0
-                         or c["result"].get("terminalState") in {"succeeded", "failed", "cancelled"})) for c in actions
+                         or c["result"].get("terminalState") in {"succeeded", "partially-succeeded", "failed", "cancelled", "rejected", "no-observed-targets"})) for c in actions
             )
             if self.case in {"walk-pickup", "walk-pickup-full"}:
                 checks["no_explicit_pickup_tool"] = not any("pickup_items" in str(c.get("input")) for c in summary["toolCalls"])
@@ -321,7 +350,7 @@ class Runner:
         finally:
             self.report["elapsedSeconds"] = round(time.time() - started, 1)
             self.report["samples"] = self.samples
-            trace = rows(self.mod / "data" / "mcode-public-events.jsonl")[self.report.get("traceOffset", 0):]
+            trace = rows(self.trace_file)[self.report.get("traceOffset", 0):]
             write(self.evidence / "preset-trace.json", trace)
             self.report["traceEvents"] = len(trace)
             write(self.evidence / "preset-report.json", self.report)
@@ -339,12 +368,12 @@ class Runner:
         return 0 if self.report["status"] == "passed" else 1
 
 
-async def run_suite(run, cases, timeout, cases_file):
+async def run_suite(run, cases, timeout, cases_file, api_runtime=False):
     import shutil
     reports = []
     try:
         for index, case in enumerate(cases):
-            runner = Runner(run, case, timeout, cases_file, keep_open=True, reset_fixture=index > 0)
+            runner = Runner(run, case, timeout, cases_file, keep_open=True, reset_fixture=index > 0, api_runtime=api_runtime)
             code = await runner.execute()
             reports.append(runner.report)
             folder = run / "evidence" / case
@@ -358,7 +387,9 @@ async def run_suite(run, cases, timeout, cases_file):
     finally:
         success = len(reports) == len(cases) and all(r["status"] == "passed" for r in reports)
         write(run / "evidence/free-mode-control-done.json", {"success": success})
-        (run / "summary.md").write_text("# 伙伴实机回归\n\n一次启动、同一存档和会话，场景间只重置测试布置。\n\n"
+        backend = reports[0].get("backend") or {} if reports else {}
+        mode = "模拟 API" if backend.get("simulated") else "厂商 API" if api_runtime else "旧版客户端"
+        (run / "summary.md").write_text(f"# 伙伴实机回归 · {mode}\n\n一次启动、同一存档和会话，场景间只重置测试布置。\n\n"
             + "\n".join(f"- {r['case']}: {r['status']} ({r['elapsedSeconds']} 秒)" for r in reports), encoding="utf-8")
     return 0 if success else 1
 
@@ -370,5 +401,8 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--cases-file", type=Path, help="Frozen suite definitions")
     parser.add_argument("--suite", nargs="+")
+    parser.add_argument("--api-runtime", action="store_true")
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(run_suite(args.run_dir, args.suite, args.timeout, args.cases_file) if args.suite else Runner(args.run_dir, args.case, args.timeout, args.cases_file).execute()))
+    raise SystemExit(asyncio.run(
+        run_suite(args.run_dir, args.suite, args.timeout, args.cases_file, args.api_runtime) if args.suite
+        else Runner(args.run_dir, args.case, args.timeout, args.cases_file, api_runtime=args.api_runtime).execute()))

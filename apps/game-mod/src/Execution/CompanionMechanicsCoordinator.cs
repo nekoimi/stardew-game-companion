@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewAI.Companion.Mod.Adapters;
@@ -882,6 +883,25 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                 return false;
             }
 
+            if (skillId is "inspect-water-sources")
+            {
+                if (_actor.LocationName != payload.Parameters.LocationId)
+                {
+                    rejectResult = BuildRejection(payload, "WATER_SOURCE_MAP_MISMATCH", "Water sources are observed on the current actor map.", false);
+                    return false;
+                }
+                var tiles = _observer.FindWaterRefillTiles(_actor.LocationName, _actor.Tile, 96, 16)
+                    .Select(tile => new TileCoord(tile.X, tile.Y)).ToList();
+                var result = new SkillResultPayload(payload.CommandId, payload.TaskId, "succeeded", 0, 0, 0,
+                    _observer.WorldRevision, new(), SkillId: skillId,
+                    Details: new Dictionary<string, object> { ["tiles"] = tiles });
+                _lastSkillResultPayload = result;
+                if (_transportServer is not null)
+                    _ = _transportServer.SendSkillResultAsync(result, envelope.MessageId, envelope.IdempotencyKey);
+                rejectResult = null;
+                return true;
+            }
+
             if (skillId is "inspect-player-activities" or "inspect-location" or "inspect-map-image" or "inspect-crafting" or "inspect-machines" or "inspect-production" or "inspect-building-services" or "inspect-planting" or "inspect-route" or "inspect-livestock" or "inspect-shop")
             {
                 try
@@ -1528,6 +1548,9 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
     /// </summary>
     private void CompleteExecution(SkillResultPayload payload)
     {
+        if (payload.SkillId is null && _currentExecuteEnvelope?.Payload["skillId"] is JsonValue skill
+            && skill.TryGetValue<string>(out var skillId))
+            payload = payload with { SkillId = skillId };
         _lastSkillResultPayload = payload;
 
         if (_transportServer != null && _currentExecuteEnvelope != null)

@@ -31,13 +31,14 @@ public sealed class ShippingStateMachineTests
         var origin = actor.PixelPosition;
         Assert.True(machine.Start(new ShippingRequest("blocked", "blocked-task", "Farm",
             new[] { new ShippingItemRequest("(O)24", 2) }), out _));
-        for (int tick = 0; tick < 250 && machine.IsExecuting; tick++)
+        for (int tick = 0; tick < 1500 && machine.IsExecuting; tick++)
         {
             actor.PixelPosition = origin; // physical collision prevents net walking progress
             machine.Update(null, tick);
         }
         Assert.False(machine.IsExecuting);
-        Assert.Equal("MOVEMENT_BLOCKED", machine.FinalResult!.ErrorCode);
+        Assert.Equal(ExecutionState.Failed, machine.CurrentState);
+        Assert.Contains(machine.FinalResult!.ErrorCode, new[] { "MOVEMENT_BLOCKED", "SHIPPING_BIN_UNREACHABLE" });
         Assert.Equal(4, actor.GetItemCount("(O)24"));
     }
 

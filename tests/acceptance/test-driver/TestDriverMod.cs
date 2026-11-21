@@ -3664,11 +3664,6 @@ public sealed class TestDriverMod : Mod
             _harnessFixtureTiles.Clear();
             _acceptanceChest = selected[0];
             farm.objects[selected[0]] = new StardewValley.Objects.Chest(true, selected[0], "130");
-            foreach (var tile in new[] { selected[2], selected[4] })
-            {
-                farm.terrainFeatures[tile] = new Tree("1", 5);
-                _acceptanceMatureTrees.Add(tile);
-            }
             _acceptanceSapling = selected[5];
             farm.terrainFeatures[selected[5]] = new Tree("1", 2);
             for (int index = 0; index < farmer.Items.Count; index++)
@@ -3676,6 +3671,26 @@ public sealed class TestDriverMod : Mod
             if (!farmer.Items.OfType<StardewValley.Tools.Axe>().Any())
                 farmer.addItemToInventory(new StardewValley.Tools.Axe());
             ParkHarnessObserver();
+            bool CanApproach(Vector2 tile) => ReadNativeMember(pathMethod.Invoke(navigator,
+                new object?[] { actor, "Farm", NativeTile(tile), null }), "Success") is true;
+            foreach (var tile in candidates)
+            {
+                if (tile.X < 0 || tile.Y < 0 || farm.objects.ContainsKey(tile) || farm.terrainFeatures.ContainsKey(tile)
+                    || Vector2.DistanceSquared(tile, selected[0]) < 4
+                    || _acceptanceMatureTrees.Any(other => Vector2.DistanceSquared(tile, other) < 9)
+                    || farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") == null
+                    || !(passable.Invoke(observer, new object[] { "Farm", NativeTile(tile) }) is true)) continue;
+                farm.terrainFeatures[tile] = new Tree("1", 5);
+                if (!CanApproach(tile) || !_acceptanceMatureTrees.All(CanApproach) || !CanApproach(selected[0]))
+                {
+                    farm.terrainFeatures.Remove(tile);
+                    continue;
+                }
+                _acceptanceMatureTrees.Add(tile);
+                if (_acceptanceMatureTrees.Count == 2) break;
+            }
+            if (_acceptanceMatureTrees.Count != 2)
+                throw new InvalidOperationException("Harness fixture found no two reachable mature trees with the chest and sapling in place.");
         }
         if (mode == "walk-pickup-full")
         {

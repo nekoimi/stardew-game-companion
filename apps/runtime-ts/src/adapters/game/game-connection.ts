@@ -168,7 +168,7 @@ export class GameConnection extends EventEmitter {
     if (message.messageType === "life.chat.submit" || message.messageType === "chat.submit") {
       this.emit("player-message", message.messageType, message.payload);
     } else if (["life.profile.get", "life.profile.set", "life.memory.list", "life.memory.edit",
-      "life.milestones.get", "chat.cancel"].includes(message.messageType)) {
+      "life.milestones.get", "autonomy.control", "chat.cancel"].includes(message.messageType)) {
       this.emit("player-event", message.messageType, message.payload);
     }
   }
@@ -226,10 +226,11 @@ export class GameConnection extends EventEmitter {
     const binding = this.binding;
     if (!binding) throw new Error("尚未连接当前游戏。");
     const expectedRevision = this.revision;
+    const maxWater = skill === "water-zone" && Array.isArray(parameters.tiles) ? parameters.tiles.length : 0;
     let progress = "";
     const reply = await this.request(this.commands, "skill.execute", {
       commandId: actionId, taskId: turnId, skillId: skill, skillVersion: "0.1", expectedWorldRevision: expectedRevision,
-      parameters, budgets: { maxGameMinutes: 0, maxStamina: 50, maxWater: 0 },
+      parameters, budgets: { maxGameMinutes: 0, maxStamina: 50, maxWater },
       cancelPolicy: "safe-point", policyDecisionId: turnId,
     }, message => this.isReceipt(message, binding, actionId), 30_000, randomUUID(),
     { idempotencyKey: `${binding.gameSessionId}:${actionId}`, expiresAt: new Date(Date.now() + 10_000).toISOString() },

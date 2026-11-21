@@ -7,6 +7,10 @@ import type {
 } from "../../application/model.js";
 
 const providers = { deepseek: deepseekProvider, openai: openaiProvider };
+const enabledModels: Record<keyof typeof providers, ReadonlySet<string>> = {
+  deepseek: new Set(["deepseek-flash", "deepseek-v4-pro"]),
+  openai: new Set(["gpt-5-mini"]),
+};
 const thinkingLevels: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 export class ModelError extends Error {
@@ -14,9 +18,10 @@ export class ModelError extends Error {
 }
 
 export function listModelProviders() {
-  return Object.values(providers).map(factory => {
+  return (Object.keys(providers) as (keyof typeof providers)[]).map(id => {
+    const factory = providers[id];
     const provider = factory();
-    return { id: provider.id, name: provider.name, models: provider.getModels().map(model => ({
+    return { id: provider.id, name: provider.name, models: provider.getModels().filter(model => enabledModels[id].has(model.id)).map(model => ({
       id: model.id, name: model.name, reasoning: model.reasoning
         ? thinkingLevels.filter(level => model.thinkingLevelMap?.[level] !== null) : [],
     })) };
@@ -40,10 +45,11 @@ function classifyFailure(text: string | undefined, cancelled: boolean): ModelErr
 
 export class PiModelAdapter implements ModelAdapter {
   open(selection: ModelSelection, apiKey: string): ModelContext {
-    const factory = Object.hasOwn(providers, selection.provider) ? providers[selection.provider as keyof typeof providers] : undefined;
-    if (!factory || selection.baseUrl) throw new ModelError("unsupported", "该模型服务商或端点暂不支持。");
+    const id = selection.provider as keyof typeof providers;
+    if (!Object.hasOwn(providers, id) || selection.baseUrl) throw new ModelError("unsupported", "该模型服务商或端点暂不支持。");
     if (!apiKey.trim()) throw new ModelError("authentication", "请填写 API Key。");
-    const provider = factory();
+    if (!enabledModels[id].has(selection.model)) throw new ModelError("model-unavailable", "模型不在当前服务商目录中。");
+    const provider = providers[id]();
     const credentials = new InMemoryCredentialStore();
     const models = createModels({ credentials });
     models.setProvider(provider);

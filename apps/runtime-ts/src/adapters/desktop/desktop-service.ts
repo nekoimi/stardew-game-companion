@@ -1,4 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
@@ -20,10 +21,15 @@ export async function startDesktopService(
   const streams = new Set<ServerResponse>();
   const events: { id: number; data: string }[] = [];
   const submissions = new Set<string>();
+  const acceptanceTrace = process.env.STARDEW_AGENT_ACCEPTANCE_TRACE;
+  const trace = acceptanceTrace ? (type: string, payload: JsonObject) => {
+    appendFileSync(acceptanceTrace, JSON.stringify({ type, payload }) + "\n");
+  } : undefined;
   let sequence = 0;
   let lastStatus = "";
   let activeGameId: string | undefined;
   const publish = (type: string, payload: JsonObject) => {
+    if (type === "submitted" || type === "life.chat.reply" || type === "result") trace?.(type, payload);
     const data = JSON.stringify({ type, payload });
     if (type === "status") {
       if (lastStatus === data) return;
@@ -43,11 +49,11 @@ export async function startDesktopService(
   };
   const core = await readFile(join(runDirectory, "docs", "agent-ts-instructions.md"), "utf8");
   const runner = new TurnRunner(game, undefined, publish,
-    core + "\n按最新观察和工具回执推进。", store, runDirectory);
+    core + "\n按最新观察和工具回执推进。", store, runDirectory, trace);
   game.on("changed", () => {
     const binding = game.binding;
-    if (binding && activeGameId !== binding.gameSessionId) {
-      activeGameId = binding.gameSessionId;
+    if (activeGameId !== binding?.gameSessionId) {
+      activeGameId = binding?.gameSessionId;
       submissions.clear();
     }
   });
@@ -72,8 +78,25 @@ export async function startDesktopService(
     }
     const decisionId = store?.items(binding.saveId, "decisions").some(item => item.id === payload.replyToNoticeId)
       ? String(payload.replyToNoticeId) : undefined;
-    void runner.submit(binding, payload.requestId, payload.text, "send", false, decisionId, preset).catch(error => {
-      const result = { ...binding, requestId: payload.requestId, status: "failed", error: error.message,
+    const requestId = payload.requestId;
+    const id = `${binding.gameSessionId}:${requestId}`;
+    if (!preset && store) {
+      const signature = JSON.stringify([payload.text, "send", decisionId ?? null]);
+      const existing = readSubmission(binding, requestId);
+      if (existing) {
+        if (existing.signature !== signature) return;
+        if (existing.state.status === "unknown") {
+          game.notify("life.chat.reply", { ...existing.state, status: "failed",
+            profileRevision: store.profile(binding.saveId).profileRevision,
+            memoryRevision: store.memory(binding.saveId).memoryRevision });
+        }
+        return;
+      }
+      store.trackSubmission(binding, requestId, signature, { ...binding, requestId, status: "accepted" });
+      submissions.add(id);
+    }
+    void runner.submit(binding, requestId, payload.text, "send", false, decisionId, preset).catch(error => {
+      const result = { ...binding, requestId, status: "failed", error: error.message,
         replyText: preset ? error.message : null, profileRevision: 0, memoryRevision: 0 };
       try { game.notify(preset ? "chat.reply" : "life.chat.reply", result); } catch { /* The binding has already changed. */ }
       publish("life.chat.reply", result);
@@ -86,6 +109,10 @@ export async function startDesktopService(
     const save = binding.saveId;
     if (type === "chat.cancel") {
       void runner.control(binding, "cancel").catch(() => undefined);
+      return;
+    }
+    if (type === "autonomy.control") {
+      void inGameControl(binding, requestId, String(payload.action ?? ""), object(payload.parameters));
       return;
     }
     try {
@@ -106,6 +133,37 @@ export async function startDesktopService(
       }
     }
   });
+
+  async function inGameControl(binding: { saveId: string; gameSessionId: string }, requestId: string, action: string, params: JsonObject) {
+    if (!store) return;
+    const save = binding.saveId;
+    let reason: string | null = null;
+    try {
+      const current = store.profile(save);
+      if (action === "set_mode" || action === "set_preferences") {
+        store.initiative(save, String(params.mode ?? current.initiativeMode ?? "command"),
+          String(params.idle_preference ?? current.idlePreference ?? "autonomous"));
+        const goal = typeof params.goal === "string" ? params.goal.trim().slice(0, 500) : "";
+        if (goal && !store.items(save, "goals").some(item => item.status === "active" && item.text === goal)) {
+          store.append(save, `${requestId}:player`, "player", { speaker: "你", text: goal });
+          store.updateItem(save, "goals", randomUUID(), { text: goal, requestId, status: "active", continuation: "continue" });
+        }
+        runner.changed();
+      } else {
+        await runner.control(binding, action);
+      }
+    } catch (error) { reason = error instanceof Error ? error.message : "控制操作未确认。"; }
+    if (game.binding?.gameSessionId !== binding.gameSessionId) return;
+    const profile = store.profile(save);
+    const intake = params.goal == null ? null : String(params.goal).trim().slice(0, 500);
+    try {
+      game.notify("autonomy.state", { ...binding, requestId, controlAction: action,
+        mode: profile.initiativeMode ?? "command", paused: game.state.paused === true, dailySpend: 0,
+        preferences: { idle_preference: profile.idlePreference ?? "autonomous", ...(intake ? { goal: intake } : {}) },
+        status: reason ? "failed" : "confirmed", reason, ...store.usage(save) });
+    } catch { /* The game will refresh state after reconnecting. */ }
+    runner.syncProfile(binding);
+  }
   const token = Buffer.from(`Bearer ${secret}`);
   const server = createServer((req, res) => void route(req, res));
   server.requestTimeout = 30_000;

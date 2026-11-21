@@ -14,7 +14,7 @@
 
 ## 接入模型
 
-TypeScript 预览包在「设置」选择模型服务商、填写 API Key 和模型，然后点「测试连接」。凭据保存在当前 Windows 用户的凭据存储中。预览包先用于原生移动与控制验证，完整玩法的切换进度见 [运行时改造 TODO](development/agent-runtime-rewrite-todo.md)。
+API 绿色候选支持在「设置」直接配置 DeepSeek 或 OpenAI。角色、手记、对话、目标和用量按存档保存，空闲时可通过「应用模型」切换模型。[API 绿色候选使用说明](desktop-api-preview.md)
 
 - **启动本机模型客户端**：将 Pi、DeepSeek（dsh）、Codex 或 MiniMax Code 安装在本机并完成登录。桌面按所选客户端提供中文推理档位，客户端路径留空时自动查找。DeepSeek 模型留空时使用 `deepseek-flash`，可沿用 dsh 保存的凭据或 `DEEPSEEK_API_KEY`。
 - **接续原 MiniMax Code 会话**：启动游戏后，在桌面「设置」选择原工作目录，列出并接续指定会话。连接期间让原聊天窗口闲置。身份核验针对 MiniMax Code 0.6.2，失败时保留所选绑定。需要换会话时先保存并回到游戏标题。断开桌面连接后，仍可在原客户端继续使用原会话。

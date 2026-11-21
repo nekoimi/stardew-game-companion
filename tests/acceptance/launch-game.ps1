@@ -13,6 +13,9 @@ param(
     [string]$ExpectedProdDllSha256 = '',
     [string]$CustomSavePath = '',
     [switch]$PresetAcceptance,
+    [ValidateSet('deepseek','openai')][string]$ApiProvider,
+    [string]$ApiModel,
+    [switch]$ApiSimulated,
     # Optional child-process environment overrides (name => value). Used by sandboxed
     # runs to redirect SMAPI's %APPDATA% error-log path into the workspace, because
     # the DSH file sandbox denies writes under the user's real AppData.
@@ -452,15 +455,17 @@ try {
         if (Test-Path -LiteralPath (Join-Path $prodDest 'chat_sessions.json')) {
             throw 'Use a clean release stage, not an installed Mod with session history.'
         }
-        $presetTools = Join-Path $prodDest 'tools'
-        if (-not (Test-Path -LiteralPath (Join-Path $presetTools 'start-companion.ps1'))) {
-            [void][IO.Directory]::CreateDirectory($presetTools)
-            Copy-Item -LiteralPath (Join-Path $repoRoot 'tools/dev/start-companion.ps1'),
-                (Join-Path $repoRoot 'packaging/windows/release-package.ps1') -Destination $presetTools
+        if (!$ApiProvider) {
+            $presetTools = Join-Path $prodDest 'tools'
+            if (-not (Test-Path -LiteralPath (Join-Path $presetTools 'start-companion.ps1'))) {
+                [void][IO.Directory]::CreateDirectory($presetTools)
+                Copy-Item -LiteralPath (Join-Path $repoRoot 'tools/dev/start-companion.ps1'),
+                    (Join-Path $repoRoot 'packaging/windows/release-package.ps1') -Destination $presetTools
+            }
+            $presetConfig = Join-Path $prodDest 'config'
+            New-Item -ItemType Directory -Path $presetConfig -Force | Out-Null
+            Write-Utf8File (Join-Path $presetConfig 'chat-backend.json') '{"backend":"mcode","effort":"default","model":""}'
         }
-        $presetConfig = Join-Path $prodDest 'config'
-        New-Item -ItemType Directory -Path $presetConfig -Force | Out-Null
-        Write-Utf8File (Join-Path $presetConfig 'chat-backend.json') '{"backend":"mcode","effort":"default","model":""}'
         # This suite explicitly exercises the built-in entry. Keep the choice
         # inside its isolated Mod copy; never change the player's installation.
         $presetModConfigPath = Join-Path $prodDest 'config.json'
@@ -547,6 +552,31 @@ try {
         }
     }
     $psi.UseShellExecute = $false
+    if ($ApiProvider) {
+        if (!$PresetAcceptance -or !$ApiModel) { throw 'API runtime requires isolated preset acceptance and a model.' }
+        $runtime = Join-Path (Resolve-Path -LiteralPath $FrozenProdDir).Path 'runtime'
+        $node = Join-Path $runtime 'node.exe'
+        if (!(Test-Path -LiteralPath $node -PathType Leaf)) { throw 'The candidate package does not contain Node.' }
+        $runtimeHost = [Diagnostics.ProcessStartInfo]::new($node)
+        $runtimeHost.UseShellExecute = $false
+        $runtimeHost.CreateNoWindow = $true
+        $null = $runtimeHost.Environment.Remove('NODE_OPTIONS')
+        $runtimeHost.Environment['STARDEW_ACCEPTANCE_SIMULATED'] = if ($ApiSimulated) { '1' } else { '0' }
+        foreach ($arg in @((Join-Path $PSScriptRoot 'run-api-runtime.mjs'), $runtime, $prodDest, $runEvidenceDir, [string]$PID, $ApiProvider, $ApiModel)) {
+            $runtimeHost.ArgumentList.Add($arg)
+        }
+        foreach ($key in 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'NODE_OPTIONS') { $psi.EnvironmentVariables.Remove($key) }
+        $psi.EnvironmentVariables['STARDEW_AGENT_PROTOCOL'] = '2'
+        Write-Utf8File (Join-Path $runEvidenceDir 'package-manifest.sha256') (
+            (Get-FileHash -LiteralPath (Join-Path $FrozenProdDir 'release-manifest.json')).Hash.ToLowerInvariant())
+        $apiHost = [Diagnostics.Process]::Start($runtimeHost)
+        $readyFile = Join-Path $runEvidenceDir 'agent-runtime-ready.json'
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(35)
+        while (!(Test-Path -LiteralPath $readyFile) -and !$apiHost.HasExited -and [DateTime]::UtcNow -lt $readyDeadline) {
+            Start-Sleep -Milliseconds 100
+        }
+        if (!(Test-Path -LiteralPath $readyFile) -or $apiHost.HasExited) { throw 'API runtime did not become ready.' }
+    }
 
     Write-Host "Launching process: $($psi.FileName) $($psi.Arguments)"
     $proc = [System.Diagnostics.Process]::Start($psi)
@@ -571,6 +601,11 @@ try {
     }
 }
 finally {
+    if ($apiHost -and !$apiHost.HasExited) {
+        Write-Utf8File (Join-Path $runEvidenceDir 'agent-runtime-stop.txt') 'stop'
+        if (!$apiHost.WaitForExit(8000)) { $apiHost.Kill($true) }
+        $apiHost.Dispose()
+    }
     # CLEANUP & POST-INTEGRITY GUARANTEED IN FINALLY
     Write-Host "`n>>> FINALLY: Post-Launch Integrity & Cleanup <<<"
 

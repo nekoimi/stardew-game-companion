@@ -62,7 +62,7 @@ def test_suite_keeps_game_open_and_preserves_failed_scene(tmp_path, monkeypatch)
 
     monkeypatch.setattr(runner, "Runner", FakeRunner)
     assert asyncio.run(runner.run_suite(tmp_path, ["care", "harvest", "rest"], 60, None)) == 1
-    assert calls == [("care", {"keep_open": True, "reset_fixture": False}),
-                     ("harvest", {"keep_open": True, "reset_fixture": True})]
+    assert calls == [("care", {"keep_open": True, "reset_fixture": False, "api_runtime": False}),
+                     ("harvest", {"keep_open": True, "reset_fixture": True, "api_runtime": False})]
     assert (evidence / "care/preset-report.md").read_text() == "care"
     assert runner.read(evidence / "free-mode-control-done.json") == {"success": False}
