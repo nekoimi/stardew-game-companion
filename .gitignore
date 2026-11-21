@@ -15,21 +15,18 @@ TestResults/
 *.suo
 *.nupkg
 
-# Python
+# Python acceptance tooling
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
 .coverage
 htmlcov/
-dist/
-build/
-*.egg-info/
 
 # TypeScript
+dist/
+build/
 node_modules/
 
 # Secrets and local configuration
@@ -95,11 +92,6 @@ MagicMock/
 !/tests/acceptance/test-driver/StardewAI.Companion.TestDriver.csproj
 !/tests/acceptance/test-driver/TestDriverMod.cs
 /config/test-runner*.json
-/tests/contracts/test_save_isolation.py
-/tests/contracts/test_harness_behavioral.py
-/apps/runtime/tests/contracts/test_acceptance_helpers.py
-/apps/runtime/tests/contracts/test_milking_overall_gate.py
-/apps/runtime/tests/contracts/test_kimi_profile_tools.py
 
 # Commit only supported development tools; keep private helper scripts local.
 /tools/*

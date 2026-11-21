@@ -1,6 +1,6 @@
-# Stage 0 Protocol & Transport Contract
+# Stage 0 Protocol & Transport Contract (historical)
 
-This document defines the authoritative contract between the **Out-of-Process Runtime (Python)** and the **Stardew AI Companion Mod (C# .NET 6.0)** for Stage 0 ("water-zone" bounded execution).
+This document records the original contract between the **Out-of-Process Runtime (Python)** and the **Stardew AI Companion Mod (C# .NET 6.0)** for Stage 0 ("water-zone" bounded execution). See [v2](v2.md) for the current transport.
 
 ---
 

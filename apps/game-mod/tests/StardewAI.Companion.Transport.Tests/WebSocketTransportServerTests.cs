@@ -1316,7 +1316,7 @@ public class WebSocketTransportServerTests
     }
 
     [Fact]
-    public async Task Test_RawTcpHandshake_MatchesPythonClient()
+    public async Task Test_RawTcpHandshake_ValidToken_Returns101()
     {
         var handler = new TestTransportHandler();
         var logs = new List<string>();

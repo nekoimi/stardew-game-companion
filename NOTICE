@@ -16,7 +16,7 @@ individual contributions and changes.
 
 This project is licensed under the Apache License, Version 2.0.
 See LICENSE for the license terms. The portable distribution also carries
-license notices for the bundled .NET, Python, and Python dependencies.
+license notices for the bundled .NET runtime, Node.js, and npm dependencies.
 
 This is an unofficial project. Stardew Valley, SMAPI, and third-party
 software and services retain their respective names, rights, and terms.
