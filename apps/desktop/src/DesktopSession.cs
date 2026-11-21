@@ -101,12 +101,12 @@ internal sealed class DesktopSession
     internal static async Task TestModelAsync(string root, ApiModelSettings selected, string key, Action<string> log)
     {
         var processes = new DesktopProcesses(root, log);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         try
         {
             var endpoint = await processes.StartRuntimeAsync(DesktopInstallation.ResolveRuntime(root), new(), 0, cancellation.Token, modelTestOnly: true);
             using var api = new DesktopRuntimeApi(endpoint, cancellation.Token);
-            await api.PostAsync("/v2/model/test", ModelRequest(selected, key));
+            await api.PostAsync("/v2/model/test", ModelRequest(selected, key), timeoutSeconds: 40);
         }
         finally { await processes.StopRuntimeAsync(); }
     }

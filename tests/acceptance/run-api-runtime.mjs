@@ -35,7 +35,7 @@ try {
   const endpoint = JSON.parse(handshake?.value ?? "{}");
   if (!Number.isInteger(endpoint.port) || endpoint.protocolVersion !== 2) throw new Error("No v2 runtime endpoint.");
   const selection = JSON.stringify({ selection: { provider, model }, apiKey });
-  for (const [operation, timeout] of [["test", 25_000], ["configure", 10_000]]) {
+  for (const [operation, timeout] of [["test", 40_000], ["configure", 10_000]]) {
     const response = await fetch(`http://127.0.0.1:${endpoint.port}/v2/model/${operation}`, {
       method: "POST", signal: AbortSignal.timeout(timeout),
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

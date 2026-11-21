@@ -10,6 +10,7 @@ import { TurnRunner } from "../../application/turn-runner.js";
 import { object } from "../../application/model.js";
 import { CompanionStore } from "../storage/companion-store.js";
 import type { JsonObject, ModelSelection } from "../../application/model.js";
+import { checkModelConnection } from "../model/connection-check.js";
 
 export async function startDesktopService(
   runDirectory: string, secret: string, stopFile: string, ownerPid: number, modelTestOnly = false,
@@ -235,17 +236,8 @@ export async function startDesktopService(
           runner.configure(model, selection as unknown as ModelSelection);
           return respond(res, 200, { ready: true });
         }
-        const signal = AbortSignal.timeout(20_000);
-        for await (const event of model.generate({ instructions: "Call the check_connection tool once.",
-          messages: [{ role: "user", text: "Check connection." }],
-          tools: [{ name: "check_connection", description: "Confirm this model can call a tool.",
-            parameters: { type: "object", properties: {}, additionalProperties: false } }], signal })) {
-          if (event.type === "error") throw new ModelError(event.code, event.message);
-          if (event.type === "done" && event.calls.some(call => call.name === "check_connection")) {
-            return respond(res, 200, { ready: true, toolCalling: true });
-          }
-        }
-        throw new ModelError("unsupported", "模型已响应，工具调用尚未通过测试。");
+        await checkModelConnection(model, AbortSignal.timeout(35_000));
+        return respond(res, 200, { ready: true, toolCalling: true });
       }
       const binding = game.binding;
       if (url === "/v2/usage" && body.gameSessionId == null && body.saveId == null) return respond(res, 200, store?.usage() ?? {});

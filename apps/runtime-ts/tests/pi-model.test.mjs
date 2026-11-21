@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PiModelAdapter } from "../dist/adapters/model/pi-model.js";
+import { checkModelConnection } from "../dist/adapters/model/connection-check.js";
 import { createMockDeepSeek, redirectDeepSeek } from "./mock-deepseek.mjs";
 import { createMockOpenAI, redirectOpenAI } from "./mock-openai.mjs";
 
@@ -29,6 +30,7 @@ test("DeepSeek adapter streams tool arguments, classifies failures, and preserve
       assert.doesNotMatch(result.message, /private|accept-/);
     }
     assert.throws(() => adapter.open({ ...selection, model: "missing" }, "sample"), { code: "model-unavailable" });
+    await checkModelConnection(adapter.open(selection, "accept-usage"), AbortSignal.timeout(5000));
   } finally { restore(); await server.close(); }
 });
 
@@ -52,5 +54,18 @@ test("OpenAI Responses replays only its own tool call and normalizes reported us
     const second = await generate();
     assert.match(second.text, /OpenAI/);
     assert.equal(server.requests[1].input.find(item => item.type === "function_call_output").call_id, "call_fixture");
+    await checkModelConnection(model, AbortSignal.timeout(5000));
   } finally { restore(); await server.close(); }
+});
+
+test("model connection check rejects a tool call with no confirmed tool result", async () => {
+  const model = { async *generate({ messages }) {
+    if (messages.length === 1) {
+      yield { type: "done", reason: "tool-calls", text: "",
+        calls: [{ id: "tool", name: "check_connection", arguments: {} }] };
+      return;
+    }
+    yield { type: "done", reason: "stop", text: "连接成功。", calls: [] };
+  } };
+  await assert.rejects(checkModelConnection(model, AbortSignal.timeout(5000)), { code: "unsupported" });
 });

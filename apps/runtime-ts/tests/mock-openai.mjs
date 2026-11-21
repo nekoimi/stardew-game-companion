@@ -7,11 +7,12 @@ export async function createMockOpenAI() {
     requests.push(body);
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     const send = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
-    const isContinuation = body.input.some(item => item.type === "function_call_output");
+    const toolOutput = body.input.find(item => item.type === "function_call_output");
     const probe = body.tools?.some(item => item.name === "check_connection");
-    const item = isContinuation
+    const text = probe && toolOutput ? JSON.parse(toolOutput.output).verificationCode : "已通过 OpenAI 回复。";
+    const item = toolOutput
       ? { type: "message", id: "msg_fixture", role: "assistant", status: "completed",
-          content: [{ type: "output_text", text: "已通过 OpenAI 回复。", annotations: [] }] }
+          content: [{ type: "output_text", text, annotations: [] }] }
       : { type: "function_call", id: "fc_fixture", call_id: "call_fixture",
           name: probe ? "check_connection" : "get_status", arguments: "{}", status: "completed" };
     send("response.created", { response: { id: "resp_fixture", status: "in_progress", output: [] } });

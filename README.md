@@ -7,7 +7,7 @@
 
 [下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases) · [使用指南](docs/desktop-portable.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
-API 绿色候选内置 Node 和 Pi 模型 SDK，可直接填写厂商 API Key。隔离候选已通过模拟模型的原生移动、F9、同存档模型切换和断线重连。[候选包使用说明](docs/desktop-api-preview.md) · [改造方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)
+API 绿色候选内置 Node 和 Pi 模型 SDK，可直接填写厂商 API Key。启动前可测试模型的工具调用和回执处理，隔离候选已验证模拟模型的原生移动、F9、同存档模型切换和断线重连。[候选包使用说明](docs/desktop-api-preview.md) · [改造方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)
 
 ## 已发布版本的快速开始
 

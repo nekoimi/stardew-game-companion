@@ -30,7 +30,14 @@ export async function createMockDeepSeek(plan) {
       if (res.destroyed) return;
     }
     let name, args = {};
-    if (body.tools?.some(tool => tool.function.name === "check_connection")) name = "check_connection";
+    const probe = body.tools?.some(tool => tool.function.name === "check_connection");
+    if (probe && !latestTool) name = "check_connection";
+    else if (probe) {
+      const result = JSON.parse(latestTool.content);
+      chunk({ role: "assistant", content: result.verificationCode ?? "" });
+      chunk({}, "stop");
+      return res.end("data: [DONE]\n\n");
+    }
     else if (plan) ({ name, args } = plan(body));
     else if (user.includes("记住今日目标") && last.role === "user") {
       name = "manage_arrangements";

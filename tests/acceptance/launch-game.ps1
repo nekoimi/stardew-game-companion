@@ -576,7 +576,7 @@ try {
         Write-Utf8File (Join-Path $runEvidenceDir 'agent-package.json') ($versions | ConvertTo-Json -Compress)
         $apiHost = [Diagnostics.Process]::Start($runtimeHost)
         $readyFile = Join-Path $runEvidenceDir 'agent-runtime-ready.json'
-        $readyDeadline = [DateTime]::UtcNow.AddSeconds(60)
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(75)
         while (!(Test-Path -LiteralPath $readyFile) -and !$apiHost.HasExited -and [DateTime]::UtcNow -lt $readyDeadline) {
             Start-Sleep -Milliseconds 100
         }
