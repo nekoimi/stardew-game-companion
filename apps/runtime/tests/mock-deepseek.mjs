@@ -7,13 +7,17 @@ export async function createMockDeepSeek(plan) {
     const body = JSON.parse(Buffer.concat(await Array.fromAsync(req)).toString());
     const key = req.headers.authorization;
     calls.push(body);
-    if (key === "Bearer accept-401" || key === "Bearer accept-429") {
+    if (key === "Bearer accept-401" || key === "Bearer accept-429" || key === "Bearer accept-404") {
       const status = Number(key.slice(-3));
       res.writeHead(status, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ error: { message: "fixture response must stay private" } }));
     }
-    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    if (key === "Bearer reject-stream") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: { message: "stream mode is unsupported" } }));
+    }
     const chunk = (delta, finish = null, usage) => {
+      if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream" });
       res.write(`data: ${JSON.stringify({ id: "chatcmpl-local", object: "chat.completion.chunk",
         created: 1, model: body.model, choices: usage ? [] : [{ index: 0, delta, finish_reason: finish }], usage })}\n\n`);
     };
@@ -34,6 +38,7 @@ export async function createMockDeepSeek(plan) {
     if (probe && !latestTool) name = "check_connection";
     else if (probe) {
       const result = JSON.parse(latestTool.content);
+      if (body.stream === false) return sendComplete(null, result.verificationCode ?? "");
       chunk({ role: "assistant", content: result.verificationCode ?? "" });
       chunk({}, "stop");
       return res.end("data: [DONE]\n\n");
@@ -54,11 +59,24 @@ export async function createMockDeepSeek(plan) {
       args = { action: { navigate_to: { location_id: observed.locationId,
         tile: user.includes("走到出口") ? { x: 3, y: 9 } : { x: observed.tileX - 1, y: observed.tileY } } } };
     }
+    function sendComplete(call, text) {
+      const usage = key === "Bearer accept-no-usage" ? undefined : { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ id: "chatcmpl-local", object: "chat.completion", model: body.model,
+        choices: [{ index: 0, finish_reason: call ? "tool_calls" : "stop",
+          message: { role: "assistant", content: text, tool_calls: call ? [call] : undefined } }], usage }));
+    }
+    if (body.stream === false) {
+      return sendComplete(name ? { id: "call_" + calls.length, type: "function",
+        function: { name, arguments: key === "Bearer invalid-arguments" ? "{broken" : JSON.stringify(args) } } : null,
+      name ? null : "收到游戏回执。");
+    }
     if (name) {
       const content = JSON.stringify(args);
       const index = Math.floor(content.length / 2);
       chunk({ role: "assistant", tool_calls: [{ index: 0, id: "call_" + calls.length, type: "function",
         function: { name, arguments: content.slice(0, index) } }] });
+      if (key === "Bearer interrupted-tool") return res.end();
       chunk({ tool_calls: [{ index: 0, function: { arguments: content.slice(index) } }] });
       chunk({}, "tool_calls");
     } else {

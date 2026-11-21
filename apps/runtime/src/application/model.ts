@@ -13,6 +13,10 @@ export interface ModelSelection {
   stream?: boolean;
 }
 
+export function modelResponseTimeout(stream: boolean | undefined): number {
+  return stream === false ? 90_000 : 45_000;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;

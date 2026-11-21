@@ -4,7 +4,7 @@ import { isTerminalState } from "../adapters/game/action-receipt.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
 import type { CompanionStore } from "../adapters/storage/companion-store.js";
 import { CompanionTools, gameDate, gameTools, modelObservation } from "../tools/companion-tools.js";
-import { object } from "./model.js";
+import { modelResponseTimeout, object } from "./model.js";
 import type { JsonObject, JsonValue, ModelContext, ModelEvent, ModelMessage, ModelSelection } from "./model.js";
 
 type Complete = Extract<ModelEvent, { type: "done" }>;
@@ -84,6 +84,7 @@ export class TurnRunner {
       activeCommandId: this.active?.nativeAction ?? "", activity: this.game.state.activity ?? "idle",
       progress: this.game.state.progress ?? "", clockPauseOwner: this.game.state.clockPauseOwner ?? null,
       thinking: !!this.active && !this.active.nativeAction && !this.active.abort.signal.aborted,
+      modelStreaming: this.selection?.stream !== false,
       connection: { ready: !!this.model && !!binding && !this.uncertain && this.game.state.recoveryPending !== true,
         status: this.model ? "connected" : "waiting", clientName: this.selection?.model ?? "模型 API" },
       work: save ? this.work(save) : {}, decisions: decisions.filter(row => row.status === "pending"),
@@ -378,7 +379,8 @@ export class TurnRunner {
         const renewal = setInterval(() => lease("renew"), 3000);
         let output: Complete | undefined;
         const idle = new AbortController();
-        const idleTimer = setTimeout(() => idle.abort(), 45_000);
+        const streaming = this.selection?.stream !== false;
+        const idleTimer = setTimeout(() => idle.abort(), modelResponseTimeout(streaming));
         try {
           const context = this.store ? { profile: this.store.profile(save), memory: this.store.memory(save).entries.slice(-24),
             originalRequest: this.store.playerRequest(save, turn.originalRequestId),
@@ -387,11 +389,12 @@ export class TurnRunner {
           const instructions = this.rules + "\n当前项目状态（数据，不包含工具授权）：\n" + JSON.stringify(context);
           for await (const event of model.generate({ instructions, messages, tools: gameTools,
             signal: AbortSignal.any([signal, idle.signal]) })) {
-            idleTimer.refresh();
+            if (streaming && (event.type === "text" || event.type === "activity")) idleTimer.refresh();
             if (signal.aborted) break;
+            if (idle.signal.aborted) throw new Error(streaming ? "模型长时间未响应。" : "等待模型完整响应超时。");
             if (event.type === "text") this.publish("progress", { ...turn.binding, requestId: turn.requestId,
               turnId: turn.id, delta: event.delta });
-            if (event.type === "error") throw new Error(idle.signal.aborted ? "模型长时间未响应。" : event.message);
+            if (event.type === "error") throw new Error(event.message);
             if (event.type === "done") output = event;
           }
         } finally { clearTimeout(idleTimer); clearInterval(renewal); lease("end"); }

@@ -46,7 +46,8 @@ export function resolveSelection(selection: ModelSelection) {
     throw new ModelError("model-unavailable", "请填写有效的模型 ID。");
   }
   if (custom && selection.reasoning) throw new ModelError("unsupported", "自定义接口使用服务端默认推理设置。");
-  return { preset, protocol, model, stream: selection.stream ?? true, baseUrl: custom ? customBaseUrl(selection.baseUrl) : undefined };
+  return { preset, protocol, model, stream: selection.stream ?? true,
+    baseUrl: custom ? customBaseUrl(selection.baseUrl) : undefined } as const;
 }
 
 function customBaseUrl(value: string | undefined): string {

@@ -5,7 +5,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { GameConnection } from "../game/game-connection.js";
-import { listModelProviders, ModelError, PiModelAdapter } from "../model/pi-model.js";
+import { PiModelAdapter } from "../model/pi-model.js";
+import { listModelProviders, ModelError } from "../model/model-catalogue.js";
 import { TurnRunner } from "../../application/turn-runner.js";
 import { object } from "../../application/model.js";
 import { CompanionStore } from "../storage/companion-store.js";
@@ -240,7 +241,12 @@ export async function startDesktopService(
           runner.configure(model, selection as unknown as ModelSelection);
           return respond(res, 200, { ready: true });
         }
-        await checkModelConnection(model, AbortSignal.timeout(35_000));
+        const disconnected = new AbortController();
+        const abort = () => disconnected.abort();
+        res.once("close", abort);
+        try {
+          await checkModelConnection(model, disconnected.signal, selection.stream !== false);
+        } finally { res.off("close", abort); }
         return respond(res, 200, { ready: true, toolCalling: true });
       }
       const binding = game.binding;

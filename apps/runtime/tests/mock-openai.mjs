@@ -6,7 +6,6 @@ export async function createMockOpenAI(plan) {
     const body = JSON.parse(Buffer.concat(await Array.fromAsync(req)).toString());
     requests.push(body);
     const id = requests.length;
-    res.writeHead(200, { "Content-Type": "text/event-stream" });
     const send = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
     const toolOutput = body.input.findLast(item => item.type === "function_call_output");
     const probe = body.tools?.some(item => item.name === "check_connection");
@@ -18,6 +17,19 @@ export async function createMockOpenAI(plan) {
           name: next.name, arguments: JSON.stringify(next.args ?? {}), status: "completed" }
       : { type: "message", id: `msg_fixture_${id}`, role: "assistant", status: "completed",
           content: [{ type: "output_text", text, annotations: [] }] };
+    const result = { id: `resp_fixture_${id}`, model: body.model, status: "completed", output: [item],
+      usage: { input_tokens: 12, output_tokens: 4, total_tokens: 16,
+        input_tokens_details: { cached_tokens: 2 }, output_tokens_details: { reasoning_tokens: 0 } } };
+    if (body.stream === false) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      if (next.onResponseClose) {
+        res.write('{"status":"completed",');
+        res.once("close", next.onResponseClose);
+        return;
+      }
+      return res.end(JSON.stringify(result));
+    }
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
     send("response.created", { response: { id: `resp_fixture_${id}`, status: "in_progress", output: [] } });
     if (item.type === "function_call") {
       send("response.output_item.added", { output_index: 0, item: { ...item, arguments: "", status: "in_progress" } });
@@ -31,9 +43,7 @@ export async function createMockOpenAI(plan) {
     }
     if (next.onResponseClose) { res.once("close", next.onResponseClose); return; }
     send("response.output_item.done", { output_index: 0, item });
-    send("response.completed", { response: { id: `resp_fixture_${id}`, model: body.model, status: "completed", output: [item],
-      usage: { input_tokens: 12, output_tokens: 4, total_tokens: 16,
-        input_tokens_details: { cached_tokens: 2 }, output_tokens_details: { reasoning_tokens: 0 } } } });
+    send("response.completed", { response: result });
     res.end();
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));

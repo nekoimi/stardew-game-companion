@@ -1,22 +1,31 @@
-import { createModels, InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { createModels, createProvider, InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import type {
-  JsonObject, ModelAdapter, ModelContext, ModelErrorCode, ModelEvent, ModelMessage, ModelSelection,
+  JsonObject, ModelAdapter, ModelContext, ModelEvent, ModelMessage, ModelSelection,
 } from "../../application/model.js";
-
-import { ModelError, resolveSelection, thinkingLevels } from "./model-catalogue.js";
-export { ModelError, listModelProviders } from "./model-catalogue.js";
+import { completeResponseFetch, invalidCompleteResponse } from "./complete-response.js";
+import { ModelError, presets, resolveSelection, thinkingLevels } from "./model-catalogue.js";
 
 function classifyFailure(text: string | undefined, cancelled: boolean): ModelError {
   if (cancelled) return new ModelError("cancelled", "模型请求已取消。");
   // Provider errors may include request data. Only the classification leaves this adapter.
   const detail = text ?? "";
+  if (detail.includes(invalidCompleteResponse)) {
+    return new ModelError("invalid-tool-response", "模型未返回有效的非流式结果，请检查协议和流式设置。");
+  }
   if (/\b(401|403)\b|unauthorized|api.key|authentication|permission.denied/i.test(detail)) {
     return new ModelError("authentication", "模型鉴权失败，请核对 API Key 和模型权限。");
   }
   if (/\b429\b|rate.limit|quota/i.test(detail)) return new ModelError("rate-limited", "模型请求受限，请稍后重试或检查额度。");
+  if (/\b402\b|insufficient.balance/i.test(detail)) return new ModelError("rate-limited", "模型服务余额或额度不足。");
   if (/\b404\b|model.not.found|unknown.model/i.test(detail)) return new ModelError("model-unavailable", "模型不可用，请核对模型名称。");
+  if (/stream.*(?:unsupported|not.support|invalid)|(?:unsupported|not.support).*stream/i.test(detail)) {
+    return new ModelError("unsupported", "接口拒绝当前流式设置，请调整流式开关后重试。");
+  }
+  if (/unfinished tool call/i.test(detail)) return new ModelError("invalid-tool-response", "模型工具调用未完整返回。");
+  if (/stream ended|without finish_reason/i.test(detail)) return new ModelError("network", "模型响应在完成前中断，请检查接口与流式设置。");
   if (/\b(500|502|503|504)\b|network|fetch|timeout|econn|enotfound|premature|connection/i.test(detail)) {
     return new ModelError("network", "模型连接中断或超时。");
   }
@@ -26,28 +35,39 @@ function classifyFailure(text: string | undefined, cancelled: boolean): ModelErr
 export class PiModelAdapter implements ModelAdapter {
   open(selection: ModelSelection, apiKey: string): ModelContext {
     const resolved = resolveSelection(selection);
-    if (!apiKey.trim()) throw new ModelError("authentication", "请填写 API Key。");
-    if (!resolved.stream || (!resolved.preset && resolved.protocol !== "responses")) {
-      throw new ModelError("unsupported", "当前运行时尚未启用所选请求方式。");
-    }
-    const provider = resolved.preset?.factory() ?? openaiProvider();
+    const key = apiKey.trim();
+    if (!key) throw new ModelError("authentication", "请填写 API Key。");
+    const chat = resolved.protocol === "chat-completions";
+    const preset = resolved.preset ?? (chat ? presets.deepseek : presets.openai);
+    const official = preset.factory();
+    const api = chat ? "openai-completions" : "openai-responses";
+    const catalogue = official.getModels();
+    const template = catalogue.find(entry => entry.id === preset.models[0] && entry.api === api);
+    if (!template) throw new ModelError("unsupported", "模型目录缺少协议配置。");
+    const known = resolved.preset ? catalogue.find(entry => entry.id === resolved.model && entry.api === api) : undefined;
+    const baseUrl = resolved.baseUrl ?? official.baseUrl ?? template.baseUrl;
+    const model: Model<typeof api> = known ? { ...known, baseUrl } : {
+      ...template, api, provider: resolved.baseUrl ? "custom" : official.id, baseUrl,
+      id: resolved.model, name: resolved.model, reasoning: false,
+      compat: resolved.baseUrl ? (chat ? { supportsStore: false, supportsUsageInStreaming: false, maxTokensField: "max_tokens" } : {}) : template.compat,
+    };
+    const provider = resolved.baseUrl ? createProvider({
+      id: model.provider, baseUrl, auth: { apiKey: official.auth.apiKey },
+      models: [model], api: chat ? openAICompletionsApi() : openAIResponsesApi(),
+    }) : official;
     const credentials = new InMemoryCredentialStore();
     const models = createModels({ credentials });
     models.setProvider(provider);
-    const known = models.getModel(provider.id, resolved.preset ? resolved.model : "gpt-5-mini");
-    if (!known) throw new ModelError("model-unavailable", "模型不在当前服务商目录中。");
-    const model = resolved.baseUrl ? { ...known, id: resolved.model, name: resolved.model,
-      baseUrl: resolved.baseUrl, reasoning: false } : known;
     const reasoning = thinkingLevels.find(level => level === selection.reasoning);
     if (selection.reasoning && (!reasoning || !model.reasoning || model.thinkingLevelMap?.[reasoning] === null)) {
       throw new ModelError("unsupported", "该模型不支持所选推理档位。");
     }
     const providerHistory = new WeakMap<ModelMessage, AssistantMessage>();
+    const fetchComplete = resolved.stream ? undefined : completeResponseFetch(resolved.protocol);
     let lastResponse: AssistantMessage | undefined;
     return {
       async *generate({ instructions, messages, tools, signal }): AsyncIterable<ModelEvent> {
         try {
-          await credentials.modify(provider.id, async () => ({ type: "api_key", key: apiKey.trim() }));
           const transcript: Message[] = messages.map(message => {
             const timestamp = Date.now();
             if (message.role === "user") return { role: "user", content: message.text, timestamp };
@@ -67,15 +87,17 @@ export class PiModelAdapter implements ModelAdapter {
             };
           });
           const stream = models.streamSimple(model, { systemPrompt: instructions, messages: transcript, tools: [...tools] },
-            { signal, reasoning, maxTokens: 4096 });
+            { apiKey: key, signal, reasoning, maxTokens: 4096, maxRetries: 0,
+              fetch: fetchComplete });
           for await (const event of stream) {
-            if (event.type === "text_delta") yield { type: "text", delta: event.delta };
-            if (event.type === "thinking_delta" || event.type === "toolcall_delta") yield { type: "activity" };
+            if (resolved.stream && event.type === "text_delta") yield { type: "text", delta: event.delta };
+            if (resolved.stream && (event.type === "thinking_delta" || event.type === "toolcall_delta")) yield { type: "activity" };
             if (event.type === "error") throw classifyFailure(event.error.errorMessage, signal.aborted || event.reason === "aborted");
             if (event.type !== "done") continue;
             const { message } = event;
             const calls = message.content.filter(part => part.type === "toolCall");
-            if (calls.some(call => call.argumentsError || !call.id || !call.name)
+            if (calls.some(call => call.argumentsError || !call.id || !call.name
+                || !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments))
               || new Set(calls.map(call => call.id)).size !== calls.length) {
               throw new ModelError("invalid-tool-response", "模型返回了无法解析的工具参数。");
             }

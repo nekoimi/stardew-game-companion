@@ -2,7 +2,7 @@ import { PI_AI_VERSION } from "@earendil-works/pi-ai";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { DatabaseSync } from "node:sqlite";
 import { startDesktopService } from "./adapters/desktop/desktop-service.js";
-import { listModelProviders } from "./adapters/model/pi-model.js";
+import { listModelProviders } from "./adapters/model/model-catalogue.js";
 
 export function checkRuntime(): { node: string; sqlite: string; sdk: string } {
   const database = new DatabaseSync(":memory:");
