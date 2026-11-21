@@ -1,4 +1,9 @@
 export const gameProtocolVersion = "2";
+const terminalStates = new Set(["succeeded", "partially-succeeded", "failed", "cancelled", "rejected"]);
+
+export function isTerminalState(state: unknown): boolean {
+  return typeof state === "string" && terminalStates.has(state);
+}
 
 export interface GameBinding {
   saveId: string;
@@ -11,7 +16,7 @@ export function classifyReceipt(
     messageType: string;
     saveId?: string;
     gameSessionId?: string;
-    payload: { commandId?: string; terminalState?: string };
+    payload: { commandId?: unknown; terminalState?: unknown };
   },
   binding: GameBinding,
   expectedActionId: string | undefined,
@@ -20,9 +25,10 @@ export function classifyReceipt(
   if (message.protocolVersion !== gameProtocolVersion) return "version-mismatch";
   if (message.saveId !== binding.saveId || message.gameSessionId !== binding.gameSessionId) return "stale-game";
   const id = message.payload.commandId;
-  if (id && settledActions.has(id)) return "duplicate";
-  if (!id || id !== expectedActionId) return "unrelated";
+  if (typeof id !== "string" || !id) return "unrelated";
+  if (settledActions.has(id)) return "duplicate";
+  if (id !== expectedActionId) return "unrelated";
   if (message.messageType === "skill.result.status") return "pending";
   if (message.messageType !== "skill.result") return "unrelated";
-  return message.payload.terminalState ? "terminal" : "pending";
+  return isTerminalState(message.payload.terminalState) ? "terminal" : "pending";
 }

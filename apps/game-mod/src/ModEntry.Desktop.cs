@@ -214,7 +214,9 @@ public sealed partial class ModEntry
             case "recover":
                 if (!_desktopRecoveryPending) break;
                 if (active) error = "ACTION_STILL_RUNNING";
-                else if (receiptId is not null && receipt is null) error = "TERMINAL_UNKNOWN";
+                else if (receiptId is not null && (receipt is null
+                    || server.ProtocolVersion == AgentProtocol.Version && !AgentProtocol.IsTerminalState(receipt.TerminalState)))
+                    error = "TERMINAL_UNKNOWN";
                 else
                 {
                     _desktopRecoveryPending = _desktopInterrupting = false;

@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import type { JsonObject } from "../../application/model.js";
 import { object } from "../../application/model.js";
-import { classifyReceipt, gameProtocolVersion } from "./action-receipt.js";
+import { classifyReceipt, gameProtocolVersion, isTerminalState } from "./action-receipt.js";
 import type { GameBinding } from "./action-receipt.js";
 
 interface Discovery extends GameBinding {
@@ -250,9 +250,7 @@ export class GameConnection extends EventEmitter {
   }
 
   private isReceipt(message: Envelope, binding: GameBinding, actionId: string): boolean {
-    if (message.messageType !== "skill.result") return false;
-    return classifyReceipt({ ...message, payload: { commandId: String(message.payload.commandId ?? ""),
-      terminalState: String(message.payload.terminalState ?? "") } }, binding, actionId, this.settled) === "terminal";
+    return classifyReceipt(message, binding, actionId, this.settled) === "terminal";
   }
 
   async queryAction(actionId: string): Promise<JsonObject | undefined> {
@@ -262,7 +260,7 @@ export class GameConnection extends EventEmitter {
     const reply = await this.request(this.commands, "skill.result.query", { commandId: actionId }, message =>
       message.correlationId === id && (message.messageType === "skill.result.status" || message.messageType === "skill.result"),
     5000, id);
-    if (reply.messageType === "skill.result" && reply.payload.commandId === actionId && reply.payload.terminalState) {
+    if (reply.messageType === "skill.result" && reply.payload.commandId === actionId && isTerminalState(reply.payload.terminalState)) {
       return reply.payload;
     }
   }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { GameConnection } from "../adapters/game/game-connection.js";
+import { isTerminalState } from "../adapters/game/action-receipt.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
 import type { CompanionStore } from "../adapters/storage/companion-store.js";
 import { CompanionTools, gameDate, gameTools, modelObservation } from "../tools/companion-tools.js";
@@ -46,7 +47,8 @@ export class TurnRunner {
         this.active?.abort.abort();
       }
       if (binding && this.previousBinding?.saveId !== binding.saveId) this.messages.length = 0;
-      if (binding && this.uncertain && this.uncertain.binding.gameSessionId !== binding.gameSessionId) this.uncertain = undefined;
+      if (binding && this.uncertain && (this.uncertain.binding.gameSessionId !== binding.gameSessionId
+        || this.uncertain.binding.saveId !== binding.saveId)) this.uncertain = undefined;
       if (binding && !this.active && !this.uncertain) {
         const pending = this.store?.pendingAction(binding);
         if (pending) this.uncertain = { binding, actionId: pending };
@@ -298,19 +300,37 @@ export class TurnRunner {
       return this.status();
     }
     if (action === "recover") {
-      if (this.uncertain) {
-        const result = await this.game.queryAction(this.uncertain.actionId);
-        if (!result) throw new Error("游戏尚未确认旧动作的终态。");
-        this.settleReceipt(binding, this.uncertain.actionId, result);
-        this.uncertain = undefined;
+      this.transition = true;
+      try {
+        let confirmedActionId: string | undefined;
+        if (this.uncertain) {
+          const { actionId } = this.uncertain;
+          const result = await this.game.queryAction(actionId);
+          this.assertBinding(binding);
+          if (!result || result.commandId !== actionId || !isTerminalState(result.terminalState)) {
+            throw new Error("游戏尚未确认旧动作的终态。");
+          }
+          this.settleReceipt(binding, actionId, result);
+          confirmedActionId = actionId;
+          this.uncertain = undefined;
+        }
+        const result = await this.game.control("recover");
+        this.assertBinding(binding);
+        const receipt = object(result.result);
+        if (typeof receipt.commandId === "string" && isTerminalState(receipt.terminalState)) {
+          if (receipt.commandId !== confirmedActionId) this.settleReceipt(binding, receipt.commandId, receipt);
+          confirmedActionId = receipt.commandId;
+        }
+        if (this.game.state.interrupting === true) {
+          await this.game.control("unhold");
+          this.assertBinding(binding);
+        }
+        this.publish("recovery", { ...binding, hasReceipt: confirmedActionId !== undefined });
+        return result;
+      } finally {
+        this.transition = false;
+        this.changed();
       }
-      const result = await this.game.control("recover");
-      const receipt = object(result.result);
-      if (typeof receipt.commandId === "string" && typeof receipt.terminalState === "string") this.settleReceipt(binding, receipt.commandId, receipt);
-      if (this.game.state.interrupting === true) await this.game.control("unhold");
-      this.publish("recovery", { ...binding, hasReceipt: !!result.result });
-      this.changed();
-      return result;
     }
     if (!["pause", "resume", "takeover", "handoff"].includes(action)) throw new Error("未知的控制操作。");
     if (this.uncertain && ["resume", "handoff"].includes(action)) throw new Error("请先核对旧动作。");
@@ -497,13 +517,18 @@ export class TurnRunner {
         try {
           this.assertBinding(turn.binding);
           receipt = await this.game.queryAction(actionId);
+          this.assertBinding(turn.binding);
           await this.game.control("status");
         } catch { /* Retain the unresolved action for explicit recovery. */ }
       }
-      if (!receipt) {
-        if (!observation) this.uncertain = { binding: turn.binding, actionId };
+      if (!receipt || receipt.commandId !== actionId || !isTerminalState(receipt.terminalState)) {
+        const current = this.game.binding;
+        if (!observation && (!current || current.gameSessionId === turn.binding.gameSessionId && current.saveId === turn.binding.saveId)) {
+          this.uncertain = { binding: turn.binding, actionId };
+        }
         throw new Error("游戏动作的终态待核对。");
       }
+      this.assertBinding(turn.binding);
       if (!observation) this.settleReceipt(turn.binding, actionId, receipt);
       return receipt;
     } finally { turn.nativeAction = undefined; this.changed(); }

@@ -84,13 +84,39 @@ test("an unknown terminal action blocks replacement until a real receipt is foun
   await waitFor(() => runner.status().recoveryPending);
   assert.equal(game.queryCount, 1);
   assert.ok(game.controls.includes("status"));
+  game.recovered = { commandId: game.executed[0], terminalState: "unknown" };
   await assert.rejects(runner.submit(binding, "second", "继续", "send"), /核对/);
   await assert.rejects(runner.control(binding, "recover"), /尚未确认/);
+  assert.equal(runner.status().recoveryPending, true);
+  assert.ok(!game.controls.includes("recover"));
+  assert.ok(!events.some(e => e.type === "result"));
   game.recovered = { commandId: game.executed[0], terminalState: "succeeded" };
   await runner.control(binding, "recover");
   assert.equal(runner.status().recoveryPending, false);
+  assert.equal(events.find(e => e.type === "recovery").payload.hasReceipt, true);
   assert.equal(events.filter(e => e.type === "result").length, 1);
   assert.equal(game.executed.length, 1);
+});
+
+test("a lost action from the previous save cannot leave the current save waiting for recovery", async () => {
+  const game = new FakeGame();
+  let disconnect;
+  game.nativeResult = () => new Promise((_, reject) => { disconnect = reject; });
+  const { runner, events } = fixture(game, { async *generate({ messages }) {
+    yield messages.at(-1).text === "走一格" ? done([action]) : done();
+  } });
+  game.emit("changed");
+  await runner.submit(binding, "first", "走一格", "send");
+  await waitFor(() => disconnect);
+  game.binding = { saveId: "other", gameSessionId: "new-game" };
+  game.emit("changed");
+  disconnect(new Error("game disconnected"));
+  await waitFor(() => events.some(e => e.type === "status" && e.payload.saveId === "other" && e.payload.activeCommandId === ""));
+  assert.equal(runner.status().recoveryPending, false);
+  assert.equal(game.queryCount, 0);
+  await runner.submit(game.binding, "second", "等我", "send");
+  await waitFor(() => events.some(e => e.type === "life.chat.reply" && e.payload.requestId === "second"));
+  await runner.stop();
 });
 
 test("a reply still streaming when another save is loaded can neither act nor enter history", async () => {

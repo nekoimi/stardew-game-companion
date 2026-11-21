@@ -1,5 +1,13 @@
 [
   {
+    "name": "unknown state presented as a receipt",
+    "gameSessionId": "spring-5",
+    "expectedActionId": "move-1",
+    "settledActionIds": [],
+    "message": {"protocolVersion":"2","messageType":"skill.result","saveId":"farm","gameSessionId":"spring-5","payload":{"commandId":"move-1","terminalState":"unknown"}},
+    "expected": "pending"
+  },
+  {
     "name": "wrong version",
     "gameSessionId": "spring-5",
     "expectedActionId": "move-1",

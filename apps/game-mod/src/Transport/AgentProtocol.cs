@@ -3,6 +3,8 @@ namespace StardewAI.Companion.Mod.Transport;
 public static class AgentProtocol
 {
     public const string Version = "2";
+    public static bool IsTerminalState(string? state) =>
+        state is "succeeded" or "partially-succeeded" or "failed" or "cancelled" or "rejected";
 
     public static string ClassifyReceipt(string version, string messageType, string? saveId, string? gameSessionId,
         string? actionId, string? terminalState, string activeSaveId, string activeGameSessionId,
@@ -14,6 +16,6 @@ public static class AgentProtocol
         if (string.IsNullOrEmpty(actionId) || actionId != expectedActionId) return "unrelated";
         if (messageType == "skill.result.status") return "pending";
         if (messageType != "skill.result") return "unrelated";
-        return string.IsNullOrEmpty(terminalState) ? "pending" : "terminal";
+        return IsTerminalState(terminalState) ? "terminal" : "pending";
     }
 }
