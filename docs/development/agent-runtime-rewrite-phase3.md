@@ -97,6 +97,12 @@ DeepSeek 官方 `deepseek-flash` 与第三方 Responses `gpt-6.1-sol` 均通过�
 
 使用 `start-desktop-acceptance.ps1` 启动隔离桌面，在同一存档从 DeepSeek 切到第三方 Responses。新模型正确复述伙伴名、手记约定和未完成目标。SQLite 确认两轮对话共用同一存档且两家都有用量回执。证据目录为 `desktop-1121-201946-8c98`。真实 API 的 F9、改派、读档、重连和待确认项仍待补验。
 
+### 真实桌面生命周期补验
+
+真实 DeepSeek 桌面复测发现自动选中的监听端口偶尔被 Windows 拒绝，以及过长的路线预览可能在超时后继续占用命令通道。`d0e5b24` 对自动端口做有限重试，`f337409` 为路线预览结算超时并在 F9 或改派时结束查询。端口冲突用例、66 项 C# 传输测试和 3 项路线观察测试通过。
+
+从 `f337409` 干净克隆构建候选，ZIP SHA256 为 `320d1b41b683c78068d43d19171226f266fb8470897bae9d62393ee9eac98c2e`，包清单 SHA256 为 `2c45844bff592d3153ae8d0171e9f0f1eec53b4f8ad2565af440a2cade9effac`。用 `start-desktop-acceptance.ps1 -ReleaseDir <解压目录> -SavePath <隔离存档> -GamePath <SMAPI 目录>`，以 DeepSeek `deepseek-flash` 在游戏 1.6.15.24356、SMAPI 4.5.2 复测。思考和原生移动分别实按 F9，改派等旧动作结算后回复，选择「留种」写入 SQLite，重连沿用游戏会话，重新读档建立新会话并保留玩家控制。证据目录为 `desktop-1121-204413-cfa2`，源存档哈希一致。
+
 ## 复现命令
 
 ```powershell
