@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../shared/dotnet/FileLogger.cs" Link="Logging/FileLogger.cs" />
     <Reference Include="SMAPI.Toolkit.CoreInterfaces">
       <HintPath>$(StardewGamePath)\smapi-internal\SMAPI.Toolkit.CoreInterfaces.dll</HintPath>
       <Private>false</Private>

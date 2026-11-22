@@ -162,7 +162,12 @@ public sealed partial class ModEntry
         transport.Server.ActorMode = "player";
         transport.Server.ActorMultiplayerId = Game1.player.UniqueMultiplayerID;
         transport.Server.SupportsThinkingPause = _config.PauseClockWhileThinking;
-        _authority.Changed += (owner, reason) => { _ = transport.Server.SendPlayerAuthorityAsync(owner == PlayerControlOwner.Agent ? "agent" : "human",reason); };
+        _authority.Changed += (owner, reason) =>
+        {
+            string controlOwner = owner == PlayerControlOwner.Agent ? "agent" : "human";
+            LogDesktopGameEvent("control_changed", "游戏控制权已切换。", new JsonObject { ["owner"] = controlOwner });
+            _ = transport.Server.SendPlayerAuthorityAsync(controlOwner, reason);
+        };
         // F9 takeover/cancel must not restart the preset: releasing to the human only
         // re-arms the one-shot so an explicit re-handoff resumes the already-bound goal.
         _authority.Changed += (owner, reason) => { if (owner == PlayerControlOwner.Human) _preset?.NoteAuthorityHuman(); };
@@ -549,6 +554,7 @@ public sealed partial class ModEntry
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        LogDesktopGameEvent("returned_to_title", "游戏已返回标题界面。");
         _nativeChatSave = null;
         _nativeChatDecisionSave = null;
         _unsentChatText = null;

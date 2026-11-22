@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using StardewAI.Companion.Mod.Execution;
 using StardewAI.Companion.Mod.Hosting;
 using StardewAI.Companion.Mod.Menus;
@@ -13,8 +14,20 @@ public sealed partial class ModEntry
         var server = session.Server;
         _transportSession = session;
         _transportServer = server;
+        LogDesktopGameEvent("save_loaded", "游戏已加载存档。", new JsonObject { ["mode"] = PlayerModeEnabled ? "player" : "companion" });
         coordinator.SetTransportServer(server);
         coordinator.ConnectionActionsAllowed = () => DesktopActionsAllowed;
+        if (_desktopMode)
+            coordinator.OnExecutionCompleted += () =>
+            {
+                if (coordinator.LastSkillResultPayload is { } result)
+                    LogDesktopGameEvent("action_completed", "Mod 已结算原生动作。", new JsonObject
+                    {
+                        ["commandId"] = result.CommandId, ["skillId"] = result.SkillId,
+                        ["status"] = result.TerminalState, ["code"] = result.Error?.Code,
+                        ["completedCount"] = result.CompletedCount,
+                    });
+            };
 
         void InSession(Action action) => QueueTransportAction(server, action);
         server.OnChatReplyReceived += payload => InSession(() => HandleChatReplyReceived(payload));

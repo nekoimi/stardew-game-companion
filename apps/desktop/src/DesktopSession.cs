@@ -1,12 +1,13 @@
 using System.IO;
 using System.Text.Json;
+using StardewAI.Companion.Logging;
 
 namespace StardewAI.Companion.Desktop;
 
 internal sealed class DesktopSession
 {
     private readonly string _root;
-    private readonly Action<string> _log;
+    private readonly FileLogger _logger;
     private readonly DesktopProcesses _processes;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
@@ -25,11 +26,11 @@ internal sealed class DesktopSession
     public int RuntimeGeneration => _runtimeGeneration;
     public bool CanReconnect => !_stopping && _processes.GameRunning && !_processes.RuntimeRunning;
 
-    public DesktopSession(string root, Action<string> log)
+    public DesktopSession(string root, FileLogger logger)
     {
         _root = root;
-        _log = log;
-        _processes = new DesktopProcesses(root, log);
+        _logger = logger;
+        _processes = new DesktopProcesses(root, logger);
         _processes.RuntimeExited += generation => RuntimeExited?.Invoke(generation);
         _processes.GameExited += () => GameExited?.Invoke();
     }
@@ -88,15 +89,15 @@ internal sealed class DesktopSession
         var selected = settings.ApiModel ?? new();
         await _api.PostAsync("/v2/model/configure", ModelRequest(selected, _modelKey));
         _api.StartEvents(message => EventReceived?.Invoke(generation, message),
-            () => generation == _runtimeGeneration && _processes.RuntimeRunning, _log);
+            () => generation == _runtimeGeneration && _processes.RuntimeRunning, _logger);
     }
 
     public Task<JsonElement> PostAsync(string route, object body, int timeoutSeconds = 25)
         => (_api ?? throw new InvalidOperationException("伴侣服务尚未启动。")).PostAsync(route, body, timeoutSeconds);
 
-    internal static async Task TestModelAsync(string root, ApiModelSettings selected, string key, Action<string> log)
+    internal static async Task TestModelAsync(string root, ApiModelSettings selected, string key, FileLogger logger)
     {
-        var processes = new DesktopProcesses(root, log);
+        var processes = new DesktopProcesses(root, logger);
         int requestTimeout = selected.Stream ? 95 : 185;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(requestTimeout + 20));
         try

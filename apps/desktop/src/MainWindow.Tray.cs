@@ -84,6 +84,8 @@ public partial class MainWindow
             RefreshControls();
             await EndSessionAsync(session, "伴侣服务已关闭。");
         }
+        _logger.Write("desktop", "info", "desktop_shutdown", "伴侣桌面已退出。");
+        await _logger.StopAsync();
         _exitReady = true;
         Close();
     }
@@ -93,7 +95,6 @@ public partial class MainWindow
         _trayIcon?.Dispose();
         _trayMenu?.Dispose();
         _trayImage?.Dispose();
-        _logTimer.Stop();
         base.OnClosed(e);
     }
 }

@@ -28,6 +28,7 @@ internal sealed record DesktopSettings(string GameDirectory = "", string ActorMo
 internal static class DesktopInstallation
 {
     internal static string SettingsFile(string root) => Path.Combine(root, "data", "desktop-settings.json");
+    internal static string LogDirectory(string root) => Path.Combine(root, "data", "logs");
 
     internal static DesktopSettings LoadSettings(string root)
     {

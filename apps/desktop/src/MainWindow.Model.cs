@@ -60,7 +60,7 @@ public partial class MainWindow
         catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException)
         {
             ApiModelFeedback.Text = "模型目录不可用，请完整解压绿色包。";
-            Log(error.Message);
+            LogError("model_catalogue_read_failed", "无法读取模型目录。", error);
             return;
         }
 
@@ -180,7 +180,7 @@ public partial class MainWindow
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             ApiModelFeedback.Text = "模型设置保存失败，请检查解压目录是否可写。";
-            Log(error.Message);
+            LogError("model_settings_save_failed", "无法保存模型设置。", error);
         }
     }
 
@@ -194,7 +194,7 @@ public partial class MainWindow
             var selected = ApiSelection();
             string key = ResolveApiKey(selected);
             ApiModelFeedback.Text = "正在检测模型与工具调用…";
-            await DesktopSession.TestModelAsync(_root, selected, key, Log);
+            await DesktopSession.TestModelAsync(_root, selected, key, _logger);
             ApiModelFeedback.Text = "模型连接和工具调用均已通过。";
         }
         catch (Exception error) { ApiModelFeedback.Text = error.Message; }

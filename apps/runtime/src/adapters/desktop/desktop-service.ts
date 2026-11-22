@@ -30,8 +30,18 @@ export async function startDesktopService(
   let sequence = 0;
   let lastStatus = "";
   let activeGameId: string | undefined;
+  const diagnostic = (event: string, details: JsonObject = {}) =>
+    process.stderr.write("STARDEW_COMPANION_LOG " + JSON.stringify({ event, ...details }) + "\n");
   const publish = (type: string, payload: JsonObject) => {
     if (type === "submitted" || type === "life.chat.reply" || type === "result") trace?.(type, payload);
+    if (type === "result") {
+      diagnostic("action_result", { gameSessionId: payload.gameSessionId ?? null, commandId: payload.commandId ?? null,
+        skillId: payload.skillId ?? null, status: payload.terminalState ?? null, completedCount: payload.completedCount ?? null,
+        code: object(payload.error).code ?? null });
+    }
+    if (type === "life.chat.reply" && payload.status === "failed" && payload.error) {
+      diagnostic("turn_failed", { gameSessionId: payload.gameSessionId ?? null, requestId: payload.requestId ?? null });
+    }
     const data = JSON.stringify({ type, payload });
     if (type === "status") {
       if (lastStatus === data) return;
@@ -51,10 +61,11 @@ export async function startDesktopService(
   };
   const core = await readFile(join(runDirectory, "docs", "agent-ts-instructions.md"), "utf8");
   const runner = new TurnRunner(game, undefined, publish,
-    core + "\n按最新观察和工具回执推进。", store, runDirectory, trace);
+    core + "\n按最新观察和工具回执推进。", store, runDirectory, trace, diagnostic);
   game.on("changed", () => {
     const binding = game.binding;
     if (activeGameId !== binding?.gameSessionId) {
+      diagnostic(binding ? "game_connected" : "game_disconnected", { gameSessionId: binding?.gameSessionId ?? activeGameId ?? null });
       activeGameId = binding?.gameSessionId;
       submissions.clear();
     }
@@ -242,6 +253,7 @@ export async function startDesktopService(
         const model = provider.open(effective, body.apiKey);
         if (url === "/v2/model/configure") {
           runner.configure(model, effective);
+          diagnostic("model_configured", { provider: effective.provider, protocol });
           return respond(res, 200, { ready: true });
         }
         const disconnected = new AbortController();
@@ -250,6 +262,7 @@ export async function startDesktopService(
         try {
           await checkModelConnection(model, disconnected.signal, stream);
         } finally { res.off("close", abort); }
+        diagnostic("model_test_passed", { provider: effective.provider, protocol });
         return respond(res, 200, { ready: true, toolCalling: true });
       }
       const binding = game.binding;
@@ -335,6 +348,8 @@ export async function startDesktopService(
       }
       return respond(res, 404, { error: "找不到操作。" });
     } catch (error) {
+      if (url === "/v2/model/test" || url === "/v2/model/configure")
+        diagnostic("model_request_failed", { code: error instanceof ModelError ? error.code : "unexpected_error" });
       if (error instanceof ModelError) return respond(res, 409, { error: error.message, code: error.code });
       if (error instanceof SyntaxError) return respond(res, 400, { error: "请求格式无效。" });
       return respond(res, 409, { error: error instanceof Error ? error.message : "操作未完成。" });

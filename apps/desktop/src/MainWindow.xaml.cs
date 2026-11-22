@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using StardewAI.Companion.Logging;
 
 namespace StardewAI.Companion.Desktop;
 
@@ -18,8 +19,7 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _seenResults = new(StringComparer.Ordinal);
     private readonly HashSet<string> _pendingChatRequests = new(StringComparer.Ordinal);
     private readonly string _root = AppContext.BaseDirectory;
-    private readonly Queue<string> _pendingLogs = new();
-    private readonly DispatcherTimer _logTimer;
+    private readonly FileLogger _logger;
     private DesktopSettings _savedSettings = new();
     private DesktopSession? _session;
     private string? _gameSessionId;
@@ -41,9 +41,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        _logTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
-        _logTimer.Tick += (_, _) => FlushLogs();
-        _logTimer.Start();
+        _logger = new FileLogger(DesktopInstallation.LogDirectory(_root),
+            configuredDirectory: Environment.GetEnvironmentVariable("STARDEW_COMPANION_LOG_DIR"));
+        LogDirectoryText.Text = _logger.DirectoryPath;
+        _logger.Write("desktop", "info", "desktop_started", "伴侣桌面已启动。");
         Timeline.ItemsSource = _entries;
         InitializeSaveViews();
         try
@@ -54,7 +55,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
-            Log($"读取桌面设置失败：{ex.Message}");
+            LogError("settings_read_failed", "读取桌面设置失败。", ex);
         }
         Mode.SelectedIndex = _savedSettings.ActorMode == "player" ? 1 : 0;
         InitializeApiModel(_savedSettings.ApiModel ?? new(), _savedSettings.CustomModel);
@@ -101,10 +102,10 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             ShowSettingsError(LaunchSettingsTab, GameFolder, SettingsFeedback, "保存失败，请检查解压目录是否可写。");
-            Log(error.Message);
+            LogError("launch_settings_failed", "无法保存启动设置。", error);
             return;
         }
-        var session = new DesktopSession(_root, Log);
+        var session = new DesktopSession(_root, _logger);
         _session = session;
         _partnerReady = false;
         session.EventReceived += (generation, message) => Dispatcher.BeginInvoke(() =>
@@ -135,7 +136,7 @@ public partial class MainWindow : Window
         {
             if (!_closing)
             {
-                Log(ex.Message);
+                LogError("session_start_failed", "无法启动伴侣会话。", ex);
                 await EndSessionAsync(session, "游戏未启动，请查看设置。");
                 if (_closing || _session is not null) return;
                 Pages.SelectedItem = SettingsPage;
@@ -168,7 +169,7 @@ public partial class MainWindow : Window
             {
                 ConnectionText.Text = "重连伙伴服务失败";
                 ActivityText.Text = ex.Message;
-                Log(ex.Message);
+                LogError("session_reconnect_failed", "无法重连伙伴服务。", ex);
             }
         }
         finally
@@ -188,7 +189,7 @@ public partial class MainWindow : Window
         ApplyDecisions(default);
         RefreshControls();
         try { await session.StopAsync(); }
-        catch (Exception ex) { Log($"停止伴侣服务失败：{ex.Message}"); }
+        catch (Exception ex) { LogError("session_stop_failed", "无法停止伙伴服务。", ex); }
         if (_session != session) return;
         _session = null;
         ResetPartnerConnection();
@@ -240,7 +241,7 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             SettingsFeedback.Text = "保存失败，请检查解压目录是否可写。";
-            Log(ex.Message);
+            LogError("settings_save_failed", "无法保存启动设置。", ex);
         }
     }
 
@@ -584,29 +585,34 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => Input.Focus());
     }
 
-    private void Log(string line)
+    private void LogError(string eventName, string message, Exception error)
+        => _logger.Write("desktop", "warn", eventName, message, new { errorType = error.GetType().Name, error.HResult });
+
+    private void OpenLogsClicked(object sender, RoutedEventArgs e)
     {
-        lock (_pendingLogs)
+        RefreshLogDirectory();
+        try
         {
-            _pendingLogs.Enqueue(line);
-            if (_pendingLogs.Count > 256) _pendingLogs.Dequeue();
+            var directory = LogDirectoryText.Text;
+            Directory.CreateDirectory(directory);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = directory, UseShellExecute = true,
+            })?.Dispose();
+            LogMaintenanceStatus.Text = _logger.StorageError ?? "";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            LogMaintenanceStatus.Text = "无法打开日志目录，请检查目录权限。";
+            LogError("log_folder_open_failed", "无法打开日志目录。", error);
         }
     }
 
-    private void FlushLogs()
+    private void RefreshLogDirectory()
     {
-        string[] lines;
-        lock (_pendingLogs)
-        {
-            if (_pendingLogs.Count == 0) return;
-            lines = _pendingLogs.ToArray();
-            _pendingLogs.Clear();
-        }
-        var batch = string.Join(Environment.NewLine, lines) + Environment.NewLine;
-        if (batch.Length > 20_000) batch = batch[^20_000..];
-        if (Diagnostics.Text.Length > 50_000) Diagnostics.Text = Diagnostics.Text[^30_000..];
-        Diagnostics.AppendText(batch);
-        if (Diagnostics.IsVisible) Diagnostics.ScrollToEnd();
+        if (_logger is null) return;
+        LogDirectoryText.Text = _logger.DirectoryPath;
+        LogMaintenanceStatus.Text = _logger.StorageError ?? "";
     }
 
     private static string Text(JsonElement data, string key) =>

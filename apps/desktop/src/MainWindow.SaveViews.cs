@@ -74,6 +74,8 @@ public partial class MainWindow
     private async void SaveViewSelected(object sender, SelectionChangedEventArgs e)
     {
         if (!ReferenceEquals(e.Source, sender)) return;
+        if (DiagnosticsPage is not null && Pages.SelectedItem == DiagnosticsPage && LogDirectoryText is not null)
+            RefreshLogDirectory();
         if (CommandPage is not null && Pages.SelectedItem == CommandPage) TimelineScroll?.ScrollToBottom();
         if (UsagePage is not null && Pages.SelectedItem == UsagePage) await ReadUsageAsync();
         else if (_gameSessionId is not null) await LoadSelectedSaveViewAsync();

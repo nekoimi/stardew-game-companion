@@ -77,6 +77,8 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     public override void Entry(IModHelper helper)
     {
         Monitor.Log("Stardew Game Companion initializing game events and transport.", LogLevel.Info);
+        InitializeGameLog(helper.DirectoryPath);
+        LogDesktopGameEvent("mod_initialized", "游戏 Mod 已初始化。");
 
         _config = Helper.ReadConfig<ModConfig>();
         _savedMode = _config.Mode;

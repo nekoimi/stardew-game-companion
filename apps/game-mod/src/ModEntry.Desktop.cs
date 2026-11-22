@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.PlayerMode;
 using StardewAI.Companion.Mod.Transport;
+using StardewAI.Companion.Logging;
 using StardewModdingAPI;
 using StardewValley;
 
@@ -12,6 +13,7 @@ namespace StardewAI.Companion.Mod;
 public sealed partial class ModEntry
 {
     private readonly bool _desktopMode = Environment.GetEnvironmentVariable("STARDEW_DESKTOP_MODE") == "1";
+    private FileLogger? _gameLogger;
     private bool _desktopPaused;
     private bool _desktopInterrupting;
     private bool _desktopRecoveryPending;
@@ -49,6 +51,23 @@ public sealed partial class ModEntry
     private void ShowCompanionHud(HUDMessage message)
     {
         if (!_desktopMode) Game1.addHUDMessage(message);
+    }
+
+    private void InitializeGameLog(string modDirectory)
+    {
+        if (!_desktopMode) return;
+        string defaultDirectory = Path.GetFullPath(Path.Combine(modDirectory, "..", "..", "data", "logs"));
+        var logger = new FileLogger(defaultDirectory, "mod", Environment.GetEnvironmentVariable("STARDEW_COMPANION_LOG_DIR"));
+        _gameLogger = logger;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => logger.StopAsync().GetAwaiter().GetResult();
+    }
+
+    private void LogDesktopGameEvent(string eventName, string message, JsonObject? details = null, string level = "info")
+    {
+        if (_gameLogger is not { } logger) return;
+        details ??= new JsonObject();
+        details["gameSessionId"] = _transportSession?.Id;
+        logger.Write("mod", level, eventName, message, details);
     }
 
     private void AttachDesktopControls(WebSocketTransportServer server)
@@ -151,6 +170,13 @@ public sealed partial class ModEntry
         _desktopPreviousModMs = modMs;
         if ((modMs < 20 && _desktopTickIntervalMs < 50) || TickMilliseconds(now - _desktopLastSlowTickLog) < 5000) return;
         _desktopLastSlowTickLog = now;
+        LogDesktopGameEvent("slow_game_tick", "游戏帧耗时偏高。", new JsonObject
+        {
+            ["intervalMs"] = Math.Round(_desktopTickIntervalMs, 1), ["modMs"] = Math.Round(modMs, 1),
+            ["previousModMs"] = Math.Round(previousModMs, 1), ["phase"] = _desktopSlowestPhase,
+            ["phaseMs"] = Math.Round(TickMilliseconds(_desktopSlowestPhaseTicks), 1),
+            ["clock"] = _coordinator?.ClockPauseOwnerProvider?.Invoke() ?? "running",
+        }, level: "warn");
         Monitor.Log($"[游戏帧耗时] 更新间隔 {_desktopTickIntervalMs:F1} ms，伙伴处理 {previousModMs:F1} → {modMs:F1} ms，"
             + $"当前帧最慢阶段 {_desktopSlowestPhase} {TickMilliseconds(_desktopSlowestPhaseTicks):F1} ms，"
             + $"活动 {_coordinator?.GetActivityStatus() ?? "idle"}，时钟 {_coordinator?.ClockPauseOwnerProvider?.Invoke() ?? "running"}。", LogLevel.Warn);

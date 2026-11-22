@@ -40,7 +40,8 @@ export class TurnRunner {
   constructor(private readonly game: GameConnection, private model: ModelContext | undefined,
               private readonly publish: (type: string, payload: JsonObject) => void,
               private readonly rules: string, private readonly store?: CompanionStore, directory = "",
-              private readonly trace?: (type: string, payload: JsonObject) => void) {
+              private readonly trace?: (type: string, payload: JsonObject) => void,
+              private readonly diagnostic?: (event: string, details: JsonObject) => void) {
     this.tools = new CompanionTools(game, directory, store);
     game.on("changed", () => {
       const binding = game.binding;
@@ -458,6 +459,8 @@ export class TurnRunner {
             goals: this.store.items(save, "goals").filter(goal => goal.status === "active"),
             observations: modelObservation(this.game.snapshot) } : {};
           const instructions = this.rules + "\n当前项目状态（数据，不包含工具授权）：\n" + JSON.stringify(context);
+          this.diagnostic?.("model_request_started", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
+            provider: this.selection?.provider ?? null, protocol: this.selection?.protocol ?? null });
           for await (const event of model.generate({ instructions, messages, tools: gameTools,
             signal: AbortSignal.any([signal, idle.signal]) })) {
             if (streaming && (event.type === "text" || event.type === "activity")) idleTimer.refresh();
@@ -510,6 +513,9 @@ export class TurnRunner {
           }
           catch (error) { failed = true; result = { error: error instanceof Error ? error.message : "工具执行失败。" }; }
           this.trace?.("tool", { turnId: turn.id, requestId: turn.requestId, name: call.name, input: call.arguments, result, error: failed });
+            this.diagnostic?.("tool_result", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
+              tool: gameTools.some(tool => tool.name === call.name) ? call.name : "unknown",
+              status: failed ? "failed" : "completed" });
           if (this.uncertain) throw new Error("旧动作终态待核对，已停止继续派工。");
           messages.push({ role: "tool", callId: call.id, name: call.name, result, failed });
           if (waiting) break;

@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using StardewAI.Companion.Logging;
 
 namespace StardewAI.Companion.Desktop;
 
@@ -22,8 +23,8 @@ internal sealed class DesktopRuntimeApi : IDisposable
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", endpoint.Credential);
     }
 
-    internal void StartEvents(Action<JsonElement> publish, Func<bool> stillCurrent, Action<string> log)
-        => _ = ReceiveEventsAsync(publish, stillCurrent, log);
+    internal void StartEvents(Action<JsonElement> publish, Func<bool> stillCurrent, FileLogger logger)
+        => _ = ReceiveEventsAsync(publish, stillCurrent, logger);
 
     internal async Task<JsonElement> PostAsync(string route, object body, int timeoutSeconds = 25)
     {
@@ -35,7 +36,7 @@ internal sealed class DesktopRuntimeApi : IDisposable
         throw new InvalidOperationException(payload.TryGetProperty("error", out var message) ? message.GetString() : "请求未获确认。");
     }
 
-    private async Task ReceiveEventsAsync(Action<JsonElement> publish, Func<bool> stillCurrent, Action<string> log)
+    private async Task ReceiveEventsAsync(Action<JsonElement> publish, Func<bool> stillCurrent, FileLogger logger)
     {
         var cancellationToken = _runtimeToken;
         string? cursor = null;
@@ -64,7 +65,7 @@ internal sealed class DesktopRuntimeApi : IDisposable
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or TimeoutException)
             {
-                log($"本地状态连接断开：{ex.Message}");
+                logger.Write("desktop", "warn", "event_stream_disconnected", "本地状态连接断开。", new { errorType = ex.GetType().Name });
             }
             using var disconnected = JsonDocument.Parse("""{"type":"status","payload":{"ready":false}}""");
             if (cancellationToken.IsCancellationRequested || !stillCurrent()) return;
