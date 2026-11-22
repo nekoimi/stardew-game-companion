@@ -1,3 +1,4 @@
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
 using StardewAI.Companion.Mod.Domain;
@@ -12,7 +13,15 @@ namespace StardewAI.Companion.Mod.Avatar;
 public sealed class CompanionAvatar
 {
     private readonly IFarmerActor _actor;
+    private readonly Func<string?>? _getDisplayName;
     private readonly object _lock = new();
+    private SpriteFont? _baseNameFont;
+    private SpriteFont? _chineseNameFont;
+    private bool _triedChineseNameFont;
+    private string? _displayName;
+    private SpriteFont? _nameFont;
+    private string _nameText = string.Empty;
+    private Vector2 _nameCenter;
 
     public string CompanionId => _actor.CompanionId;
     public string CurrentAnimation { get; private set; } = "idle";
@@ -24,10 +33,11 @@ public sealed class CompanionAvatar
     private readonly Action<string>? _log;
     private bool _firstDrawLogged;
 
-    public CompanionAvatar(IFarmerActor actor, Action<string>? log = null)
+    public CompanionAvatar(IFarmerActor actor, Action<string>? log = null, Func<string?>? getDisplayName = null)
     {
         _actor = actor ?? throw new ArgumentNullException(nameof(actor));
         _log = log;
+        _getDisplayName = getDisplayName;
         IsDesynced = false;
     }
 
@@ -71,8 +81,48 @@ public sealed class CompanionAvatar
                 }
 
                 farmer.draw(spriteBatch);
+                if (!farmer.isInBed.Value) DrawName(spriteBatch, farmer);
             }
         }
+    }
+
+    private void DrawName(SpriteBatch batch, Farmer farmer)
+    {
+        string? name = _getDisplayName?.Invoke();
+        var baseFont = Game1.smallFont;
+        if (string.IsNullOrWhiteSpace(name) || baseFont is null) return;
+
+        if (_displayName != name || !ReferenceEquals(_baseNameFont, baseFont))
+        {
+            _displayName = name;
+            _baseNameFont = baseFont;
+            var font = baseFont;
+            if (name.Any(character => !baseFont.Characters.Contains(character)))
+            {
+                if (!_triedChineseNameFont)
+                {
+                    _triedChineseNameFont = true;
+                    try { _chineseNameFont = Game1.content.Load<SpriteFont>("Fonts/SmallFont.zh-CN"); }
+                    catch (Microsoft.Xna.Framework.Content.ContentLoadException ex)
+                    { _log?.Invoke($"Companion name font could not be loaded: {ex.Message}"); }
+                }
+                font = _chineseNameFont ?? baseFont;
+            }
+
+            char replacement = font.Characters.Contains('?') ? '?' : ' ';
+            _nameText = new string(name.Select(character => !char.IsControl(character) && font.Characters.Contains(character)
+                ? character : replacement).ToArray());
+            _nameFont = font;
+            _nameCenter = font.MeasureString(_nameText) / 2f;
+        }
+
+        const float scale = 0.85f;
+        var position = farmer.getLocalPosition(Game1.viewport) + new Vector2(32f, -104f);
+        float layer = farmer.getDrawLayer();
+        batch.DrawString(_nameFont!, _nameText, position + new Vector2(1f, 2f), Color.Black,
+            0f, _nameCenter, scale, SpriteEffects.None, layer + 0.00001f);
+        batch.DrawString(_nameFont!, _nameText, position, Color.White,
+            0f, _nameCenter, scale, SpriteEffects.None, layer + 0.00002f);
     }
 
     private static string? GetLocationName(GameLocation? loc)

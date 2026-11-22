@@ -417,7 +417,8 @@ public sealed partial class ModEntry
             }
 
 
-            _avatar = new CompanionAvatar(_actor, msg => Monitor.Log(msg, LogLevel.Info));
+            _avatar = new CompanionAvatar(_actor, msg => Monitor.Log(msg, LogLevel.Info),
+                () => _lifeMenuUiState.HasProfileState ? _lifeMenuUiState.CompanionName : null);
             _navigator = new SameMapNavigator(_observer);
             _coordinator = NativeExecutionFactory.Create(Helper, Monitor, _actor, _observer, _navigator, _avatar);
             _coordinator.Rest.Bedtime = CompanionBedtime.Normalize(activeState.PreferredBedtime);
