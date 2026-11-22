@@ -407,6 +407,8 @@
                                 <TextBlock Text="API Key" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <PasswordBox x:Name="ApiKey" AutomationProperties.Name="API Key" MaxLength="1200" Padding="9,6"
                                              PasswordChanged="ApiOptionsChanged" Margin="0,0,0,13" />
+                                <TextBlock x:Name="ApiCredentialHint" Text="留空表示沿用已保存的 API Key，填写新值可替换。"
+                                           Style="{StaticResource InlineFeedback}" TextWrapping="Wrap" Margin="0,-8,0,13" />
                                 <CheckBox x:Name="ApiCustomStream" Content="流式输出" IsChecked="True" Visibility="Collapsed"
                                           Checked="ApiOptionsChanged" Unchecked="ApiOptionsChanged" Margin="0,0,0,13" />
                                 <Expander x:Name="ApiAdvanced" Header="高级设置" Margin="0,0,0,13">

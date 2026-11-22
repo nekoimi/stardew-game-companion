@@ -14,7 +14,7 @@ Node、模型 SDK 和桌面运行库随包提供。启动器加载绿色包的�
 - **自定义接口**。选择 Chat Completions 或 Responses，填 HTTPS Base URL、网关模型 ID 和网关 Key。Base URL 保留 `/v1` 等前缀，程序会拼接 `/chat/completions` 或 `/responses`。网关只支持完整响应时，关闭「流式输出」。
 - 「测试连接」按当前模式核对工具调用与回执。「保存模型设置」供下次启动使用。读档后可在空闲时点击「应用模型」，在当前游戏中继续使用同一角色、手记、对话和工作目标。
 
-桌面设置在 data/desktop-settings.json，伙伴资料和用量按存档存在 data/companion.sqlite。API Key 由当前 Windows 用户的凭据管理器保存，换目录或电脑后重新填写。模型会收到指令及相关游戏观察、工具结果与手记。
+桌面设置在 data/desktop-settings.json，伙伴资料和用量按存档存在 data/companion.sqlite。API Key 由当前 Windows 用户的凭据管理器保存，换目录或电脑后重新填写。保存后输入框会保留掩码内容，留空表示继续使用已保存的 Key，填写新值会替换它。模型会收到指令及相关游戏观察、工具结果与手记。
 
 ## 和伙伴一起玩
 

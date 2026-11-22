@@ -117,12 +117,13 @@ public partial class MainWindow
     private void ShowApiCredentialState()
     {
         ApiModelFeedback.Text = "";
+        ApiCredentialHint.Text = "留空表示沿用已保存的 API Key，填写新值可替换。";
         if (ApiProvider.SelectedItem is null || ApiKey.Password.Length > 0) return;
         try
         {
             var selected = ApiSelection();
             if ((!selected.IsCustom || ValidBaseUrl(selected.BaseUrl)) && ModelCredential.Read(_root, selected).Length > 0)
-                ApiModelFeedback.Text = "已保存 API Key。填写新值可替换。";
+                ApiModelFeedback.Text = "已保存 API Key，留空即可继续使用。";
         }
         catch (Win32Exception error) { ApiModelFeedback.Text = error.Message; }
     }
@@ -162,7 +163,6 @@ public partial class MainWindow
         if (ApiKey.Password.Trim().Length > 0) ModelCredential.Write(_root, selected, key);
         SaveDesktopSettings(settings with { ApiModel = selected,
             CustomModel = selected.IsCustom ? selected : settings.CustomModel });
-        ApiKey.Clear();
     }
 
     private void SaveModelClicked(object sender, RoutedEventArgs e)
