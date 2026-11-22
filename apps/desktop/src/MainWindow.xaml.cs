@@ -59,7 +59,7 @@ public partial class MainWindow : Window
         }
         Mode.SelectedIndex = _savedSettings.ActorMode == "player" ? 1 : 0;
         InitializeApiModel(_savedSettings.ApiModel ?? new(), _savedSettings.CustomModel);
-        Pages.SelectedItem = SettingsPage;
+        Pages.SelectedItem = CommandPage;
         SettingsTabs.SelectedItem = LaunchSettingsTab;
         RefreshControls();
         InitializeTray();
