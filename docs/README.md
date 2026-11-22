@@ -12,6 +12,7 @@
 - [游戏通信协议](../contracts/game-bridge/README.md)
 - [桌面 HTTP 接口](../contracts/desktop-api/README.md)
 - [桌面插件宿主协议](../contracts/plugin-host/README.md)
+- [通用参考插件与绿色包验收](../examples/plugins/README.md)
 - [固定的隔离实机回归](repeatable-companion-acceptance.md)
 - [运行时提示词](../resources/agent/prompts/agent-ts-instructions.md)与[游戏指导](../resources/agent/prompts/agent-guidance/)
 - [TypeScript 运行时方案](development/agent-runtime-rewrite.md)
