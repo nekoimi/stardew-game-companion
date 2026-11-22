@@ -1,7 +1,7 @@
 {
   "Name": "星露谷游戏伴侣",
   "Author": "nekoimi 和贡献者（原项目作者 CSXizhang）",
-  "Version": "0.3.22",
+  "Version": "__VERSION__",
   "Description": "为星露谷游戏伴侣提供世界观察、游戏动作与控制权管理。",
   "UniqueID": "CSXizhang.StardewAICompanion",
   "EntryDll": "StardewAI.Companion.Mod.dll",

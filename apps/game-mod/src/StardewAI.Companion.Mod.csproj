@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <AssemblyName>StardewAI.Companion.Mod</AssemblyName>
-    <Version>0.3.22</Version>
     <RootNamespace>StardewAI.Companion.Mod</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
     <!-- Releases omit debugger artifacts, including the absolute CodeView PDB path in the DLL. -->
@@ -39,8 +38,19 @@
       <HintPath>$(StardewGamePath)\StardewValley.GameData.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <None Update="manifest.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="GenerateModManifest" BeforeTargets="Build">
+    <ReadLinesFromFile File="$(MSBuildProjectDirectory)\manifest.template.json">
+      <Output TaskParameter="Lines" ItemName="ManifestTemplateLines" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <ManifestOutputLines Include="@(ManifestTemplateLines)">
+        <Text>$([System.String]::Copy('%(Identity)').Replace('__VERSION__', '$(Version)'))</Text>
+      </ManifestOutputLines>
+    </ItemGroup>
+    <WriteLinesToFile File="$(TargetDir)manifest.json" Lines="@(ManifestOutputLines->'%(Text)')" Overwrite="true" Encoding="UTF-8" />
+  </Target>
 
   <Target Name="ValidateStardewGamePath" BeforeTargets="ResolveReferences" Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(StardewGamePath)\StardewModdingAPI.dll')">
     <Error Text="STARDEW_GAME_PATH must point to a Stardew Valley installation containing StardewModdingAPI.dll." />

@@ -6,6 +6,8 @@
 
 准备 PowerShell 7、.NET 10 SDK、已安装 SMAPI 的 Windows x64 游戏。使用新输出目录，构建脚本按锁文件准备随包 Node 和模型 SDK。
 
+产品版本统一写在仓库根目录的 `VERSION`。当前开发版本为 `0.1.0`。Mod 清单、.NET 程序集和绿色包文件名由构建流程读取同一个版本源，协议版本和存档数据版本单独维护。
+
 ```powershell
 pwsh -File packaging/windows/build-node-release.ps1 -GamePath '<SMAPI 游戏目录>' -Output artifacts/windows-x64
 pwsh -File packaging/windows/verify-node-release.ps1 -Archive '<ZIP 路径>'

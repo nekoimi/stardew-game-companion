@@ -8,6 +8,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+$version = (Get-Content -LiteralPath (Join-Path $repository 'VERSION') -Raw).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Invalid product version in VERSION: $version" }
 if (!$GamePath -or !(Test-Path -LiteralPath (Join-Path $GamePath 'StardewModdingAPI.dll') -PathType Leaf)) {
     throw 'Set STARDEW_GAME_PATH or -GamePath to a Stardew Valley installation with SMAPI.'
 }
@@ -26,7 +28,8 @@ $built = & (Join-Path $PSScriptRoot 'stage-windows-release.ps1') -Output $payloa
 $built | Write-Output
 $root = $built[-1]
 
-$version = (Get-Content -LiteralPath (Join-Path $mod 'manifest.json') -Raw | ConvertFrom-Json).Version
+$manifestVersion = (Get-Content -LiteralPath (Join-Path $mod 'manifest.json') -Raw | ConvertFrom-Json).Version
+if ($manifestVersion -ne $version) { throw "Built Mod version '$manifestVersion' does not match VERSION '$version'." }
 $archive = Join-Path $destination "StardewGameCompanion-$version-windows-x64.zip"
 [IO.Compression.ZipFile]::CreateFromDirectory($root, $archive, [IO.Compression.CompressionLevel]::Optimal, $false)
 & (Join-Path $PSScriptRoot 'verify-node-release.ps1') -Archive $archive

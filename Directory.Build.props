@@ -1,5 +1,7 @@
 <Project>
   <PropertyGroup>
+    <ProductVersionFile>$(MSBuildThisFileDirectory)VERSION</ProductVersionFile>
+    <Version Condition="'$(Version)' == ''">$([System.IO.File]::ReadAllText('$(ProductVersionFile)').Trim())</Version>
     <TargetFramework>net6.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
