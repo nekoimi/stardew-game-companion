@@ -5,7 +5,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
 
 namespace StardewAI.Companion.Desktop.Plugins;
@@ -16,6 +15,7 @@ internal sealed record PluginError(string Code, string Message, int? RetryAfterM
 internal sealed class PluginInstance(InstalledPlugin plugin)
 {
     private readonly object _sync = new();
+    private readonly CancellationTokenSource _businessStopped = new();
     private long _lastHeartbeat;
     private long _rateWindow = Stopwatch.GetTimestamp();
     private int _requests;
@@ -27,6 +27,7 @@ internal sealed class PluginInstance(InstalledPlugin plugin)
     internal string Id { get; } = Guid.NewGuid().ToString("N");
     internal string Token { get; } = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
     internal TaskCompletionSource Hello { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal CancellationToken BusinessStopped => _businessStopped.Token;
     internal PluginStatus Status { get { lock (_sync) return _status; } }
     internal Uri? Settings { get { lock (_sync) return _stopping ? null : _settings; } }
     internal bool Expired { get { lock (_sync) return _lastHeartbeat != 0 && Stopwatch.GetElapsedTime(_lastHeartbeat) >= PluginServer.HeartbeatTimeout; } }
@@ -38,6 +39,7 @@ internal sealed class PluginInstance(InstalledPlugin plugin)
             _stopping = true;
             _status = new("stopping");
         }
+        _businessStopped.Cancel();
     }
 
     internal int Authorize(bool lifecycle)
@@ -84,7 +86,7 @@ internal sealed class PluginInstance(InstalledPlugin plugin)
     }
 }
 
-internal sealed class PluginServer : IAsyncDisposable
+internal sealed partial class PluginServer : IAsyncDisposable
 {
     internal static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(15);
     internal const int HeartbeatIntervalMs = 5000;
@@ -94,7 +96,9 @@ internal sealed class PluginServer : IAsyncDisposable
     private PluginServer(WebApplication app) => _app = app;
     internal string Address => _app.Urls.Single();
 
-    internal static async Task<PluginServer> StartAsync(Func<string, PluginInstance?> identify, Action changed)
+    internal static async Task<PluginServer> StartAsync(Func<string, PluginInstance?> identify, Action changed,
+        PluginEvents events, Action<PluginInstance, PluginMessage> message,
+        Func<string, object, Task<PluginCallResult>> runtime)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.ClearProviders();
@@ -108,7 +112,7 @@ internal sealed class PluginServer : IAsyncDisposable
             options.Limits.MaxConcurrentConnections = 64;
         });
         var app = builder.Build();
-        app.Run(context => DispatchAsync(context, identify, changed));
+        app.Run(context => DispatchAsync(context, identify, changed, events, message, runtime));
         try { await app.StartAsync().ConfigureAwait(false); }
         catch
         {
@@ -125,7 +129,9 @@ internal sealed class PluginServer : IAsyncDisposable
         await _app.DisposeAsync().ConfigureAwait(false);
     }
 
-    private static async Task DispatchAsync(HttpContext context, Func<string, PluginInstance?> identify, Action changed)
+    private static async Task DispatchAsync(HttpContext context, Func<string, PluginInstance?> identify, Action changed,
+        PluginEvents events, Action<PluginInstance, PluginMessage> message,
+        Func<string, object, Task<PluginCallResult>> runtime)
     {
         if (!context.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             || identify(context.Request.Headers.Authorization.ToString()[7..]) is not { } instance)
@@ -138,12 +144,35 @@ internal sealed class PluginServer : IAsyncDisposable
         var auth = instance.Authorize(lifecycle: path == "/v1/heartbeat");
         if (auth == 401) { await Error(context, auth, "invalid_instance", "插件正在停止。"); return; }
         if (auth == 429) { await Error(context, auth, "limit_exceeded", "请求过于频繁。", 10000); return; }
-        if (!HttpMethods.IsPost(context.Request.Method) || path is not ("/v1/hello" or "/v1/heartbeat"))
+        bool post = HttpMethods.IsPost(context.Request.Method);
+        if (!(post && path is "/v1/hello" or "/v1/heartbeat"))
         {
-            await Error(context, 404, "not_found", "找不到插件接口。");
+            if (!instance.Hello.Task.IsCompletedSuccessfully)
+            {
+                await Error(context, 409, "not_ready", "请先完成插件握手。");
+                return;
+            }
+            if (HttpMethods.IsGet(context.Request.Method))
+            {
+                await ReadAsync(context, instance, path, events, runtime);
+                return;
+            }
+            if (!post || path is not ("/v1/messages" or "/v1/commands"))
+            {
+                await Error(context, 404, "not_found", "找不到插件接口。");
+                return;
+            }
+            await ReadBodyAsync(context, payload => path == "/v1/messages"
+                ? MessageAsync(context, instance, payload, message) : SubmitAsync(context, instance, payload, runtime));
             return;
         }
+        await ReadBodyAsync(context, payload => path == "/v1/hello"
+            ? HelloAsync(context, instance, payload, changed, events)
+            : HeartbeatAsync(context, instance, payload, changed, events));
+    }
 
+    private static async Task ReadBodyAsync(HttpContext context, Func<JsonElement, Task> route)
+    {
         try
         {
             if (!context.Request.HasJsonContentType())
@@ -160,8 +189,7 @@ internal sealed class PluginServer : IAsyncDisposable
                 await Error(context, 400, "invalid_request", "请求应为 JSON 对象。");
                 return;
             }
-            if (path == "/v1/hello") await HelloAsync(context, instance, payload, changed);
-            else await HeartbeatAsync(context, instance, payload, changed);
+            await route(payload);
         }
         catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
         {
@@ -172,7 +200,7 @@ internal sealed class PluginServer : IAsyncDisposable
         { await Error(context, 400, "invalid_request", "读取请求超时。"); }
     }
 
-    private static async Task HelloAsync(HttpContext context, PluginInstance instance, JsonElement payload, Action changed)
+    private static async Task HelloAsync(HttpContext context, PluginInstance instance, JsonElement payload, Action changed, PluginEvents events)
     {
         if (!TryInt(payload, "protocolMin", out int min) || !TryInt(payload, "protocolMax", out int max) || min < 1 || max < min)
         {
@@ -200,10 +228,10 @@ internal sealed class PluginServer : IAsyncDisposable
         }
         changed();
         await context.Response.WriteAsJsonAsync(new { protocolVersion = PluginPackages.ProtocolVersion, instanceId = instance.Id,
-            heartbeatIntervalMs = HeartbeatIntervalMs, sessionId = (string?)null }, context.RequestAborted);
+            heartbeatIntervalMs = HeartbeatIntervalMs, sessionId = events.Snapshot().SessionId }, context.RequestAborted);
     }
 
-    private static async Task HeartbeatAsync(HttpContext context, PluginInstance instance, JsonElement payload, Action changed)
+    private static async Task HeartbeatAsync(HttpContext context, PluginInstance instance, JsonElement payload, Action changed, PluginEvents events)
     {
         var state = ReadString(payload, "state");
         string? summary = ReadString(payload, "summary");
@@ -220,7 +248,7 @@ internal sealed class PluginServer : IAsyncDisposable
         string? directive = instance.Heartbeat(next);
         if (directive is null) { await Error(context, 409, "not_ready", "请先完成插件握手。"); return; }
         if (directive == "continue" && previous != next) changed();
-        await context.Response.WriteAsJsonAsync(new { directive, sessionId = (string?)null }, context.RequestAborted);
+        await context.Response.WriteAsJsonAsync(new { directive, sessionId = events.Snapshot().SessionId }, context.RequestAborted);
     }
 
     private static bool TrySettingsUrl(string? url, out Uri? result)

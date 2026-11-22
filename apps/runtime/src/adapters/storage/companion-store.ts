@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { JsonObject, ModelMessage, ModelUsage } from "../../application/model.js";
 import { object } from "../../application/model.js";
 import type { GameBinding } from "../game/action-receipt.js";
+import type { PluginCommand } from "../../application/plugin-command.js";
 
 const defaultProfile: JsonObject = {
   companionName: "阿星", playStyle: "earn", personality: "gentle", careFrequency: "moderate", bedtime: 2400, onboarded: false,
@@ -48,6 +49,13 @@ export class CompanionStore {
       CREATE TABLE IF NOT EXISTS submissions (
         save_id TEXT NOT NULL, game_id TEXT NOT NULL, request_id TEXT NOT NULL,
         signature TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(save_id, game_id, request_id)
+      );
+      CREATE TABLE IF NOT EXISTS plugin_commands (
+        plugin_id TEXT NOT NULL, request_id TEXT NOT NULL,
+        internal_id TEXT NOT NULL UNIQUE, value TEXT NOT NULL, PRIMARY KEY(plugin_id, request_id)
+      );
+      CREATE TABLE IF NOT EXISTS plugin_actions (
+        internal_id TEXT NOT NULL, action_id TEXT NOT NULL, PRIMARY KEY(internal_id, action_id)
       );
     `);
   }
@@ -239,8 +247,41 @@ export class CompanionStore {
       ...(answer !== undefined ? { answer } : {}) }, true);
   }
 
-  beginAction(binding: GameBinding, actionId: string): void {
-    this.db.prepare("INSERT INTO unsettled_actions VALUES (?, ?, ?)").run(binding.saveId, binding.gameSessionId, actionId);
+  pluginCommand(pluginId: string, requestId: string): PluginCommand | undefined {
+    const row = this.db.prepare("SELECT value FROM plugin_commands WHERE plugin_id = ? AND request_id = ?").get(pluginId, requestId);
+    return decode<PluginCommand | undefined>(row, undefined);
+  }
+
+  acceptPluginCommand(command: PluginCommand): void {
+    this.db.prepare("INSERT INTO plugin_commands VALUES (?, ?, ?, ?)")
+      .run(command.input.pluginId, command.input.requestId, command.internalId, JSON.stringify(command));
+  }
+
+  savePluginCommand(command: PluginCommand): void {
+    this.db.prepare("UPDATE plugin_commands SET value = ? WHERE internal_id = ?").run(JSON.stringify(command), command.internalId);
+  }
+
+  pluginActions(command: PluginCommand): { actionId: string; receipt?: JsonObject }[] {
+    return this.db.prepare(`
+      SELECT links.action_id, receipts.value FROM plugin_actions AS links
+      LEFT JOIN receipts ON receipts.action_id = links.action_id AND receipts.save_id = ? AND receipts.game_id = ?
+      WHERE links.internal_id = ? ORDER BY links.rowid
+    `).all(command.binding.saveId, command.binding.gameSessionId, command.internalId)
+      .map(row => ({ actionId: String(row.action_id), receipt: row.value === null ? undefined : decode<JsonObject>(row, {}) }));
+  }
+
+  beginAction(binding: GameBinding, actionId: string, pluginRequest?: string): void {
+    if (pluginRequest) this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("INSERT INTO unsettled_actions VALUES (?, ?, ?)").run(binding.saveId, binding.gameSessionId, actionId);
+      if (pluginRequest) {
+        this.db.prepare("INSERT INTO plugin_actions VALUES (?, ?)").run(pluginRequest, actionId);
+        this.db.exec("COMMIT");
+      }
+    } catch (error) {
+      if (pluginRequest) this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   pendingAction(binding: GameBinding): string | undefined {

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { test } from "node:test";
 import { TurnRunner } from "../dist/application/turn-runner.js";
@@ -39,6 +42,179 @@ async function waitFor(check, attempts = 100) {
   }
   assert.fail("Expected game or model event");
 }
+
+const pluginRequest = { pluginId: "org.demo.command", instanceId: "instance", requestId: "pick-two",
+  sessionId: binding.gameSessionId, text: "收获两格成熟作物" };
+
+test("plugin submission is isolated, idempotent and keeps partial native results across runtime restart and save switch", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "companion-plugin-command-"));
+  const db = join(directory, "companion.sqlite");
+  let store = new CompanionStore(db);
+  const game = new FakeGame();
+  game.snapshot = { ...game.snapshot, farmWork: { locationId: "Farm", observationStatus: "observed",
+    matureCrops: [{ x: 5, y: 6, cropId: "parsnip" }, { x: 7, y: 6, cropId: "parsnip" }] } };
+  const existing = store.updateItem(binding.saveId, "goals", "player-goal",
+    { text: "玩家稍后处理的目标", status: "active", continuation: "wait", wakeTime: 1700 });
+  let finish;
+  game.nativeResult = id => new Promise(resolve => { finish = () => resolve({
+    commandId: id, skillId: "harvest-zone", terminalState: "partially-succeeded", completedCount: 1,
+  }); });
+  const events = [];
+  let runner = new TurnRunner(game, { async *generate({ messages }) {
+    if (messages.at(-1).role === "user") yield done([{ id: "harvest", name: "submit_work",
+      arguments: { action: { harvest_auto: {} } } }]);
+    else yield done([], "确认收获一格，还有剩余。");
+  } }, (type, payload) => events.push({ type, payload }), "", store);
+  try {
+    game.emit("changed");
+    assert.equal(runner.submitPlugin(pluginRequest).duplicate, false);
+    assert.equal(runner.submitPlugin(pluginRequest).duplicate, true);
+    assert.throws(() => runner.submitPlugin({ ...pluginRequest, text: "不同指令" }), { code: "request_conflict" });
+    assert.throws(() => runner.submitPlugin({ ...pluginRequest, requestId: "concurrent" }), { code: "busy" });
+    await assert.rejects(runner.queryPlugin("org.demo.other", pluginRequest.requestId), { code: "not_found" });
+    await waitFor(() => finish);
+    finish();
+    await waitFor(() => events.some(event => event.type === "life.chat.reply"));
+    assert.deepEqual(store.items(binding.saveId, "goals"), [existing]);
+    const expected = await runner.queryPlugin(pluginRequest.pluginId, pluginRequest.requestId);
+    assert.equal(expected.status, "partial");
+    assert.equal(expected.turnEnded, true);
+    assert.deepEqual(expected.actions, [{ actionId: game.executed[0], skillId: "harvest-zone",
+      terminalState: "partially-succeeded", completedCount: 1 }]);
+    await runner.stop();
+    store.close();
+    store = new CompanionStore(db);
+    const restartedGame = new FakeGame();
+    restartedGame.binding = { saveId: "other-farm", gameSessionId: "new-game" };
+    runner = new TurnRunner(restartedGame, undefined, () => {}, "", store);
+    restartedGame.emit("changed");
+    assert.deepEqual(await runner.queryPlugin(pluginRequest.pluginId, pluginRequest.requestId), expected);
+    assert.deepEqual(runner.submitPlugin(pluginRequest), { duplicate: true, result: expected });
+    assert.throws(() => runner.submitPlugin({ ...pluginRequest, requestId: "old-game" }), { code: "session_changed" });
+    assert.equal(game.executed.length, 1);
+    assert.equal(restartedGame.executed.length, 0);
+  } finally {
+    await runner.stop();
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("plugin admission respects player gates and takeover cancels a running plugin task", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  let finish;
+  const runner = new TurnRunner(game, { async *generate() {
+    await new Promise(resolve => { finish = resolve; });
+    yield done([action]);
+  } }, () => {}, "", store);
+  try {
+    game.emit("changed");
+    game.state.paused = true;
+    assert.throws(() => runner.submitPlugin(pluginRequest), { code: "paused" });
+    game.state.paused = false;
+    game.state.controlOwner = "human";
+    game.emit("changed");
+    assert.throws(() => runner.submitPlugin(pluginRequest), { code: "player_control" });
+    game.state.controlOwner = "agent";
+    game.emit("changed");
+    store.updateItem(binding.saveId, "goals", "player", { status: "active", continuation: "continue" });
+    assert.throws(() => runner.submitPlugin(pluginRequest), { code: "busy" });
+    store.updateItem(binding.saveId, "goals", "player", { status: "completed" });
+    store.updateItem(binding.saveId, "decisions", "decision", { status: "pending" });
+    assert.throws(() => runner.submitPlugin(pluginRequest), { code: "waiting_player" });
+    store.changeDecision(binding.saveId, "decision", "dismiss");
+    game.snapshot.companion.bedtimeSchedule = { returnDue: true };
+    assert.throws(() => runner.submitPlugin(pluginRequest), { code: "waiting_player" });
+    game.snapshot.companion.bedtimeSchedule.returnDue = false;
+    runner.submitPlugin(pluginRequest);
+    await waitFor(() => finish);
+    game.state.controlOwner = "human";
+    game.emit("changed");
+    finish();
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal((await runner.queryPlugin(pluginRequest.pluginId, pluginRequest.requestId)).status, "cancelled");
+    assert.deepEqual(game.executed, []);
+  } finally {
+    await runner.stop();
+    store.close();
+  }
+});
+
+test("plugin continuation creates a player decision and never creates an autonomous goal", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  const runner = new TurnRunner(game, { async *generate() {
+    yield done([{ id: "wait", name: "manage_arrangements", arguments: { change: {
+      set_goal_continuation: { status: "wait", reason: "第二天继续", next_day: true },
+    } } }, action]);
+  } }, () => {}, "", store);
+  try {
+    game.emit("changed");
+    runner.submitPlugin(pluginRequest);
+    await waitFor(() => !runner.status().modelBusy);
+    const outcome = await runner.queryPlugin(pluginRequest.pluginId, pluginRequest.requestId);
+    assert.equal(outcome.status, "waiting_player");
+    assert.equal(outcome.goalOutcome, "unknown");
+    assert.equal(store.items(binding.saveId, "decisions").length, 1);
+    assert.deepEqual(store.items(binding.saveId, "goals"), []);
+    assert.deepEqual(game.executed, []);
+  } finally {
+    await runner.stop();
+    store.close();
+  }
+});
+
+test("an interrupted plugin receipt can be queried and recovered without a second execution", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  game.nativeResult = () => { throw new Error("lost connection"); };
+  const runner = new TurnRunner(game, { async *generate() { yield done([action]); } }, () => {}, "", store);
+  try {
+    game.emit("changed");
+    runner.submitPlugin(pluginRequest);
+    await waitFor(() => !runner.status().modelBusy);
+    const pending = await runner.queryPlugin(pluginRequest.pluginId, pluginRequest.requestId);
+    assert.equal(pending.status, "recovery_pending");
+    assert.deepEqual(pending.actions, []);
+    game.recovered = { commandId: game.executed[0], skillId: "navigate-to", terminalState: "succeeded" };
+    const settled = await runner.queryPlugin(pluginRequest.pluginId, pluginRequest.requestId);
+    assert.notEqual(settled.status, "recovery_pending");
+    assert.equal(settled.actions.length, 1);
+    assert.ok(!("completedCount" in settled.actions[0]));
+    assert.equal(game.executed.length, 1);
+  } finally {
+    await runner.stop();
+    store.close();
+  }
+});
+
+test("explicit stop cancels a plugin action even after its source process has gone away", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  let finish;
+  game.nativeResult = id => new Promise(resolve => {
+    finish = () => resolve({ commandId: id, skillId: "navigate-to", terminalState: "cancelled" });
+  });
+  const runner = new TurnRunner(game, { async *generate() { yield done([action]); } }, () => {}, "", store);
+  try {
+    game.emit("changed");
+    runner.submitPlugin(pluginRequest);
+    await waitFor(() => finish);
+    const stopping = runner.closePlugin(pluginRequest.pluginId);
+    assert.ok(game.controls.includes("interrupt"));
+    finish();
+    await stopping;
+    const result = await runner.queryPlugin(pluginRequest.pluginId, pluginRequest.requestId);
+    assert.equal(result.status, "cancelled");
+    assert.equal(result.actions[0].terminalState, "cancelled");
+    assert.throws(() => runner.submitPlugin({ ...pluginRequest, requestId: "late-request" }), { code: "invalid_instance" });
+    assert.deepEqual(game.controls.slice(-2), ["interrupt", "unhold"]);
+  } finally {
+    await runner.stop();
+    store.close();
+  }
+});
 
 test("takeover makes a delayed model call ineligible to act", async () => {
   const game = new FakeGame();

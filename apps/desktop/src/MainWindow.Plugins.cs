@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -19,11 +21,15 @@ public partial class MainWindow
     {
         try
         {
-            var host = new PluginHost(_root, _logger);
+            var host = new PluginHost(_root, _logger, ForwardPluginCallAsync);
             _plugins = host;
             host.Changed += () => Dispatcher.InvokeAsync(() =>
             {
                 if (!_closing && _plugins == host) RefreshPlugins();
+            });
+            host.Notice += (name, message) => Dispatcher.InvokeAsync(() =>
+            {
+                if (!_closing && _plugins == host) AddEntry("插件 · " + name, message);
             });
             _ = Task.Run(host.StartAutomaticAsync);
         }
@@ -33,6 +39,19 @@ public partial class MainWindow
             LogError("plugin_host_unavailable", "插件中心无法启动。", error);
         }
         RefreshPlugins();
+    }
+
+    private async Task<PluginCallResult> ForwardPluginCallAsync(string route, object body)
+    {
+        if (Volatile.Read(ref _session) is not { } session)
+            return route == "/v2/plugins/submit" ? new PluginCallResult(409, JsonSerializer.SerializeToElement(
+                new PluginError("no_game", "请先进入游戏存档。"), PluginEvents.OutputJson)) : PluginCallResult.Unavailable();
+        try { return await session.PostPluginAsync(route, body).ConfigureAwait(false); }
+        catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException
+            or ObjectDisposedException or JsonException)
+        {
+            return PluginCallResult.Unavailable();
+        }
     }
 
     private void RefreshPlugins(string? selected = null)

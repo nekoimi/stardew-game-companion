@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using StardewAI.Companion.Logging;
 
 namespace StardewAI.Companion.Desktop.Plugins;
@@ -19,11 +20,17 @@ internal sealed class PluginHost : IAsyncDisposable
     private readonly ConcurrentDictionary<string, PluginStatus> _offline = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _restarts = new();
     private readonly CancellationTokenSource _closing = new();
+    private readonly PluginEvents _events = new();
+    private readonly object _messagesLock = new();
+    private readonly HashSet<(string, string)> _messageIds = [];
+    private readonly Queue<(string, string)> _recentMessages = new();
+    private readonly Func<string, object, Task<PluginCallResult>> _runtime;
     private PluginServer? _server;
 
-    internal PluginHost(string root, FileLogger logger)
+    internal PluginHost(string root, FileLogger logger, Func<string, object, Task<PluginCallResult>>? runtime = null)
     {
         _logger = logger;
+        _runtime = runtime ?? ((_, _) => Task.FromResult(PluginCallResult.Unavailable()));
         var data = Path.Combine(root, "data");
         Directory.CreateDirectory(data);
         try { _lease = File.Open(Path.Combine(data, "plugin-host.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
@@ -33,6 +40,10 @@ internal sealed class PluginHost : IAsyncDisposable
     }
 
     internal event Action? Changed;
+    internal event Action<string, string>? Notice;
+
+    internal void ApplyRuntimeEvent(string type, JsonElement payload) => _events.Apply(type, payload);
+    internal void DisconnectRuntime() => _events.Disconnect();
 
     internal PluginView[] List() => _registry.List().Select(plugin =>
     {
@@ -150,7 +161,7 @@ internal sealed class PluginHost : IAsyncDisposable
             }
 
             _server ??= await PluginServer.StartAsync(
-                credential => _credentials.GetValueOrDefault(credential), Notify).ConfigureAwait(false);
+                credential => _credentials.GetValueOrDefault(credential), Notify, _events, Receive, _runtime).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             instance = new PluginInstance(installed);
             _credentials[instance.Token] = instance;
@@ -197,11 +208,13 @@ internal sealed class PluginHost : IAsyncDisposable
         _offline.TryRemove(id, out _);
         if (!_runs.TryGetValue(id, out var run))
         {
+            await _runtime("/v2/plugins/close", new { pluginId = id }).ConfigureAwait(false);
             Notify();
             return;
         }
         run.Instance.Stop();
         Notify();
+        var close = _runtime("/v2/plugins/close", new { pluginId = id, instanceId = run.Instance.Id });
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -216,10 +229,13 @@ internal sealed class PluginHost : IAsyncDisposable
             EndRun(id, run);
             Notify();
         }
+        await close.ConfigureAwait(false);
     }
 
     private void EndRun(string id, PluginRun run)
     {
+        run.Instance.Stop();
+        _events.Close(run.Instance.Id);
         _runs.TryRemove(id, out _);
         _credentials.TryRemove(run.Instance.Token, out _);
         run.Process.Dispose();
@@ -325,6 +341,20 @@ internal sealed class PluginHost : IAsyncDisposable
         or TimeoutException or ArgumentException;
 
     private void Notify() => Changed?.Invoke();
+
+    private void Receive(PluginInstance instance, PluginMessage message)
+    {
+        var id = instance.Plugin.Manifest.Id;
+        lock (_messagesLock)
+        {
+            if (instance.BusinessStopped.IsCancellationRequested || !_messageIds.Add((id, message.Id))) return;
+            _recentMessages.Enqueue((id, message.Id));
+            if (_recentMessages.Count > 4096) _messageIds.Remove(_recentMessages.Dequeue());
+        }
+        _logger.Write("desktop", "info", "plugin_message", "收到插件消息。",
+            new { pluginId = id, messageId = message.Id, messageType = message.Type, message.CorrelationId });
+        if (message.Text is not null) Notice?.Invoke(instance.Plugin.Manifest.Name, message.Text);
+    }
 
     private sealed record PluginRun(PluginInstance Instance, PluginProcess Process, int Retry, long Started);
 }

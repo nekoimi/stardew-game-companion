@@ -67,6 +67,7 @@ type ToolContext = {
   native: (skill: string, parameters: JsonObject, observation?: boolean) => Promise<JsonObject>;
   speak: (text: string) => void;
   changed: () => void;
+  pluginArrangement?: (operation: string, params: JsonObject) => JsonObject;
 };
 
 export function gameDate(snapshot: JsonObject | undefined): string {
@@ -188,6 +189,7 @@ export class CompanionTools {
       }
       case "manage_arrangements": {
         const [operation, params] = choose(args.change);
+        if (context.pluginArrangement) return context.pluginArrangement(operation, params);
         const store = this.requireStore();
         const goal = store.items(save, "goals").find(row => row.id === context.goalId);
         let result: JsonObject;
@@ -224,6 +226,7 @@ export class CompanionTools {
       case "remember": {
         const [operation, params] = choose(args.entry);
         if (operation === "say_to_player") { context.speak(String(params.text)); return { delivered: true }; }
+        if (context.pluginArrangement) throw new Error("存档记忆由玩家回合维护。");
         const kind = String(params.kind ?? "preference");
         if (kind === "event") throw new Error("共同经历只从原生回执生成。");
         return this.requireStore().editMemory(save, operation === "save_memory" ? "add" : "delete",

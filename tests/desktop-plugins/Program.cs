@@ -113,6 +113,7 @@ try
         var crashPid = File.ReadAllText(flag("pid"));
         File.WriteAllText(flag("crash"), "yes");
         await Eventually(() => File.ReadAllText(flag("pid")) != crashPid && host.List().Single().Status.State == "ready", "crash restart");
+        await CheckPublicApi(host, example, http, hostAddress, File.ReadAllText(flag("token")));
         await host.StopAsync(id);
         var stoppedPid = File.ReadAllText(flag("pid"));
         await host.OpenSettingsAsync(id, _ => { });
@@ -145,7 +146,7 @@ try
         await host.UninstallAsync(id, keepData: false);
         Check(!Directory.Exists(data), "remove-data uninstall kept configuration");
     }
-    Console.WriteLine("Plugin host passed package rollback, lease, handshake, input limits, settings, crash/timeout recovery, automatic startup and owned tree cleanup.");
+    Console.WriteLine("Plugin host passed package rollback, lifecycle, notification deduplication, state projection, replay and stream limits.");
 }
 catch
 {
@@ -216,4 +217,96 @@ static bool Exited(string pid)
         return process.HasExited;
     }
     catch (ArgumentException) { return true; }
+}
+
+static async Task CheckPublicApi(PluginHost host, JsonElement fixture, HttpClient http, string address, string credential)
+{
+    using var time = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    var token = time.Token;
+    var noticeCount = 0;
+    host.Notice += (_, _) => Interlocked.Increment(ref noticeCount);
+    async Task<HttpResponseMessage> Request(HttpMethod method, string route, object? body = null, string? lastId = null)
+    {
+        using var request = new HttpRequestMessage(method, address + route);
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + credential);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        if (lastId is not null) request.Headers.TryAddWithoutValidation("Last-Event-ID", lastId);
+        return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+    }
+    void Push(string type, object body) => host.ApplyRuntimeEvent(type, JsonSerializer.SerializeToElement(body));
+    async Task<JsonElement> Snapshot()
+    {
+        using var response = await Request(HttpMethod.Get, "/v1/state");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
+    }
+
+    Check((await Snapshot()).GetProperty("sessionId").ValueKind == JsonValueKind.Null, "missing empty session field");
+    Push("status", new { gameSessionId = "save-session-1", ready = true, progress = "internal-private",
+        controlOwner = "agent", gameDate = "1:spring:5", timeOfDay = 820 });
+    var snapshot = await Snapshot();
+    Check(!snapshot.GetRawText().Contains("internal-private", StringComparison.Ordinal)
+        && snapshot.GetProperty("game").GetProperty("timeOfDay").GetInt32() == 820, "public state leaked internal data");
+    string from = snapshot.GetProperty("cursor").GetString()!;
+    var reply = new { gameSessionId = "save-session-1", status = "completed", requestId = "reply-1", replyText = "你好" };
+    Push("life.chat.reply", reply);
+    Push("life.chat.reply", reply);
+    var afterReply = (await Snapshot()).GetProperty("cursor").GetString();
+    Check(long.Parse(afterReply!) == long.Parse(from) + 1, "duplicate reply became a second event");
+    Push("result", new { gameSessionId = "save-session-1", commandId = "action-1", skillId = "water-zone",
+        terminalState = "partially-succeeded", completedCount = 1, privateDetail = "never-publish" });
+
+    string streamRoute = "/v1/events?sessionId=save-session-1&cursor=" + from;
+    using var streamA = await Request(HttpMethod.Get, streamRoute);
+    using var streamB = await Request(HttpMethod.Get, streamRoute, lastId: afterReply);
+    using var limit = await Request(HttpMethod.Get, streamRoute);
+    Check((int)limit.StatusCode == 429, "subscription count not bounded");
+    using var readerA = new StreamReader(await streamA.Content.ReadAsStreamAsync(token));
+    using var readerB = new StreamReader(await streamB.Content.ReadAsStreamAsync(token));
+    Check((await Frame(readerA, token)).Contains("agent.reply.completed", StringComparison.Ordinal), "missed event after snapshot");
+    var resumed = await Frame(readerB, token);
+    Check(resumed.Contains("agent.action.completed", StringComparison.Ordinal) && !resumed.Contains("never-publish", StringComparison.Ordinal),
+        "Last-Event-ID not respected or private detail exposed");
+
+    Push("status", new { gameSessionId = "next-session", ready = true });
+    Check(await readerB.ReadLineAsync(token) is null, "save switch left old stream connected");
+    using var stale = await Request(HttpMethod.Get, streamRoute);
+    Check((int)stale.StatusCode == 409, "old session cursor accepted");
+    string nextCursor = (await Snapshot()).GetProperty("cursor").GetString()!;
+    for (int index = 0; index < 260; index++)
+        Push("status", new { gameSessionId = "next-session", ready = true, timeOfDay = index });
+    using var expired = await Request(HttpMethod.Get, "/v1/events?sessionId=next-session&cursor=" + nextCursor);
+    var expiredError = await expired.Content.ReadFromJsonAsync<PluginError>(PluginPackages.Json, token);
+    Check((int)expired.StatusCode == 409 && expiredError?.Code == fixture.GetProperty("expiredCursor").GetProperty("code").GetString(),
+        "expired cursor was not rejected");
+
+    var notice = new { version = 1, type = "notification", messageId = "notice-1", at = "2025-01-01T00:00:00Z",
+        payload = new { text = "测试通知" } };
+    using var accepted = await Request(HttpMethod.Post, "/v1/messages", notice);
+    using var duplicate = await Request(HttpMethod.Post, "/v1/messages", notice);
+    using var opaque = await Request(HttpMethod.Post, "/v1/messages", new { version = 1, type = "event", messageId = "event-1",
+        at = "2025-01-01T00:00:00Z", payload = new { arbitrarilyNested = new[] { 1, 2 } } });
+    Check(accepted.StatusCode == HttpStatusCode.NoContent && duplicate.StatusCode == HttpStatusCode.NoContent
+        && opaque.StatusCode == HttpStatusCode.NoContent && noticeCount == 1, "message or deduplication failed");
+    using var command = await Request(HttpMethod.Post, "/v1/commands", fixture.GetProperty("command").GetProperty("request"));
+    Check((int)command.StatusCode == 503, "missing agent runtime did not return an unavailable result");
+
+    var isolated = new PluginEvents();
+    var manifest = fixture.GetProperty("package").GetProperty("manifest").Deserialize<PluginManifest>(PluginPackages.Json)!;
+    var instance = new PluginInstance(new InstalledPlugin(manifest, true, false));
+    using var slow = isolated.Subscribe(instance, null, 0, PluginEvents.Topics).Stream!;
+    for (int index = 0; index < 258; index++)
+        isolated.Apply("status", JsonSerializer.SerializeToElement(new { timeOfDay = index }));
+    Check(slow.End.IsCancellationRequested, "slow subscriber was not released");
+}
+
+static async Task<string> Frame(StreamReader reader, CancellationToken token)
+{
+    string result = "";
+    while (await reader.ReadLineAsync(token) is { } line)
+    {
+        if (line.Length == 0 && result.Length > 0) return result;
+        if (!line.StartsWith(':')) result += line;
+    }
+    throw new InvalidOperationException("Expected a plugin event.");
 }

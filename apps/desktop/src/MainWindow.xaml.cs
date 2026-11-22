@@ -149,6 +149,7 @@ public partial class MainWindow : Window
 
     private void MarkRuntimeExited()
     {
+        _plugins?.DisconnectRuntime();
         ApplyStatus(default);
         ConnectionText.Text = "伙伴服务已退出";
         ActivityText.Text = "游戏仍在运行。点击「重连伙伴服务」后核对旧动作。";
@@ -183,6 +184,7 @@ public partial class MainWindow : Window
     private async Task EndSessionAsync(DesktopSession session, string message)
     {
         if (_session != session) return;
+        _plugins?.DisconnectRuntime();
         _partnerServiceReady = false;
         _gameSessionId = null;
         _saveId = null;
@@ -193,6 +195,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { LogError("session_stop_failed", "无法停止伙伴服务。", ex); }
         if (_session != session) return;
         _session = null;
+        _plugins?.DisconnectRuntime();
         ResetPartnerConnection();
         ResetUsageView();
         ConnectionText.Text = "等待启动游戏";
@@ -322,14 +325,17 @@ public partial class MainWindow : Window
     private void ApplyEvent(JsonElement message)
     {
         var payload = message.GetProperty("payload");
-        switch (Text(message, "type"))
+        var type = Text(message, "type");
+        _plugins?.ApplyRuntimeEvent(type, payload);
+        switch (type)
         {
             case "status": ApplyStatus(payload); break;
             case "submitted":
                 var requestId = Text(payload, "requestId");
                 if (requestId == _submittingRequestId) _submissionAccepted = true;
                 if (_gameSessionId is not null && requestId.Length > 0) _pendingChatRequests.Add(requestId);
-                AddEntry("你", Text(payload, "text"));
+                var pluginSource = Text(payload, "pluginSource");
+                AddEntry(pluginSource.Length > 0 ? "插件 · " + pluginSource : "你", Text(payload, "text"));
                 RefreshComposer();
                 break;
             case "command" when Text(payload, "status") == "interrupting":

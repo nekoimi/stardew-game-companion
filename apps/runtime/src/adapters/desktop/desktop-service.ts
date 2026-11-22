@@ -12,6 +12,7 @@ import { object } from "../../application/model.js";
 import { CompanionStore } from "../storage/companion-store.js";
 import type { JsonObject, ModelSelection } from "../../application/model.js";
 import { checkModelConnection } from "../model/connection-check.js";
+import { PluginCommandError } from "../../application/plugin-command.js";
 
 export async function startDesktopService(
   runDirectory: string, secret: string, stopFile: string, ownerPid: number, modelTestOnly = false,
@@ -238,6 +239,27 @@ export async function startDesktopService(
       }
       if (req.method !== "POST") return respond(res, 404, { error: "找不到操作。" });
       const body = await readBody(req);
+      if (url.startsWith("/v2/plugins/")) {
+        const { pluginId, instanceId, requestId, sessionId, correlationId } = body;
+        if (closing || !store) return respond(res, 503, { code: "runtime_unavailable", message: "伴侣运行时暂未连接。" });
+        if (typeof pluginId !== "string" || pluginId.length > 72 || !/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(pluginId))
+          throw new PluginCommandError("invalid_request", "插件标识无效。", 400);
+        if (url === "/v2/plugins/close" && (instanceId == null || pluginIdentifier(instanceId))) {
+          await runner.closePlugin(pluginId, typeof instanceId === "string" ? instanceId : undefined);
+          return respond(res, 200, { closed: true });
+        }
+        if (url === "/v2/plugins/query" && pluginIdentifier(requestId))
+          return respond(res, 200, await runner.queryPlugin(pluginId, requestId));
+        const text = typeof body.text === "string" ? body.text.trim() : "";
+        if (url === "/v2/plugins/submit" && pluginIdentifier(requestId) && pluginIdentifier(sessionId)
+          && pluginIdentifier(instanceId) && text.length > 0 && text.length <= 500
+          && (correlationId == null || pluginIdentifier(correlationId))) {
+          const { duplicate, result } = runner.submitPlugin({ pluginId, instanceId, requestId, sessionId, text,
+            ...(typeof correlationId === "string" ? { correlationId } : {}) });
+          return respond(res, duplicate ? 200 : 202, result);
+        }
+        throw new PluginCommandError("invalid_request", "插件指令参数无效。", 400);
+      }
       if (url === "/v2/model/test" || url === "/v2/model/configure") {
         const selection = object(body.selection);
         if (typeof selection.provider !== "string" || typeof selection.model !== "string" || typeof body.apiKey !== "string"
@@ -350,6 +372,10 @@ export async function startDesktopService(
     } catch (error) {
       if (url === "/v2/model/test" || url === "/v2/model/configure")
         diagnostic("model_request_failed", { code: error instanceof ModelError ? error.code : "unexpected_error" });
+      if (error instanceof PluginCommandError)
+        return respond(res, error.httpStatus, { code: error.code, message: error.message,
+          ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}) });
+      if (url.startsWith("/v2/plugins/")) return respond(res, 503, { code: "runtime_unavailable", message: "插件指令暂不可用。" });
       if (error instanceof ModelError) return respond(res, 409, { error: error.message, code: error.code });
       if (error instanceof SyntaxError) return respond(res, 400, { error: "请求格式无效。" });
       return respond(res, 409, { error: error instanceof Error ? error.message : "操作未完成。" });
@@ -366,6 +392,10 @@ export async function startDesktopService(
 }
 
 function sse(event: { id: number; data: string }): string { return `id: ${event.id}\ndata: ${event.data}\n\n`; }
+
+function pluginIdentifier(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,120}$/.test(value);
+}
 
 function respond(res: ServerResponse, status: number, body: JsonObject): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });

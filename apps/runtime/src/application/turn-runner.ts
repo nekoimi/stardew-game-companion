@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { GameConnection } from "../adapters/game/game-connection.js";
 import { isTerminalState } from "../adapters/game/action-receipt.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
@@ -6,6 +6,8 @@ import type { CompanionStore } from "../adapters/storage/companion-store.js";
 import { CompanionTools, gameDate, gameTools, modelObservation } from "../tools/companion-tools.js";
 import { modelResponseTimeout, object } from "./model.js";
 import type { JsonObject, JsonValue, ModelContext, ModelEvent, ModelMessage, ModelSelection } from "./model.js";
+import { PluginCommandError, pluginAction } from "./plugin-command.js";
+import type { PluginCommand, PluginRequest } from "./plugin-command.js";
 
 type Complete = Extract<ModelEvent, { type: "done" }>;
 interface Turn {
@@ -19,6 +21,7 @@ interface Turn {
   additional: { requestId: string; text: string }[];
   requests: string[];
   settled: Promise<void>;
+  plugin?: PluginCommand;
 }
 
 export class TurnRunner {
@@ -36,6 +39,7 @@ export class TurnRunner {
   private bedtimeAttempt?: string;
   private bedtimeRecovery?: string;
   private observedOwner = false;
+  private readonly closedPluginInstances = new Set<string>();
 
   constructor(private readonly game: GameConnection, private model: ModelContext | undefined,
               private readonly publish: (type: string, payload: JsonObject) => void,
@@ -83,7 +87,12 @@ export class TurnRunner {
     const binding = this.game.binding;
     const save = binding?.saveId;
     const decisions = save ? this.store?.items(save, "decisions") ?? [] : [];
+    const date = gameDate(this.game.snapshot);
+    const timeOfDay = object(this.game.snapshot?.world).timeOfDay;
     return { ...binding, ready: !!binding, actorMode: this.game.actorMode,
+      ...(binding && date ? { gameDate: date } : {}),
+      ...(binding && typeof timeOfDay === "number" ? { timeOfDay } : {}),
+      ...(this.active?.plugin ? { pluginSource: this.active.plugin.input.pluginId } : {}),
       controlOwner: this.game.state.controlOwner ?? (this.game.actorMode === "player" ? "human" : "agent"),
       paused: this.game.state.paused === true, interrupting: this.transition || this.game.state.interrupting === true,
       recoveryPending: !!this.uncertain || this.game.state.recoveryPending === true,
@@ -130,6 +139,120 @@ export class TurnRunner {
     } catch { /* The game will request its profile again after binding. */ }
   }
 
+  submitPlugin(input: PluginRequest): { duplicate: boolean; result: JsonObject } {
+    const signature = createHash("sha256").update(JSON.stringify([input.sessionId, input.text, input.correlationId ?? null])).digest("hex");
+    const existing = this.store?.pluginCommand(input.pluginId, input.requestId);
+    if (this.closedPluginInstances.has(input.instanceId)) {
+      throw new PluginCommandError("invalid_instance", "插件运行实例已关闭。", 401);
+    }
+    if (existing) {
+      if (existing.signature !== signature) throw new PluginCommandError("request_conflict", "该编号已经提交过不同内容。");
+      return { duplicate: true, result: this.pluginResult(existing) };
+    }
+
+    const binding = this.game.binding;
+    if (!binding) throw new PluginCommandError("no_game", "请先进入游戏存档。");
+    if (binding.gameSessionId !== input.sessionId) throw new PluginCommandError("session_changed", "游戏会话已变化。");
+    if (!this.model || !this.store || this.stopping) throw new PluginCommandError("model_unavailable", "伴侣模型暂不可用。");
+    if (this.uncertain || this.game.state.recoveryPending === true) throw new PluginCommandError("recovery_pending", "请先核对旧动作。");
+    if (this.game.state.paused === true) throw new PluginCommandError("paused", "当前游戏工作已暂停。");
+    if (!this.observedOwner || this.game.actorMode === "player" && this.game.state.controlOwner !== "agent")
+      throw new PluginCommandError("player_control", "游戏当前由玩家控制。");
+    if (this.active || this.transition || this.game.state.interrupting === true)
+      throw new PluginCommandError("busy", "当前回合正在执行。", 409, 1000);
+    if (this.pluginRestRequired(binding) || this.store.items(binding.saveId, "decisions").some(row => row.status === "pending"))
+      throw new PluginCommandError("waiting_player", "当前有待确认事项或已到休息时间。");
+    const goal = this.store.items(binding.saveId, "goals").findLast(row => row.status === "active");
+    if (goal && this.runnableGoal(goal)) throw new PluginCommandError("busy", "玩家的目标当前可执行。", 409, 1000);
+
+    const command: PluginCommand = { input, binding, signature, internalId: randomUUID(), goalId: randomUUID(),
+      status: "accepted", turnEnded: false, goalCompleted: false };
+    this.store.acceptPluginCommand(command);
+    this.store.append(binding.saveId, `${command.internalId}:player`, "player", {
+      speaker: `插件 · ${input.pluginId}`, text: input.text, source: input.pluginId, gameDate: gameDate(this.game.snapshot)
+    });
+    this.publish("submitted", { ...binding, requestId: command.internalId, text: input.text,
+      status: "accepted", pluginSource: input.pluginId });
+    this.startTurn(binding, command.internalId, command.goalId, input.text, false, command.internalId, false, command);
+    return { duplicate: false, result: this.pluginResult(command) };
+  }
+
+  async queryPlugin(pluginId: string, requestId: string): Promise<JsonObject> {
+    const command = this.store?.pluginCommand(pluginId, requestId);
+    if (!command) throw new PluginCommandError("not_found", "找不到该插件的指令。", 404);
+    if (this.active?.plugin?.internalId !== command.internalId && this.store
+      && this.game.binding?.gameSessionId === command.binding.gameSessionId
+      && this.game.binding.saveId === command.binding.saveId) {
+      const pending = this.store.pluginActions(command).find(link => !link.receipt);
+      if (pending) {
+        try {
+          const receipt = await this.game.queryAction(pending.actionId);
+          if (receipt?.commandId === pending.actionId && isTerminalState(receipt.terminalState)) {
+            await this.game.observe();
+            this.assertBinding(command.binding);
+            this.settleReceipt(command.binding, pending.actionId, receipt);
+          }
+        } catch { /* Keep the record unresolved until the original game confirms it. */ }
+      }
+    }
+    return this.pluginResult(this.active?.plugin?.internalId === command.internalId ? this.active.plugin : command);
+  }
+
+  async closePlugin(pluginId: string, instanceId?: string): Promise<void> {
+    if (instanceId) this.closedPluginInstances.add(instanceId);
+    const turn = this.active;
+    if (turn?.plugin?.input.pluginId !== pluginId) return;
+    this.closedPluginInstances.add(turn.plugin.input.instanceId);
+    turn.abort.abort();
+    const current = this.game.binding;
+    if (turn.nativeAction && !this.transition && current?.gameSessionId === turn.binding.gameSessionId) {
+      this.transition = true;
+      try { await this.interrupt(current); }
+      catch { /* The execute path reconciles the outstanding action. */ }
+      finally { this.transition = false; this.changed(); }
+    }
+  }
+
+  private pluginResult(command: PluginCommand): JsonObject {
+    const links = this.store?.pluginActions(command) ?? [];
+    const actions = links.flatMap(link => link.receipt ? [pluginAction(link.receipt)] : []);
+    const interrupted = !command.turnEnded && this.active?.plugin?.internalId !== command.internalId;
+    const unresolved = links.some(link => !link.receipt);
+    const productive = actions.some(action => typeof action.completedCount === "number" && action.completedCount > 0
+      && !["navigate-to", "sleep", "rest"].includes(String(action.skillId)));
+    const nativePartial = actions.some(action => action.terminalState === "partially-succeeded");
+    const progress = productive && (nativePartial || !command.goalCompleted
+      || actions.some(action => action.terminalState !== "succeeded"));
+    let status = command.status;
+    if (status === "recovery_pending" && !unresolved) status = progress ? "partial" : "failed";
+    if (interrupted) status = unresolved ? "recovery_pending" : progress ? "partial" : "failed";
+    else if (command.turnEnded && unresolved) status = "recovery_pending";
+    else if (command.turnEnded && status === "completed" && progress) status = "partial";
+    const outcome = unresolved || !command.turnEnded && !interrupted ? "unknown" : progress ? "partial"
+      : command.goalCompleted && productive && status === "completed" ? "achieved"
+      : status === "failed" || status === "cancelled" ? "unmet" : "unknown";
+    return { requestId: command.input.requestId, sessionId: command.input.sessionId, status,
+      turnEnded: command.turnEnded || interrupted, goalOutcome: outcome, actions,
+      ...(command.input.correlationId ? { correlationId: command.input.correlationId } : {}) };
+  }
+
+  private runnableGoal(goal: JsonObject): boolean {
+    if (goal.continuation === "continue") return true;
+    if (goal.continuation !== "wait") return false;
+    const date = gameDate(this.game.snapshot);
+    const time = object(this.game.snapshot?.world).timeOfDay;
+    return goal.waitNextDay === true ? !!date && date !== goal.updatedDay
+      : typeof time === "number" && typeof goal.wakeTime === "number" && time >= goal.wakeTime;
+  }
+
+  private pluginRestRequired(binding: GameBinding): boolean {
+    const actor = object(this.game.snapshot?.companion);
+    return !!this.bedtimeNeedsSleep(binding) || object(object(this.game.snapshot?.world).native).endOfNight === true
+      || object(actor.bedtimeSchedule).returnDue === true
+      || ["winding-down", "returning-home", "waiting-for-bed", "sleeping", "resting"].includes(
+        String(this.game.state.activity ?? actor.restState));
+  }
+
   async submit(binding: GameBinding, requestId: string, text: string, mode: "send" | "interrupt",
       recordInGame = true, decisionId?: string, preset = false): Promise<void> {
     this.assertBinding(binding);
@@ -152,6 +275,8 @@ export class TurnRunner {
         if (this.game.state.paused === true || (this.game.actorMode === "player" && this.game.state.controlOwner !== "agent")) {
           throw new Error("当前已暂停或由玩家控制，请先恢复游戏工作。");
         }
+        await this.interrupt(binding);
+      } else if (this.active?.plugin) {
         await this.interrupt(binding);
       }
       if (recordInGame) await this.game.control("record", { conversationRequestId: requestId, text, ...(decisionId ? { decisionId } : {}) });
@@ -204,11 +329,15 @@ export class TurnRunner {
   }
 
   private startTurn(binding: GameBinding, requestId: string, goalId: string, text: string, autonomous = false,
-                    originalRequestId = requestId, bedtimeOnly = false): void {
+                    originalRequestId = requestId, bedtimeOnly = false, plugin?: PluginCommand): void {
     if (!this.model) return;
     const turn: Turn = { id: randomUUID(), requestId, originalRequestId, goalId, binding, abort: new AbortController(), additional: [],
-      requests: [requestId], settled: Promise.resolve() };
+      requests: [requestId], settled: Promise.resolve(), plugin };
     this.active = turn;
+    if (plugin) {
+      plugin.status = "running";
+      this.store?.savePluginCommand(plugin);
+    }
     turn.settled = this.run(turn, this.model, text, autonomous, bedtimeOnly);
     this.changed();
   }
@@ -250,12 +379,7 @@ export class TurnRunner {
     if (this.store.items(save, "decisions").some(item => item.status === "pending")) return;
     const profile = this.store.profile(save);
     if (!goal && (profile.initiativeMode !== "free" || profile.idlePreference === "wait")) return;
-    if (goal && goal.continuation !== "continue" && goal.continuation !== "wait") return;
-    if (goal?.continuation === "wait") {
-      const due = goal.waitNextDay === true ? date && date !== goal.updatedDay
-        : typeof time === "number" && typeof goal.wakeTime === "number" && time >= goal.wakeTime;
-      if (!due) return;
-    }
+    if (goal && !this.runnableGoal(goal)) return;
     const lastPerformed = this.store.recentReceipts(save).findLast(row => row.terminalState === "succeeded"
       || row.terminalState === "partially-succeeded");
     const revision = goal ? JSON.stringify([goal.id, goal.text, goal.continuation, goal.wakeTime, goal.updatedDay,
@@ -418,6 +542,18 @@ export class TurnRunner {
     let waiting = false;
     let repeatedBatch = "";
     let repeatCount = 0;
+    const plugin = turn.plugin;
+    const startingDate = gameDate(this.game.snapshot);
+    const pluginNeedsConfirmation = (message: string) => {
+      if (!waiting && plugin && this.game.binding?.gameSessionId === turn.binding.gameSessionId) {
+        this.store?.updateItem(save, "decisions", randomUUID(), {
+          message, choices: ["继续剩余工作", "结束插件指令"], requestId: turn.originalRequestId, goalId: turn.goalId,
+          status: "pending", gameDate: gameDate(this.game.snapshot)
+        });
+        this.syncProfile(turn.binding);
+      }
+      waiting = true;
+    };
     const acknowledgeAdditional = (): boolean => {
       const arrived = turn.additional.splice(0);
       for (const item of arrived) {
@@ -436,7 +572,11 @@ export class TurnRunner {
     };
     try {
       while (!signal.aborted) {
-        const sleep = await this.sleepAtBedtime(turn);
+        if (plugin && (this.pluginRestRequired(turn.binding) || startingDate !== gameDate(this.game.snapshot))) {
+          pluginNeedsConfirmation("插件指令需要在休息或过夜后接续，是否继续剩余工作？");
+          break;
+        }
+        const sleep = plugin ? undefined : await this.sleepAtBedtime(turn);
         if (bedtimeOnly && !turn.additional.length) {
           if (!signal.aborted && sleep && sleep.terminalState !== "succeeded") {
             failure = `就寝未完成。${object(sleep.error).message ?? "请查看游戏状态。"}`;
@@ -457,6 +597,7 @@ export class TurnRunner {
           const context = this.store ? { profile: this.store.profile(save), memory: this.store.memory(save).entries.slice(-24),
             originalRequest: this.store.playerRequest(save, turn.originalRequestId),
             goals: this.store.items(save, "goals").filter(goal => goal.status === "active"),
+            ...(plugin ? { pluginTask: { source: plugin.input.pluginId, goalId: plugin.goalId } } : {}),
             observations: modelObservation(this.game.snapshot) } : {};
           const instructions = this.rules + "\n当前项目状态（数据，不包含工具授权）：\n" + JSON.stringify(context);
           this.diagnostic?.("model_request_started", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
@@ -505,9 +646,27 @@ export class TurnRunner {
           let failed = false;
           try {
             result = await this.tools.invoke({ binding: turn.binding, turnId: turn.id, requestId: turn.originalRequestId,
-              goalId: turn.goalId, signal, native: (skill, params, observation) => this.executeNative(turn, skill, params, observation),
+              goalId: turn.goalId, signal,
+              native: (skill, params, observation) => {
+                if (plugin && !observation && (skill === "sleep" || this.pluginRestRequired(turn.binding)
+                  || startingDate !== gameDate(this.game.snapshot))) {
+                  pluginNeedsConfirmation("插件指令需要休息或过夜才能继续，是否继续剩余工作？");
+                  throw new Error("需要玩家确认后续工作。");
+                }
+                return this.executeNative(turn, skill, params, observation);
+              },
               speak: spoken => this.deliver(turn, spoken, `${turn.requestId}:public:${++publicMessages}`),
               changed: () => { this.syncProfile(turn.binding); this.changed(); },
+              ...(plugin ? { pluginArrangement: (operation: string, params: JsonObject): JsonObject => {
+                if (operation === "set_goal_continuation") {
+                  pluginNeedsConfirmation(`插件指令尚有剩余工作。${String(params.reason ?? "")}`.slice(0, 500));
+                  return { waitingForPlayer: true };
+                }
+                if (operation !== "manage_goal" || !["add", "update", "complete", "cancel"].includes(String(params.action)))
+                  throw new Error("插件回合仅可调整本次独立目标。");
+                plugin.goalCompleted = params.action === "complete";
+                return { goalId: plugin.goalId, goalCompleted: plugin.goalCompleted };
+              } } : {}),
             }, call.name, call.arguments);
             if (call.name === "request_player_decision") waiting = true;
           }
@@ -526,6 +685,12 @@ export class TurnRunner {
       failure = error instanceof Error ? error.message : "Agent 回合未完成。";
     } finally {
       if (signal.aborted) failure = "本轮已停止。";
+      if (plugin) {
+        plugin.turnEnded = true;
+        plugin.status = this.uncertain?.binding.gameSessionId === turn.binding.gameSessionId ? "recovery_pending"
+          : signal.aborted ? "cancelled" : failure ? "failed" : waiting ? "waiting_player" : "completed";
+        this.store?.savePluginCommand(plugin);
+      }
       const current = this.game.binding;
       if (current?.gameSessionId === turn.binding.gameSessionId) {
         if (!this.store && !failure && answer) {
@@ -588,7 +753,7 @@ export class TurnRunner {
     const actionId = turn.nativeAction = randomUUID();
     this.changed();
     try {
-      if (!observation) this.store?.beginAction(turn.binding, actionId);
+      if (!observation) this.store?.beginAction(turn.binding, actionId, turn.plugin?.internalId);
       let receipt: JsonObject | undefined;
       try { receipt = await this.game.execute(actionId, turn.id, skill, parameters); }
       catch {

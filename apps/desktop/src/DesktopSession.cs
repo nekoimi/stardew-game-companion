@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using StardewAI.Companion.Desktop.Plugins;
 using StardewAI.Companion.Logging;
 
 namespace StardewAI.Companion.Desktop;
@@ -94,6 +95,9 @@ internal sealed class DesktopSession
 
     public Task<JsonElement> PostAsync(string route, object body, int timeoutSeconds = 25)
         => (_api ?? throw new InvalidOperationException("伴侣服务尚未启动。")).PostAsync(route, body, timeoutSeconds);
+
+    internal Task<PluginCallResult> PostPluginAsync(string route, object body)
+        => Volatile.Read(ref _api)?.PostPluginAsync(route, body) ?? Task.FromResult(PluginCallResult.Unavailable());
 
     internal static async Task TestModelAsync(string root, ApiModelSettings selected, string key, FileLogger logger)
     {

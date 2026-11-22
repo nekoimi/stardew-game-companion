@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using StardewAI.Companion.Desktop.Plugins;
 using StardewAI.Companion.Logging;
 
 namespace StardewAI.Companion.Desktop;
@@ -34,6 +35,15 @@ internal sealed class DesktopRuntimeApi : IDisposable
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: timeout.Token);
         if (response.IsSuccessStatusCode) return payload;
         throw new InvalidOperationException(payload.TryGetProperty("error", out var message) ? message.GetString() : "请求未获确认。");
+    }
+
+    internal async Task<PluginCallResult> PostPluginAsync(string route, object body)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_runtimeToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(6));
+        using var response = await _client.PostAsJsonAsync(route, body, timeout.Token).ConfigureAwait(false);
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: timeout.Token).ConfigureAwait(false);
+        return new PluginCallResult((int)response.StatusCode, result);
     }
 
     private async Task ReceiveEventsAsync(Action<JsonElement> publish, Func<bool> stillCurrent, FileLogger logger)
