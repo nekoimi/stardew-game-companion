@@ -1,17 +1,17 @@
-<Window x:Class="StardewAI.Companion.Desktop.CloseWindowDialog"
+<Window x:Class="StardewAI.Companion.Desktop.ConfirmationDialog"
         x:ClassModifier="internal"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="星露谷游戏伴侣" Width="438" SizeToContent="Height" ResizeMode="NoResize"
-        WindowStartupLocation="CenterScreen" Background="{StaticResource Paper}" Foreground="{StaticResource Ink}"
-        FontFamily="Microsoft YaHei UI" FontSize="14">
+        WindowStartupLocation="CenterScreen" Style="{StaticResource CompanionDialogWindow}">
     <StackPanel Margin="20">
         <TextBlock x:Name="Heading" Style="{StaticResource PageTitle}" />
         <TextBlock x:Name="Summary" TextWrapping="Wrap" Margin="0,0,0,18" />
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <CheckBox x:Name="Option" Visibility="Collapsed" IsChecked="True" Margin="0,0,0,18" />
+        <WrapPanel HorizontalAlignment="Right">
             <Button x:Name="CancelCloseButton" Content="取消" IsCancel="True" IsDefault="True" />
-            <Button x:Name="HideButton" Content="最小化到托盘" Click="HideClicked" Style="{StaticResource PrimaryButton}" />
-            <Button x:Name="ExitButton" Content="退出伴侣" Click="ExitClicked" Margin="0" />
-        </StackPanel>
+            <Button x:Name="AlternateButton" Visibility="Collapsed" Click="AlternateClicked" Style="{StaticResource PrimaryButton}" />
+            <Button x:Name="ConfirmButton" Click="ConfirmClicked" Margin="0" />
+        </WrapPanel>
     </StackPanel>
 </Window>

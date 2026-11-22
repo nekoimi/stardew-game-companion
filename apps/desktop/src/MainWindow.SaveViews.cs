@@ -202,8 +202,7 @@ public partial class MainWindow
     {
         if (_session is not { } session || _gameSessionId is not { } game || GoalPicker.SelectedItem is not DesktopGoal goal) return;
         int view = _saveViewGeneration;
-        if (MessageBox.Show(this, $"撤回目标“{goal.Title}”？已完成的动作会保留。", "撤回目标",
-                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes
+        if (!new ConfirmationDialog("撤回目标", $"撤回目标“{goal.Title}”？已完成的动作会保留。", "撤回目标").ShowFor(this)
             || view != _saveViewGeneration) return;
         _withdrawingGoal = true;
         WorkFeedback.Text = "正在撤回目标…";

@@ -1,14 +1,14 @@
 # 在线插件目录 v1
 
-目录运营方通过 HTTPS 提供 `catalog.json` 和插件 ZIP。桌面「插件中心 → 在线目录」使用运营方提供的目录地址与签名公钥。加载时验证签名和有效期，列表显示发布者、版本和宿主协议兼容性。安装和更新均需确认。
+目录运营方通过 HTTPS 提供 `catalog.json` 和插件 ZIP。桌面「插件中心 → 在线目录」只需填写该目录文件的 HTTPS 地址。宿主校验证书、目录格式与有效期，列表显示发布者、版本和宿主协议兼容性。安装和更新均需确认。
 
-## 签名格式
+## 目录格式与插件包签名
 
-目录有两个字段。`payload` 是目录内容的 UTF-8 字节经 Base64 编码的结果。`signature` 是对相同字节进行 ECDSA P-256 与 SHA-256 签名后的 DER 编码，再转换成 Base64。桌面输入的目录公钥使用 Base64 编码的 DER SubjectPublicKeyInfo。
+目录为 UTF-8 JSON，含 `catalogVersion: 1`、`expiresAt`（ISO 日期时间）、`publishers`（每项有 `name` 和 `publicKey`）及 `plugins`。发布者公钥随目录分发，格式为 Base64 编码的 DER SubjectPublicKeyInfo。每条插件版本记录含 `id`、`name`、`publisher`、`version`、`hostProtocol`、`downloadUrl`、`sha256`、`packageSignature` 和整数 `dataVersion`。
 
-目录内容含 `catalogVersion: 1`、`expiresAt`（ISO 日期时间）、`publishers`（每项有 `name` 和 `publicKey`）及 `plugins`。发布者公钥采用同一编码。每条插件版本记录含 `id`、`name`、`publisher`、`version`、`hostProtocol`、`downloadUrl`、`sha256`、`packageSignature` 和整数 `dataVersion`。
+下载时先检查目录的版本、有效期和兼容性，再检查 ZIP 的 SHA256 与发布者签名。发布者签名对原始 32 字节 SHA256 摘要执行 ECDSA P-256 与 SHA-256 签名，使用 DER 与 Base64 编码。包内清单、文件哈希及目录声明在安装前再次核对。已通过目录安装或更新的插件绑定其发布者公钥。
 
-下载时先检查目录的版本、有效期和兼容性，再检查 ZIP 的 SHA256 与发布者签名。发布者签名对原始 32 字节 SHA256 摘要执行 ECDSA P-256 与 SHA-256 签名，使用同样的 DER 与 Base64 编码。包内清单、文件哈希及目录声明在安装前再次核对。已通过目录安装或更新的插件绑定其发布者公钥。
+已保存过目录公钥的旧地址仍可校验原有的 `payload` / `signature` 格式。新配置使用直接返回目录内容的 HTTPS 地址。
 
 ## 更新和数据
 
@@ -18,10 +18,10 @@
 
 ## 准备目录
 
-用两份 P-256 私钥分别签发目录和插件包。开发工具接收 PEM 私钥及同一发布者的独立 ZIP。
+开发工具接收发布者的 P-256 PEM 私钥和独立插件 ZIP，签名后生成目录。
 
 ```powershell
-pwsh -File tools/dev/sign-plugin-catalog.ps1 -Publisher '<清单中的发布者>' -PublisherPrivatePem '<发布者私钥文件>' -CatalogPrivatePem '<目录私钥文件>' -BaseUrl 'https://example.org/plugins' -Output artifacts/catalog -Archives 'command-0.1.0-win-x64.zip'
+pwsh -File tools/dev/sign-plugin-catalog.ps1 -Publisher '<清单中的发布者>' -PublisherPrivatePem '<发布者私钥文件>' -BaseUrl 'https://example.org/plugins' -Output artifacts/catalog -Archives 'command-0.1.0-win-x64.zip'
 ```
 
-将生成的 `catalog.json` 和 ZIP 放到所选 HTTPS 目录，独立提供 `catalog-public-key.txt` 中的公钥。两份私钥保存在运营方环境。本项目的客户端可连接指定目录，仓库发行包使用本地 ZIP 作为开箱入口。
+将生成的 `catalog.json` 和 ZIP 放到所选 HTTPS 目录，把 `catalog.json` 的地址提供给用户。发布者私钥保存在签发环境。

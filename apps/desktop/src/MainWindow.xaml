@@ -352,7 +352,8 @@
                     </StackPanel>
                 </Grid>
             </TabItem>
-            <TabItem x:Name="PluginsPage" Header="插件中心" Tag="&#xEA86;" Style="{StaticResource RoomPage}">
+            <TabItem x:Name="PluginsPage" Header="插件中心" Tag="&#xEA86;" Style="{StaticResource RoomPage}"
+                     BorderBrush="{StaticResource PaperEdge}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <Border CornerRadius="9" BorderThickness="1" BorderBrush="#335C43" Background="{StaticResource Pine}">

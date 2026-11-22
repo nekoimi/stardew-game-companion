@@ -127,8 +127,7 @@ public partial class MainWindow
     private async void RollbackPluginClicked(object sender, RoutedEventArgs e)
     {
         if (PluginList.SelectedItem is not PluginRow row || row.View.Installation.Backup is not { } backup) return;
-        if (MessageBox.Show(this, $"回退到 v{backup.Manifest.Version}并恢复更新前的插件数据？",
-            "回退插件版本", MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK)
+        if (new ConfirmationDialog("回退插件版本", $"回退到 v{backup.Manifest.Version} 并恢复更新前的插件数据？", "回退版本").ShowFor(this))
             await RunPluginOperationAsync(host => host.RollbackAsync(row.Id));
     }
 
@@ -140,9 +139,9 @@ public partial class MainWindow
         await RunPluginOperationAsync(async host =>
         {
             var installed = await host.InstallAsync(picker.FileName, manifest =>
-                Dispatcher.InvokeAsync(() => MessageBox.Show(this,
+                Dispatcher.InvokeAsync(() => !_closing && new ConfirmationDialog("确认安装本地插件",
                     $"{manifest.Name} · v{manifest.Version}\n发布者：{manifest.Publisher}\n来源：{Path.GetFileName(picker.FileName)}",
-                    "确认安装本地插件", MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK).Task);
+                    "安装插件").ShowFor(this)).Task);
             installedId = installed?.Manifest.Id;
         });
         if (installedId is not null && !_closing) RefreshPlugins(installedId);
@@ -183,10 +182,10 @@ public partial class MainWindow
     private async void UninstallPluginClicked(object sender, RoutedEventArgs e)
     {
         if (PluginList.SelectedItem is not PluginRow row) return;
-        var result = MessageBox.Show(this, $"卸载「{row.Name}」时会停止插件。是否保留插件的数据与设置？",
-            "卸载插件", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
-        if (result is MessageBoxResult.Yes or MessageBoxResult.No)
-            await RunPluginOperationAsync(host => host.UninstallAsync(row.Id, result == MessageBoxResult.Yes));
+        var dialog = new ConfirmationDialog("卸载插件", $"卸载「{row.Name}」时会停止插件。取消勾选将删除插件的数据与设置。",
+            "卸载插件", "保留插件的数据与设置");
+        if (dialog.ShowFor(this))
+            await RunPluginOperationAsync(host => host.UninstallAsync(row.Id, dialog.OptionChecked));
     }
 
     private async void OpenPluginLogsClicked(object sender, RoutedEventArgs e)

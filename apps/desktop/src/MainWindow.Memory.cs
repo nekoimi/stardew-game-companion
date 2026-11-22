@@ -69,8 +69,7 @@ public partial class MainWindow
     {
         if (MemoryPicker.SelectedItem is not DesktopMemory entry) return;
         int view = _saveViewGeneration;
-        if (MessageBox.Show(this, "删除所选记忆？删除后无法撤销。", "删除记忆", MessageBoxButton.YesNo,
-                MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes && view == _saveViewGeneration)
+        if (new ConfirmationDialog("删除记忆", "删除所选记忆后无法撤销。", "删除记忆").ShowFor(this) && view == _saveViewGeneration)
             await ChangeMemoryAsync("delete", entry.Id);
     }
 

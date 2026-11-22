@@ -205,7 +205,8 @@ async Task CheckCatalog(JsonObject manifest, byte[] executable)
     const string catalogRoute = "/catalog.json";
     const string originalVersion = "0.1.0";
     await using var transport = await CatalogFixture.StartAsync();
-    var source = new CatalogSource(transport.Address + catalogRoute, Convert.ToBase64String(directoryKey.ExportSubjectPublicKeyInfo()));
+    var url = transport.Address + catalogRoute;
+    var legacy = new CatalogSource(url, Convert.ToBase64String(directoryKey.ExportSubjectPublicKeyInfo()));
     var first = Entry(originalVersion, "", 1);
     var bad = Entry("0.2.0", "--fail-migration", 2);
     var second = Entry("0.3.0", "--migrate", 2);
@@ -213,15 +214,22 @@ async Task CheckCatalog(JsonObject manifest, byte[] executable)
     var index = new CatalogIndex(1, DateTimeOffset.UtcNow.AddDays(1), [new(publisher, publicKey)],
         [first, bad, second, incompatible]);
     byte[] body = JsonSerializer.SerializeToUtf8Bytes(index, PluginPackages.Json);
-    SetDirectory(invalidSignature: true);
+    SetLegacyDirectory(invalidSignature: false);
 
     await using (var host = new PluginHost(root, logger, catalogTransport: transport.CreateClientHandler()))
     {
-        await Expect<InvalidDataException>(() => host.ReadCatalogAsync(source, default));
+        await Expect<InvalidDataException>(() => host.ReadCatalogAsync(url, default));
         Check(host.CatalogSettings() is null && host.List().Length == 0, "untrusted catalog changed state");
-        SetDirectory(invalidSignature: false);
-        var loaded = await host.ReadCatalogAsync(source, default);
-        Check(host.CatalogSettings() == source, "trusted catalog settings did not persist");
+        transport.Files[catalogRoute] = body;
+        var loaded = await host.ReadCatalogAsync(url, default);
+        Check(host.CatalogSettings() == new CatalogSource(url), "catalog URL did not persist without a key");
+        PluginRegistry.WriteAtomic(Path.Combine(root, "data", "plugin-catalog.json"), legacy);
+        await Expect<HttpRequestException>(() => host.ReadCatalogAsync(transport.Address + "/missing.json", default));
+        Check(host.CatalogSettings() == legacy, "failed catalog load replaced preferences");
+        SetLegacyDirectory(invalidSignature: true);
+        await Expect<InvalidDataException>(() => host.ReadCatalogAsync(url, default));
+        SetLegacyDirectory(invalidSignature: false);
+        Check((await host.ReadCatalogAsync(url, default)).Plugins.Length == loaded.Plugins.Length, "saved signed catalog lost compatibility");
         var packages = loaded.Plugins.ToDictionary(item => item.Version);
         await Expect<InvalidDataException>(() => host.ApplyCatalogAsync(loaded, packages["5.0.0"]));
         Check(transport.Requests("/plugin-0.3.0.zip") == 0, "downloaded an incompatible version");
@@ -274,7 +282,7 @@ async Task CheckCatalog(JsonObject manifest, byte[] executable)
     registry = new PluginRegistry(root);
     Check(registry.Find(id).Manifest.Version == originalVersion && File.ReadAllText(flag("configured")) == "original settings",
         "interrupted transaction did not restore settings and registration");
-    Console.WriteLine("Signed catalog passed incompatibility, invalid signatures, corrupt download, migration failure, version rollback and crash recovery.");
+    Console.WriteLine("URL-only catalog and saved signed catalog passed compatibility, signature, download and rollback checks.");
 
     CatalogEntry Entry(string version, string args, int dataVersion)
     {
@@ -290,7 +298,7 @@ async Task CheckCatalog(JsonObject manifest, byte[] executable)
             Convert.ToHexStringLower(hash), Convert.ToBase64String(publisherKey.SignData(hash, algorithm, format)), dataVersion);
     }
 
-    void SetDirectory(bool invalidSignature)
+    void SetLegacyDirectory(bool invalidSignature)
     {
         var signature = invalidSignature ? publisherKey.SignData(body, algorithm, format) : directoryKey.SignData(body, algorithm, format);
         transport.Files[catalogRoute] = JsonSerializer.SerializeToUtf8Bytes(

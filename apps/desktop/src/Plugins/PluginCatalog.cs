@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace StardewAI.Companion.Desktop.Plugins;
 
-internal sealed record CatalogSource(string Url, string PublicKey);
+internal sealed record CatalogSource(string Url, string? PublicKey = null);
 internal sealed record CatalogEnvelope(string Payload, string Signature);
 internal sealed record CatalogEntry(string Id, string Name, string Publisher, string Version,
     PluginProtocol HostProtocol, string DownloadUrl, string Sha256, string PackageSignature, int DataVersion)
@@ -29,11 +29,22 @@ internal sealed class PluginCatalog(HttpClient http)
         await using var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
         using var bytes = new MemoryStream();
         await CopyBoundedAsync(stream, bytes, MaxCatalogBytes, token).ConfigureAwait(false);
-        var envelope = JsonSerializer.Deserialize<CatalogEnvelope>(bytes.ToArray(), PluginPackages.Json)
-            ?? throw new InvalidDataException("插件目录格式无效。");
-        var payload = Decode(envelope.Payload);
-        if (!Verify(source.PublicKey, payload, envelope.Signature)) throw new InvalidDataException("插件目录签名校验失败。");
-        var index = JsonSerializer.Deserialize<CatalogIndex>(payload, PluginPackages.Json)
+        bytes.Position = 0;
+        using var document = await JsonDocument.ParseAsync(bytes, cancellationToken: token).ConfigureAwait(false);
+        var content = document.RootElement;
+        if (content.ValueKind != JsonValueKind.Object) throw new InvalidDataException("插件目录格式无效。");
+        CatalogIndex? index;
+        if (content.TryGetProperty("payload", out _))
+        {
+            var envelope = content.Deserialize<CatalogEnvelope>(PluginPackages.Json)!;
+            var payload = Decode(envelope.Payload);
+            if (string.IsNullOrWhiteSpace(source.PublicKey))
+                throw new InvalidDataException("此地址使用旧版签名目录，请使用运营方提供的新版目录地址。");
+            if (!Verify(source.PublicKey, payload, envelope.Signature)) throw new InvalidDataException("插件目录签名校验失败。");
+            index = JsonSerializer.Deserialize<CatalogIndex>(payload, PluginPackages.Json);
+        }
+        else index = content.Deserialize<CatalogIndex>(PluginPackages.Json);
+        index = index
             ?? throw new InvalidDataException("插件目录内容无效。");
         if (index.CatalogVersion != 1 || index.ExpiresAt <= DateTimeOffset.UtcNow
             || index.Publishers is not { Length: > 0 and <= 256 } || index.Plugins is not { Length: <= 2048 })

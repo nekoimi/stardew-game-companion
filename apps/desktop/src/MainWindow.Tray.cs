@@ -10,7 +10,7 @@ public partial class MainWindow
     private Forms.NotifyIcon? _trayIcon;
     private Forms.ContextMenuStrip? _trayMenu;
     private Icon? _trayImage;
-    private CloseWindowDialog? _closeDialog;
+    private ConfirmationDialog? _closeDialog;
     private bool _exitReady;
 
     private void InitializeTray()
@@ -60,7 +60,7 @@ public partial class MainWindow
             return;
         }
 
-        var dialog = new CloseWindowDialog(allowHide, _session is not null);
+        var dialog = ConfirmationDialog.CreateExit(allowHide, _session is not null);
         if (IsVisible && WindowState != WindowState.Minimized)
         {
             dialog.Owner = this;
@@ -72,7 +72,7 @@ public partial class MainWindow
         try { confirmed = dialog.ShowDialog(); }
         finally { _closeDialog = null; }
         if (confirmed != true) return;
-        if (dialog.MinimizeToTray)
+        if (dialog.ChoseAlternate)
         {
             Hide();
             return;

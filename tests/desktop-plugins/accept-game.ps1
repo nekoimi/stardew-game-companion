@@ -54,8 +54,6 @@ public static class PluginAcceptanceWindow
         return IntPtr.Zero;
     }
 
-    public static bool Confirm(IntPtr dialog) => PostMessage(dialog, 0x0111, (IntPtr)1, GetDlgItem(dialog, 1));
-
     public static bool SelectFile(IntPtr dialog, string path)
     {
         IntPtr combo = GetDlgItem(dialog, 1148);
@@ -150,7 +148,8 @@ function Install-Sample([string]$Zip) {
         $script:confirmation = [PluginAcceptanceWindow]::FindDialog([uint32]$app.Id, '确认安装本地插件')
         $script:confirmation -ne [IntPtr]::Zero
     } 'Missing install confirmation.'
-    if (![PluginAcceptanceWindow]::Confirm($confirmation)) { throw 'Could not confirm package installation.' }
+    $dialog = $ui::FromHandle($confirmation)
+    Click 'ConfirmButton' $dialog
 }
 function Activate-Plugin([string]$Name, [string]$State) {
     Wait-Check { Find-Ui $Name -ByName } "Missing plugin $Name."
@@ -240,6 +239,28 @@ try {
     Activate-Plugin '事件订阅示例' '已就绪'
     $eventLog = Join-Path $desktop 'data/logs/plugins/org.example.events/events.jsonl'
     Wait-Check { Read-Lines $eventLog | Where-Object type -eq 'snapshot' } 'Event plugin cannot run before the game.'
+    $eventData = Join-Path $desktop 'data/plugins/org.example.events/keep.txt'
+    Set-Content -LiteralPath $eventData -Value 'test data'
+    Click 'UninstallPlugin'
+    Wait-Check {
+        $script:uninstallWindow = [PluginAcceptanceWindow]::FindDialog([uint32]$app.Id, '卸载插件')
+        $script:uninstallWindow -ne [IntPtr]::Zero
+    } 'Missing themed uninstall dialog.'
+    $uninstall = $ui::FromHandle($uninstallWindow)
+    $keepOption = (Find-Ui 'Option' -From $uninstall).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    if ($keepOption.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On) { throw 'Keep plugin data should be on by default.' }
+    Click 'CancelCloseButton' $uninstall
+    Wait-Check { (Find-Ui 'PluginStatusText').Current.Name -eq '已就绪' } 'Cancelling uninstall stopped the running plugin.'
+    Click 'UninstallPlugin'
+    Wait-Check {
+        $script:uninstallWindow = [PluginAcceptanceWindow]::FindDialog([uint32]$app.Id, '卸载插件')
+        $script:uninstallWindow -ne [IntPtr]::Zero
+    } 'Missing themed uninstall dialog.'
+    Click 'ConfirmButton' ($ui::FromHandle($uninstallWindow))
+    Wait-Check { !(Find-Ui '事件订阅示例' -ByName) } 'Confirmed uninstall did not remove plugin.'
+    if (!(Test-Path -LiteralPath $eventData)) { throw 'Uninstall did not preserve plugin data.' }
+    Install-Sample (Join-Path $Samples 'events-0.1.0-win-x64.zip')
+    Activate-Plugin '事件订阅示例' '已就绪'
 
     Select-Tab 'SettingsPage'
     Select-Tab 'ModelSettingsTab'

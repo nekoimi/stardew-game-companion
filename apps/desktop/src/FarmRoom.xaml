@@ -12,6 +12,14 @@
     <SolidColorBrush x:Key="Gold" Color="#E5BA73" />
     <SolidColorBrush x:Key="Leaf" Color="#E0E8D2" />
 
+    <Style x:Key="CompanionDialogWindow" TargetType="Window">
+        <Setter Property="Background" Value="{StaticResource Paper}" />
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="ShowInTaskbar" Value="False" />
+    </Style>
+
     <Style TargetType="Button">
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="Margin" Value="0,0,8,0" />
@@ -230,21 +238,29 @@
     </Style>
     <Style x:Key="RoomPage" TargetType="TabItem">
         <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
+        <Setter Property="BorderBrush" Value="{x:Null}" />
         <Setter Property="Padding" Value="10,5" />
         <Setter Property="MinHeight" Value="33" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
-                    <Border x:Name="Surface" Padding="{TemplateBinding Padding}" Margin="0,0,0,2"
-                            Background="Transparent" BorderThickness="1" BorderBrush="Transparent" CornerRadius="6">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                       Width="23" VerticalAlignment="Center" />
-                            <ContentPresenter ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" />
-                        </StackPanel>
-                    </Border>
+                    <StackPanel>
+                        <Border x:Name="GroupDivider" Height="1" Margin="3,7,3,8"
+                                Background="{TemplateBinding BorderBrush}" IsHitTestVisible="False" />
+                        <Border x:Name="Surface" Padding="{TemplateBinding Padding}" Margin="0,0,0,2"
+                                Background="Transparent" BorderThickness="1" BorderBrush="Transparent" CornerRadius="6">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           Width="23" VerticalAlignment="Center" />
+                                <ContentPresenter ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="BorderBrush" Value="{x:Null}">
+                            <Setter TargetName="GroupDivider" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Surface" Property="Background" Value="#EEE4CC" />
                         </Trigger>

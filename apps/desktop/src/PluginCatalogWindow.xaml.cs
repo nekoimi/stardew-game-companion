@@ -17,11 +17,7 @@ public partial class PluginCatalogWindow : Window
         _host = host;
         try
         {
-            if (host.CatalogSettings() is { } source)
-            {
-                CatalogUrl.Text = source.Url;
-                CatalogPublicKey.Text = source.PublicKey;
-            }
+            CatalogUrl.Text = host.CatalogSettings()?.Url ?? "";
         }
         catch (Exception error) when (PluginHost.IsPluginFailure(error)) { CatalogFeedback.Text = error.Message; }
     }
@@ -35,7 +31,7 @@ public partial class PluginCatalogWindow : Window
         ApplyVersion.IsEnabled = false;
         try
         {
-            _index = await _host.ReadCatalogAsync(new(CatalogUrl.Text.Trim(), CatalogPublicKey.Text.Trim()), _closed.Token);
+            _index = await _host.ReadCatalogAsync(CatalogUrl.Text.Trim(), _closed.Token);
             CatalogRows.ItemsSource = _index.Plugins;
             CatalogFeedback.Text = _index.Plugins.Length == 0 ? "目录暂无插件。" : "";
         }
@@ -51,8 +47,9 @@ public partial class PluginCatalogWindow : Window
     private async void ApplyClicked(object sender, RoutedEventArgs e)
     {
         if (_index is null || CatalogRows.SelectedItem is not CatalogEntry { Compatible: true } entry) return;
-        if (MessageBox.Show(this, $"{entry.Name} · v{entry.Version}\n发布者：{entry.Publisher}\n来源：{new Uri(entry.DownloadUrl).Host}",
-            "确认下载并安装或更新", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        if (!new ConfirmationDialog("确认下载并安装或更新",
+            $"{entry.Name} · v{entry.Version}\n发布者：{entry.Publisher}\n来源：{new Uri(entry.DownloadUrl).Host}",
+            "下载并继续").ShowFor(this)) return;
         _updating = true;
         ApplyVersion.IsEnabled = LoadCatalog.IsEnabled = CatalogRows.IsEnabled = false;
         CatalogFeedback.Text = "正在下载和校验插件包…";

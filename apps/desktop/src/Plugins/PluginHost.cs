@@ -64,11 +64,15 @@ internal sealed class PluginHost : IAsyncDisposable
     internal CatalogSource? CatalogSettings() => File.Exists(_catalogSettings)
         ? JsonSerializer.Deserialize<CatalogSource>(File.ReadAllText(_catalogSettings), PluginPackages.Json) : null;
 
-    internal async Task<CatalogIndex> ReadCatalogAsync(CatalogSource source, CancellationToken cancellation)
+    internal async Task<CatalogIndex> ReadCatalogAsync(string url, CancellationToken cancellation)
     {
         using var token = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token, cancellation);
+        CatalogSource? saved;
+        try { saved = CatalogSettings(); }
+        catch (JsonException) { saved = null; }
+        var source = saved?.Url == url ? saved : new CatalogSource(url);
         var index = await new PluginCatalog(_catalogClient).ReadAsync(source, token.Token).ConfigureAwait(false);
-        PluginRegistry.WriteAtomic(_catalogSettings, source);
+        if (saved?.Url != url) PluginRegistry.WriteAtomic(_catalogSettings, new { url });
         return index;
     }
 
