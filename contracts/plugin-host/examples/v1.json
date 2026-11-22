@@ -1,0 +1,117 @@
+{
+  "package": {
+    "manifest": {
+      "manifestVersion": 1,
+      "id": "org.example.command",
+      "name": "指令示例",
+      "publisher": "伴侣项目示例",
+      "version": "0.1.0",
+      "platform": "win-x64",
+      "hostProtocol": {
+        "min": 1,
+        "max": 1
+      },
+      "entry": {
+        "executable": "bin/demo.exe",
+        "args": [
+          "--label",
+          "农场 测试"
+        ],
+        "workingDirectory": "."
+      },
+      "settings": {
+        "kind": "local-web"
+      },
+      "fileManifest": "files.json"
+    },
+    "entryText": "fixture executable v1",
+    "entrySha256": "fa2c525a46499ebd3ec0b7eb668fd161f94683a8e48676c98b6f190c1902e60b",
+    "rejected": [
+      {
+        "name": "incompatible",
+        "patch": {
+          "hostProtocol": {
+            "min": 2,
+            "max": 2
+          }
+        },
+        "code": "protocol_incompatible"
+      },
+      {
+        "name": "traversal",
+        "patch": {
+          "entry": {
+            "executable": "../demo.exe",
+            "args": [
+              "--label",
+              "农场 测试"
+            ],
+            "workingDirectory": "."
+          }
+        },
+        "code": "invalid_request"
+      }
+    ]
+  },
+  "hello": {
+    "request": {
+      "protocolMin": 1,
+      "protocolMax": 1,
+      "settingsUrl": "http://127.0.0.1:52100/settings"
+    },
+    "response": {
+      "protocolVersion": 1,
+      "instanceId": "instance-1",
+      "heartbeatIntervalMs": 5000,
+      "sessionId": null
+    }
+  },
+  "configuration": {
+    "state": "needs_configuration",
+    "summary": "请保存默认指令"
+  },
+  "restart": {
+    "state": "ready",
+    "restartRequired": true
+  },
+  "expiredToken": {
+    "http": 401,
+    "code": "invalid_instance"
+  },
+  "resume": {
+    "path": "/v1/events?sessionId=save-session-1&cursor=10",
+    "lastEventId": "13",
+    "firstEventId": "14"
+  },
+  "expiredCursor": {
+    "http": 409,
+    "code": "cursor_expired"
+  },
+  "busy": {
+    "http": 409,
+    "code": "busy",
+    "retryAfterMs": 1000
+  },
+  "command": {
+    "request": {
+      "requestId": "request-1",
+      "sessionId": "save-session-1",
+      "text": "给两格作物浇水"
+    },
+    "result": {
+      "requestId": "request-1",
+      "sessionId": "save-session-1",
+      "status": "partial",
+      "turnEnded": true,
+      "goalOutcome": "partial",
+      "actions": [
+        {
+          "actionId": "action-1",
+          "skillId": "water-zone",
+          "terminalState": "partially-succeeded",
+          "completedCount": 1
+        }
+      ]
+    }
+  }
+}

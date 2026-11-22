@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>星露谷游戏伴侣 · 插件中心原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --pine: #214231;
+      --pine-dark: #193426;
+      --gold: #e5ba73;
+      --cream: #f2ebd8;
+      --paper: #fffcf5;
+      --ink: #342d24;
+      --muted: #6d604e;
+      --line: #dfd0b2;
+      --edge: #d7bf94;
+      --warning: #754a11;
+      --danger: #8c382b;
+      font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      display: grid;
+      align-items: center;
+      padding: 24px;
+      color: var(--ink);
+      background: radial-gradient(ellipse at 50% 0%, #ede6d3, #d9d6c4 72%);
+      font-size: 14px;
+    }
+    [hidden] { display: none !important; }
+    h1, h2, h3, p { margin: 0; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .55; }
+    :focus-visible { outline: 2px solid #28674c; outline-offset: 3px; }
+    input[type="checkbox"] { accent-color: var(--pine); width: 17px; height: 17px; margin: 0; flex: none; }
+    .icon {
+      font: 16px/1 "Segoe Fluent Icons", "Segoe MDL2 Assets";
+      display: inline-grid;
+      place-items: center;
+      width: 19px;
+      height: 19px;
+      flex: none;
+    }
+
+    .window {
+      display: grid;
+      grid-template: auto minmax(0, 1fr) / 192px minmax(0, 1fr);
+      width: min(100%, 1120px);
+      height: min(690px, calc(100dvh - 48px));
+      min-height: 490px;
+      margin: auto;
+      overflow: hidden;
+      border: 1px solid #978e74;
+      border-radius: 13px;
+      box-shadow: 0 20px 55px #322e2429, 0 3px 8px #322e2414;
+      background: var(--cream);
+    }
+    .titlebar {
+      grid-column: 1 / -1;
+      min-height: 54px;
+      padding: 8px 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #fff7e5;
+      background: var(--pine);
+      border-bottom: 2px solid var(--pine-dark);
+    }
+    .titlebar img { width: 30px; height: 30px; }
+    .brand { font-weight: 700; letter-spacing: .03em; }
+    .preview-label { margin-left: auto; color: #f3e2b8; font-size: 12px; }
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 20px 12px 12px;
+      background: #f5edda;
+      border-right: 1px solid var(--edge);
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 36px;
+      padding: 5px 10px;
+      margin-bottom: 3px;
+      color: #655643;
+      border: 1px solid transparent;
+      border-radius: 7px;
+    }
+    .nav-item[aria-current] {
+      background: #f4dfac;
+      color: var(--pine-dark);
+      border-color: #d7b36f;
+      font-weight: 700;
+    }
+    .sidebar nav { min-height: 0; overflow: auto; margin-bottom: 8px; }
+    .nav-break { border-top: 1px solid var(--line); margin: 10px 3px; }
+    .agent {
+      flex-shrink: 0;
+      margin-top: auto;
+      padding: 12px;
+      background: #fff8e9;
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      min-height: 96px;
+    }
+    .agent-head { display: flex; align-items: center; gap: 8px; }
+    .agent img { width: 32px; height: 32px; image-rendering: pixelated; border-radius: 4px; }
+    .agent strong, .agent small { display: block; }
+    .agent small, .agent p { color: var(--muted); font-size: 12px; }
+    .agent p { margin: 8px 0 0; }
+    .agent p::before, .status::before {
+      content: "";
+      display: inline-block;
+      flex: none;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      vertical-align: 1px;
+      margin-right: 6px;
+    }
+
+    main { padding: 19px; min-width: 0; overflow: auto; }
+    .page-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 104px;
+      padding: 16px 20px;
+      border-radius: 9px;
+      border: 1px solid #335c43;
+      color: #fff7e4;
+      background:
+        linear-gradient(90deg, #214231 22%, #214231f2 47%, #21423142 100%),
+        url("../../apps/desktop/src/Assets/farm.png") center 47% / cover;
+    }
+    h1 { font-size: 29px; letter-spacing: .04em; }
+    .page-head p { color: #fff0d0; font-size: 13px; margin-top: 7px; }
+    .button {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      min-height: 34px;
+      padding: 6px 12px;
+      border: 1px solid var(--edge);
+      border-radius: 6px;
+      background: #fff9eb;
+      color: var(--pine-dark);
+      font-weight: 600;
+      white-space: normal;
+      text-align: center;
+    }
+    .button:hover:not(:disabled) { background: #f5eace; }
+    .button.primary { background: var(--pine); border-color: var(--pine); color: #fff7e5; }
+    .button.primary:hover:not(:disabled) { background: #31563f; }
+    .button.gold, .button.gold:hover { background: var(--gold); border-color: #f1d49d; color: #2d301f; }
+    .button.gold:hover { background: #f2cd91; }
+    .page-head .button { flex: none; }
+    .page-head .button:focus-visible { outline-color: #fff7e5; }
+    .button.danger { color: #fff7e5; background: var(--danger); border-color: var(--danger); }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(196px, .83fr) minmax(0, 1.9fr);
+      align-items: start;
+      gap: 15px;
+      margin-top: 15px;
+    }
+    .shelf { min-width: 0; }
+    .shelf-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 1px 9px; }
+    .shelf-head h2 { font-size: 14px; color: var(--pine-dark); }
+    .shelf-head span, .muted { color: var(--muted); font-size: 12px; }
+    .plugin-list { display: grid; gap: 8px; }
+    .plugin-card {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 3px 9px;
+      text-align: left;
+      width: 100%;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    .plugin-card:hover { background: #fff6df; }
+    .plugin-card[aria-pressed="true"] {
+      background: #fff6e1;
+      border-color: #ae8345;
+      box-shadow: inset 3px 0 #b2803f;
+    }
+    .plugin-icon {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 7px;
+      color: #785120;
+      background: #f1dfb9;
+      border: 1px solid #ead3a0;
+    }
+    .plugin-icon.events { color: var(--pine); background: #dfebd9; border-color: #cbdcc3; }
+    .plugin-card > .plugin-icon { grid-row: span 2; }
+    .plugin-name { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+    .card-meta { color: var(--muted); font-size: 12px; }
+    .plugin-card .status { grid-column: 2; justify-self: start; margin-top: 4px; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 5px;
+      padding: 2px 6px;
+      background: #ece7d9;
+      color: #5c5445;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .status.ready { background: #e3eddf; color: #2e5a3d; }
+    .status.needs, .status.restart { background: #f8e8c5; color: var(--warning); }
+
+    .detail, .empty-detail {
+      min-width: 0;
+      border: 1px solid var(--edge);
+      border-radius: 9px;
+      background: var(--paper);
+    }
+    .detail-head, .settings-section, .startup-section, .detail-footer { padding: 13px 16px; }
+    .detail-head { display: grid; grid-template-columns: auto 1fr auto; gap: 0 11px; align-items: center; }
+    .detail-head .plugin-icon { width: 42px; height: 42px; }
+    .detail-head h2 { font-size: 19px; color: var(--pine-dark); overflow-wrap: anywhere; }
+    .detail-head p { margin-top: 3px; }
+    .description { grid-column: 1 / -1; font-size: 13px; padding-top: 7px; }
+    .settings-section, .startup-section, .detail-footer { border-top: 1px solid #eadfc9; }
+    .settings-section { background: #fcf6e8; }
+    .run-message { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    .run-message.attention { color: var(--warning); }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+    .check-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 28px;
+    }
+    .startup-section .check-row:has(:enabled) { cursor: pointer; }
+    input.switch {
+      appearance: none;
+      display: grid;
+      align-items: center;
+      width: 42px;
+      height: 24px;
+      padding: 2px;
+      border: 1px solid #847763;
+      border-radius: 20px;
+      background: #e7ddc9;
+      cursor: inherit;
+    }
+    .switch::before {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fffaf0;
+      box-shadow: 0 1px 2px #342d2440;
+    }
+    .switch:checked { background: var(--pine); border-color: var(--pine); }
+    .switch:checked::before { justify-self: end; }
+    .switch:disabled { opacity: .55; }
+    @media (forced-colors: active) {
+      input.switch { appearance: auto; width: 24px; }
+      .switch::before { content: none; }
+    }
+    .detail-footer { display: flex; flex-wrap: wrap; gap: 6px 15px; align-items: center; }
+    .link-button {
+      min-height: 28px;
+      padding: 2px 0;
+      border: 0;
+      background: transparent;
+      color: var(--pine);
+      font-size: 12px;
+    }
+    .link-button:hover { text-decoration: underline; }
+    .link-button.remove { color: var(--danger); margin-left: auto; }
+    .empty-detail { padding: 24px; color: var(--muted); }
+    .empty-detail h2 { font-size: 17px; color: var(--pine-dark); }
+    .empty-detail p { margin-top: 8px; }
+    .notice {
+      position: fixed;
+      z-index: 2;
+      left: 50%;
+      bottom: 20px;
+      transform: translateX(-50%);
+      max-width: calc(100vw - 32px);
+      width: max-content;
+      padding: 9px 16px;
+      border-radius: 7px;
+      background: var(--pine);
+      color: #fffaed;
+      box-shadow: 0 4px 15px #1b352a36;
+    }
+    .notice:empty { display: none; }
+
+    dialog {
+      max-height: calc(100dvh - 30px);
+      width: min(450px, calc(100vw - 30px));
+      padding: 0;
+      border: 1px solid var(--edge);
+      border-radius: 11px;
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 0 18px 45px #241d1745;
+    }
+    dialog::backdrop { background: #29231866; }
+    dialog h2 { font-size: 19px; color: var(--pine-dark); }
+    .dialog-head { padding: 15px 17px; border-bottom: 1px solid var(--line); background: #f5ead2; }
+    .dialog-body { padding: 16px 17px; display: grid; gap: 12px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 11px 17px; border-top: 1px solid var(--line); }
+    .dialog-body > p { font-size: 13px; line-height: 1.6; }
+    .field { display: grid; gap: 5px; }
+    .field select, .field input[type="text"] {
+      padding: 7px 9px;
+      border: 1px solid var(--edge);
+      border-radius: 5px;
+      width: 100%;
+      color: var(--ink);
+      background: #fffdf8;
+    }
+    .form-error { color: var(--danger); }
+    .browser-address { color: #4f5b55; font-size: 12px; margin-top: 4px; }
+    .browser-chrome { background: #edf2ee; }
+    code { overflow-wrap: anywhere; }
+    @media (max-width: 960px) {
+      body { padding: 12px; }
+      .window { grid-template-columns: 153px minmax(0, 1fr); height: min(690px, calc(100dvh - 24px)); }
+      main { padding: 14px; }
+      .workspace { grid-template-columns: minmax(164px, .9fr) minmax(0, 1.9fr); gap: 10px; }
+      .detail-head, .settings-section, .startup-section, .detail-footer { padding-left: 12px; padding-right: 12px; }
+    }
+    @media (max-height: 720px) and (min-width: 701px) {
+      .sidebar { padding-top: 10px; }
+      .nav-item { min-height: 29px; padding-top: 3px; padding-bottom: 3px; }
+      .nav-break { margin-top: 6px; margin-bottom: 6px; }
+      .agent { min-height: 76px; padding: 8px; }
+      .page-head { min-height: 82px; }
+      .detail-head, .settings-section, .startup-section, .detail-footer { padding-top: 9px; padding-bottom: 9px; }
+    }
+    @media (max-width: 700px) {
+      body { padding: 0; align-items: start; }
+      .window { border-radius: 0; grid-template-columns: 1fr; height: auto; min-height: 100dvh; grid-template-rows: auto auto 1fr; }
+      main { overflow: visible; }
+      .sidebar { display: block; padding: 7px 14px; border-right: 0; border-bottom: 1px solid var(--edge); }
+      .sidebar nav { display: none; }
+      .agent { min-height: 0; display: flex; padding: 6px 8px; align-items: center; justify-content: space-between; }
+      .agent img { width: 24px; height: 24px; }
+      .agent small { display: none; }
+      .agent p { margin: 0; }
+      .page-head { padding: 13px; }
+    }
+    @media (max-width: 490px) {
+      .workspace { grid-template-columns: 1fr; }
+      .page-head { align-items: start; flex-direction: column; gap: 9px; }
+      .page-head h1 { font-size: 24px; }
+      .plugin-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .plugin-card { padding: 8px; }
+      main { padding: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <header class="titlebar">
+      <img src="../../apps/desktop/src/Assets/companion.ico" alt="">
+      <span class="brand">星露谷游戏伴侣</span>
+      <span class="preview-label">交互原型</span>
+    </header>
+
+    <aside class="sidebar">
+      <nav aria-label="桌面侧边栏">
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE80F;</span>今天</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE9F5;</span>农场工作</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE787;</span>计划</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE81C;</span>对话历史</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE715;</span>伙伴消息</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE82D;</span>手记</span>
+        <div class="nav-break"></div>
+        <span class="nav-item" aria-current="page"><span class="icon" aria-hidden="true">&#xEA86;</span>插件中心</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE713;</span>设置</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE9D9;</span>用量</span>
+        <span class="nav-item"><span class="icon" aria-hidden="true">&#xE90F;</span>诊断</span>
+      </nav>
+      <section class="agent" aria-label="Agent 状态">
+        <div class="agent-head">
+          <img src="../../apps/desktop/src/Assets/portrait.png" alt="">
+          <div><strong>农场伙伴</strong><small>Agent 状态</small></div>
+        </div>
+        <p>等待进入存档</p>
+      </section>
+    </aside>
+
+    <main>
+      <header class="page-head">
+        <div>
+          <h1>插件中心</h1>
+          <p>安装插件，查看运行状态并打开插件设置。</p>
+        </div>
+        <button class="button gold" id="install" type="button"><span class="icon" aria-hidden="true">&#xE710;</span>安装本地插件</button>
+      </header>
+
+      <div class="workspace">
+        <section class="shelf" aria-labelledby="shelf-title">
+          <div class="shelf-head"><h2 id="shelf-title">已安装</h2><span id="count"></span></div>
+          <div class="plugin-list" id="plugin-list"></div>
+        </section>
+
+        <section class="detail" id="detail" aria-labelledby="plugin-title" hidden>
+          <header class="detail-head">
+            <span class="plugin-icon" id="detail-icon" aria-hidden="true"><span class="icon"></span></span>
+            <div><h2 id="plugin-title"></h2><p class="muted" id="publisher"></p></div>
+            <span class="status" id="detail-status" role="status"></span>
+            <p class="description" id="description"></p>
+          </header>
+          <section class="settings-section" aria-label="运行与配置">
+            <p class="run-message" id="run-message"></p>
+            <div class="actions">
+              <button class="button primary" id="open-settings" type="button"></button>
+              <button class="button" id="run" type="button"></button>
+              <button class="button" id="restart" type="button" hidden>重启插件</button>
+            </div>
+          </section>
+          <section class="startup-section" aria-label="启动方式">
+            <label class="check-row">
+              <span>随伴侣程序自动启动</span>
+              <input class="switch" id="auto-start" type="checkbox" role="switch">
+            </label>
+          </section>
+          <footer class="detail-footer">
+            <button class="link-button" id="logs" type="button">打开日志目录</button>
+            <button class="link-button" id="disable" type="button">停用插件</button>
+            <button class="link-button remove" id="remove" type="button">卸载插件</button>
+          </footer>
+        </section>
+
+        <section class="empty-detail" id="empty" hidden>
+          <h2>还没有安装插件</h2>
+          <p>从上方选择本地 ZIP 插件包。</p>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <p class="notice" id="notice" role="status"></p>
+
+  <dialog id="install-dialog" aria-labelledby="install-title">
+    <form method="dialog" id="install-form">
+      <header class="dialog-head"><h2 id="install-title">安装本地插件</h2></header>
+      <div class="dialog-body">
+        <label class="field">ZIP 插件包<input id="zip-file" type="file" accept=".zip"></label>
+        <button class="button" id="use-sample" type="button">用示例包演示</button>
+        <p id="install-help">演示安装后，插件默认禁用。</p>
+        <p class="form-error" id="install-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-actions">
+        <button class="button" formnovalidate value="cancel">取消</button>
+        <button class="button primary" value="install" id="confirm-install" disabled>安装插件</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <form method="dialog" id="settings-form">
+      <header class="dialog-head browser-chrome">
+        <h2 id="settings-title">插件设置</h2>
+        <p class="browser-address">本机浏览器页面 · 演示</p>
+      </header>
+      <div class="dialog-body">
+        <label class="field">默认指令
+          <input type="text" id="default-command" maxlength="120" required placeholder="例如：检查今天还没浇水的作物">
+        </label>
+        <label class="field">保存方式
+          <select id="apply-mode"><option value="now">立即生效</option><option value="restart">重启后生效</option></select>
+        </label>
+      </div>
+      <footer class="dialog-actions">
+        <button class="button" formnovalidate value="cancel">取消</button>
+        <button class="button primary" value="save">保存设置</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="logs-dialog" aria-labelledby="logs-title">
+    <form method="dialog">
+      <header class="dialog-head"><h2 id="logs-title">插件日志目录</h2></header>
+      <div class="dialog-body"><p>正式版会在资源管理器打开目录。</p><code id="log-path"></code></div>
+      <footer class="dialog-actions"><button class="button" value="close">关闭</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="remove-dialog" aria-labelledby="remove-title">
+    <form method="dialog" id="remove-form">
+      <header class="dialog-head"><h2 id="remove-title">卸载插件</h2></header>
+      <div class="dialog-body">
+        <p id="remove-help"></p>
+        <label class="check-row"><span>保留该插件的数据与设置</span><input id="keep-data" type="checkbox" checked></label>
+      </div>
+      <footer class="dialog-actions">
+        <button class="button" value="cancel">取消</button>
+        <button class="button danger" value="remove">确认卸载</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <script>
+    const byId = (id) => document.getElementById(id);
+    const commandSample = {
+      id: "command-demo", name: "指令示例", icon: "\uE756", type: "command",
+      description: "提交自然语言指令并查询执行结果。", settings: true
+    };
+    const eventsSample = {
+      id: "events-demo", name: "事件订阅示例", icon: "\uE9D9", type: "events",
+      description: "查看游戏状态、已确认的动作结果和 Agent 公开回复。", settings: false
+    };
+    const installSample = { ...commandSample, id: "command-demo-test", name: "指令示例 · 测试副本" };
+    const samplePublisher = "伴侣项目示例";
+    const version = "0.1.0";
+
+    function newPlugin(sample, overrides = {}) {
+      return {
+        ...sample, state: "disabled",
+        autoStart: false, command: "", restartNeeded: false, ...overrides
+      };
+    }
+
+    const plugins = [
+      newPlugin(commandSample, { state: "running" }),
+      newPlugin(eventsSample, { state: "running", autoStart: true })
+    ];
+    const retainedData = new Map();
+    let selectedId = commandSample.id;
+    let pendingInstall = null;
+    let noticeTimeout;
+
+    function selectedPlugin() {
+      return plugins.find((plugin) => plugin.id === selectedId);
+    }
+
+    function getStatus(plugin) {
+      if (plugin.state === "disabled") return ["未启用", "disabled"];
+      if (plugin.state === "stopped") return ["已停止", "stopped"];
+      if (plugin.restartNeeded) return ["需重启", "restart"];
+      if (plugin.settings && !plugin.command) return ["待配置", "needs"];
+      return ["已就绪", "ready"];
+    }
+
+    function displayStatus(element, plugin) {
+      const [label, kind] = getStatus(plugin);
+      element.className = "status " + kind;
+      element.textContent = label;
+    }
+
+    function createElement(tag, className, text) {
+      const element = document.createElement(tag);
+      element.className = className;
+      if (text !== undefined) element.textContent = text;
+      return element;
+    }
+
+    function renderList() {
+      const list = byId("plugin-list");
+      list.replaceChildren();
+      byId("count").textContent = plugins.length + " 个";
+      for (const plugin of plugins) {
+        const card = createElement("button", "plugin-card");
+        card.type = "button";
+        card.dataset.plugin = plugin.id;
+        card.setAttribute("aria-pressed", String(plugin.id === selectedId));
+        const icon = createElement("span", "plugin-icon " + plugin.type);
+        icon.setAttribute("aria-hidden", "true");
+        icon.append(createElement("span", "icon", plugin.icon));
+        const status = createElement("span", "status");
+        displayStatus(status, plugin);
+        card.append(icon, createElement("span", "plugin-name", plugin.name),
+          createElement("span", "card-meta", samplePublisher + " · v" + version), status);
+        card.addEventListener("click", () => {
+          selectedId = plugin.id;
+          renderList();
+          renderDetails();
+          list.querySelector('[aria-pressed="true"]').focus();
+        });
+        list.append(card);
+      }
+    }
+
+    function renderDetails() {
+      const plugin = selectedPlugin();
+      byId("detail").hidden = !plugin;
+      byId("empty").hidden = Boolean(plugin);
+      if (!plugin) return;
+      const [, kind] = getStatus(plugin);
+      const disabled = plugin.state === "disabled";
+      const running = plugin.state === "running";
+      byId("detail-icon").className = "plugin-icon " + plugin.type;
+      byId("detail-icon").firstElementChild.textContent = plugin.icon;
+      byId("plugin-title").textContent = plugin.name;
+      byId("publisher").textContent = samplePublisher + " · v" + version + " · 本地 ZIP";
+      byId("description").textContent = plugin.description;
+      displayStatus(byId("detail-status"), plugin);
+      const messages = {
+        disabled: "启用后可使用插件功能。",
+        stopped: "插件已停止。",
+        needs: "插件已连接，请先完成首次设置。",
+        restart: "设置已保存，重启插件后生效。",
+        ready: "插件运行中，已连接到伴侣程序。"
+      };
+      byId("run-message").textContent = messages[kind];
+      byId("run-message").classList.toggle("attention", ["needs", "restart"].includes(kind));
+
+      const settings = byId("open-settings");
+      settings.hidden = !plugin.settings;
+      settings.textContent = running ? "打开插件设置" : disabled ? "启用并打开设置" : "启动并打开设置";
+      settings.classList.toggle("primary", kind === "needs" || kind === "stopped");
+
+      const run = byId("run");
+      run.textContent = disabled ? "启用插件" : running ? "停止插件" : "启动插件";
+      run.classList.toggle("primary", disabled || (!running && !plugin.settings));
+      byId("restart").hidden = kind !== "restart";
+      byId("restart").classList.toggle("primary", kind === "restart");
+
+      byId("auto-start").checked = plugin.autoStart;
+      byId("auto-start").disabled = disabled;
+      byId("disable").hidden = disabled;
+    }
+
+    function render() {
+      renderList();
+      renderDetails();
+    }
+
+    function notify(message) {
+      clearTimeout(noticeTimeout);
+      byId("notice").textContent = message;
+      noticeTimeout = setTimeout(() => { byId("notice").textContent = ""; }, 2800);
+    }
+
+    function start(plugin) {
+      plugin.state = "running";
+      plugin.restartNeeded = false;
+    }
+
+    function showSettings(plugin) {
+      byId("settings-title").textContent = plugin.name + " · 设置";
+      byId("default-command").setCustomValidity("");
+      byId("default-command").value = plugin.command;
+      byId("apply-mode").value = plugin.restartNeeded ? "restart" : "now";
+      byId("settings-dialog").showModal();
+    }
+
+    byId("run").addEventListener("click", () => {
+      const plugin = selectedPlugin();
+      const previousState = plugin.state;
+      if (previousState === "running") plugin.state = "stopped";
+      else start(plugin);
+      render();
+      const messages = { disabled: "插件已启用", stopped: "插件已启动", running: "插件已停止" };
+      notify(messages[previousState]);
+    });
+
+    byId("open-settings").addEventListener("click", () => {
+      const plugin = selectedPlugin();
+      if (plugin.state !== "running") {
+        start(plugin);
+        render();
+      }
+      showSettings(plugin);
+    });
+
+    byId("restart").addEventListener("click", () => {
+      selectedPlugin().restartNeeded = false;
+      render();
+      byId("open-settings").focus();
+      notify("插件已重启，设置已生效");
+    });
+
+    byId("auto-start").addEventListener("change", (event) => {
+      selectedPlugin().autoStart = event.target.checked;
+      notify(event.target.checked ? "已开启自动启动" : "已关闭自动启动");
+    });
+
+    byId("disable").addEventListener("click", () => {
+      const plugin = selectedPlugin();
+      plugin.state = "disabled";
+      plugin.autoStart = false;
+      render();
+      byId("run").focus();
+      notify("插件已停用");
+    });
+
+    byId("settings-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (event.submitter?.value === "cancel") {
+        byId("settings-dialog").close();
+        return;
+      }
+      const input = byId("default-command");
+      const command = input.value.trim();
+      if (!command) {
+        input.setCustomValidity("请输入默认指令。");
+        input.reportValidity();
+        return;
+      }
+      const plugin = selectedPlugin();
+      plugin.command = command;
+      plugin.restartNeeded = byId("apply-mode").value === "restart";
+      byId("settings-dialog").close();
+      render();
+      notify(plugin.restartNeeded ? "设置已保存，等待重启" : "设置已生效");
+    });
+    byId("default-command").addEventListener("input", (event) => event.target.setCustomValidity(""));
+
+    function resetInstall() {
+      pendingInstall = null;
+      byId("zip-file").value = "";
+      byId("install-error").hidden = true;
+      byId("install-help").textContent = "演示安装后，插件默认禁用。";
+      byId("confirm-install").disabled = true;
+    }
+
+    function previewPackage(fileName, sample) {
+      pendingInstall = sample;
+      byId("install-help").textContent = fileName + " · 模拟为「" + sample.name + "」 v" + version + "，发布者为" + samplePublisher + "。";
+      byId("install-error").hidden = true;
+      byId("confirm-install").disabled = false;
+    }
+
+    byId("install").addEventListener("click", () => {
+      resetInstall();
+      byId("install-dialog").showModal();
+    });
+    byId("use-sample").addEventListener("click", () => {
+      byId("zip-file").value = "";
+      const sample = [installSample, commandSample, eventsSample].find((item) =>
+        plugins.every((plugin) => plugin.id !== item.id)
+      ) || installSample;
+      previewPackage(sample.id + ".zip", sample);
+    });
+    byId("zip-file").addEventListener("change", () => {
+      const file = byId("zip-file").files[0];
+      if (!file || !file.name.toLowerCase().endsWith(".zip")) {
+        resetInstall();
+        byId("install-error").textContent = "请选择 ZIP 插件包。";
+        byId("install-error").hidden = false;
+        return;
+      }
+      const sample = file.name.toLowerCase().includes("events") ? eventsSample : commandSample;
+      previewPackage(file.name, sample);
+    });
+    byId("install-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (event.submitter?.value === "cancel") {
+        byId("install-dialog").close();
+        return;
+      }
+      if (!pendingInstall) return;
+      if (plugins.some((plugin) => plugin.id === pendingInstall.id)) {
+        byId("install-error").textContent = "这个参考插件已安装。卸载后可演示重新安装。";
+        byId("install-error").hidden = false;
+        return;
+      }
+      plugins.push(newPlugin(pendingInstall, retainedData.get(pendingInstall.id)));
+      selectedId = pendingInstall.id;
+      byId("install-dialog").close();
+      render();
+      notify("已安装，等待启用");
+    });
+
+    byId("logs").addEventListener("click", () => {
+      byId("log-path").textContent = "data/logs/plugins/" + selectedId + "/";
+      byId("logs-dialog").showModal();
+    });
+
+    byId("remove").addEventListener("click", () => {
+      byId("remove-help").textContent = "卸载「" + selectedPlugin().name + "」时，伴侣程序会先停止插件。";
+      byId("keep-data").checked = true;
+      byId("remove-dialog").showModal();
+    });
+    byId("remove-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      byId("remove-dialog").close();
+      if (event.submitter?.value !== "remove") return;
+      const plugin = selectedPlugin();
+      if (byId("keep-data").checked) retainedData.set(plugin.id, { command: plugin.command });
+      else retainedData.delete(plugin.id);
+      const index = plugins.indexOf(plugin);
+      plugins.splice(index, 1);
+      selectedId = plugins[Math.min(index, plugins.length - 1)]?.id;
+      render();
+      const focusTarget = byId("plugin-list").querySelector('[aria-pressed="true"]') || byId("install");
+      focusTarget.focus();
+      notify("插件已卸载");
+    });
+
+    render();
+  </script>
+</body>
+</html>
