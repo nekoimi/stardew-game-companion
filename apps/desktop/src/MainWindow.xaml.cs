@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         SettingsTabs.SelectedItem = LaunchSettingsTab;
         RefreshControls();
         InitializeTray();
+        InitializePlugins();
     }
 
     private DesktopSettings LaunchSettings() => _savedSettings with

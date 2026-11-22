@@ -79,6 +79,13 @@ public partial class MainWindow
         }
 
         _closing = true;
+        if (_plugins is { } plugins)
+        {
+            _plugins = null;
+            try { await plugins.DisposeAsync(); }
+            catch (Exception error) when (Plugins.PluginHost.IsPluginFailure(error) || error is OperationCanceledException)
+            { LogError("plugin_shutdown_failed", "插件中心退出失败。", error); }
+        }
         if (_session is { } session)
         {
             RefreshControls();

@@ -23,6 +23,8 @@ pwsh -File packaging/windows/verify-node-release.ps1 -Archive '<ZIP 路径>'
 
 准备 Node 22.22.2、npm 10.9.7、可编译 Mod 的 .NET SDK，以及安装了 pytest 的开发用 Python。在仓库根目录运行 `pwsh -File tools/dev/test.ps1 -GamePath '<SMAPI 游戏目录>'`。原生扩展编译用例可通过 `-DotNet` 指向本地 .NET 6 SDK。Python 用于隔离验收报告判定。
 
+插件宿主可脱离游戏验证。准备 Go 和 .NET 10 SDK，运行 `pwsh -File tests/desktop-plugins/run.ps1`。清单 Schema 验证使用开发依赖 `jsonschema`，运行 `python tests/contracts/check-plugin-contract.py`。
+
 实际游戏测试使用复制出的隔离存档。桌面交互和三组固定场景的复现见[隔离实机回归](docs/repeatable-companion-acceptance.md)。测试用存档、截图、游戏文件和模型密钥留在本地。
 
 调试游戏内 F8 界面时，先运行 `tests/acceptance/build-testdriver.ps1`，再通过 `tests/acceptance/launch-game.ps1 -Mode interactive -Scenario free-mode-control -FrozenProdDir '<解压目录>' -CustomSavePath '<测试存档目录>' -ApiProvider deepseek -ApiModel deepseek-flash -TimeoutSeconds 1800` 启动隔离游戏。DeepSeek 密钥从当前进程的 `DEEPSEEK_API_KEY` 读取，打开游戏后从标题菜单读档。

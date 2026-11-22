@@ -352,6 +352,149 @@
                     </StackPanel>
                 </Grid>
             </TabItem>
+            <TabItem x:Name="PluginsPage" Header="插件中心" Tag="&#xEA86;" Style="{StaticResource RoomPage}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <Border CornerRadius="9" BorderThickness="1" BorderBrush="#335C43" Background="{StaticResource Pine}">
+                            <Grid ClipToBounds="True">
+                                <Grid.Background>
+                                    <ImageBrush ImageSource="Assets/farm.png" Stretch="UniformToFill" />
+                                </Grid.Background>
+                                <Border>
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                            <GradientStop Color="#FF214231" Offset="0.35" />
+                                            <GradientStop Color="#C8214231" Offset="0.65" />
+                                            <GradientStop Color="#65214231" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                                <DockPanel Margin="18,14" LastChildFill="True">
+                                    <Button x:Name="InstallPlugin" DockPanel.Dock="Right" Style="{StaticResource HeaderButton}"
+                                            VerticalAlignment="Center" Content="＋ 安装本地插件" Click="InstallPluginClicked" />
+                                    <StackPanel Margin="0,0,8,0">
+                                        <TextBlock FontSize="24" FontWeight="Bold" Foreground="#FFF7E5" Text="插件中心" />
+                                        <TextBlock Foreground="#FFF0D0" FontSize="12" TextWrapping="Wrap"
+                                                   Text="安装插件，查看运行状态并打开插件设置。" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Grid>
+                        </Border>
+                        <TextBlock x:Name="PluginFeedback" Style="{StaticResource InlineFeedback}" Margin="0,8,0,0"
+                                   AutomationProperties.LiveSetting="Polite" />
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" MinWidth="145" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="3*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,7">
+                                    <TextBlock x:Name="PluginCount" DockPanel.Dock="Right" Foreground="{StaticResource MutedInk}" FontSize="12" />
+                                    <TextBlock Text="已安装" FontWeight="SemiBold" Foreground="{StaticResource Pine}" />
+                                </DockPanel>
+                                <ListBox x:Name="PluginList" AutomationProperties.Name="已安装的插件" Background="Transparent"
+                                         BorderThickness="0" SelectionChanged="PluginSelected"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Margin" Value="0,0,0,7" />
+                                            <Setter Property="Padding" Value="8" />
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="ListBoxItem">
+                                                        <Border x:Name="Card" Background="{StaticResource Paper}" CornerRadius="7"
+                                                                BorderBrush="{StaticResource PaperEdge}" BorderThickness="1" Padding="{TemplateBinding Padding}">
+                                                            <ContentPresenter />
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="Card" Property="Background" Value="#FAEFD3" />
+                                                            </Trigger>
+                                                            <Trigger Property="IsSelected" Value="True">
+                                                                <Setter TargetName="Card" Property="Background" Value="#FFF4DA" />
+                                                                <Setter TargetName="Card" Property="BorderBrush" Value="#986F37" />
+                                                                <Setter TargetName="Card" Property="BorderThickness" Value="3,1,1,1" />
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <DockPanel>
+                                                <Border DockPanel.Dock="Left" VerticalAlignment="Top" Background="#F1DFB9" CornerRadius="6"
+                                                        Width="30" Height="30" Margin="0,0,8,0">
+                                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xEA86;" Foreground="{StaticResource Pine}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Attribution}" Foreground="{StaticResource MutedInk}" FontSize="11" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Status}" Foreground="{StaticResource Pine}" FontSize="11" Margin="0,3,0,0" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                            <Border Grid.Column="2" Style="{StaticResource PagePaper}" Padding="0" VerticalAlignment="Top">
+                                <Grid>
+                                    <StackPanel x:Name="PluginEmpty" Margin="14">
+                                        <TextBlock FontWeight="SemiBold" Foreground="{StaticResource Pine}" Text="还没有安装插件" />
+                                        <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="从上方选择本地 ZIP 插件包。" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="PluginDetail" Visibility="Collapsed">
+                                        <StackPanel Margin="14,11">
+                                            <DockPanel>
+                                                <Border x:Name="PluginStatusBadge" DockPanel.Dock="Right" Background="{StaticResource Leaf}"
+                                                        Padding="6,3" CornerRadius="4" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock x:Name="PluginStatusText" FontSize="11" Foreground="{StaticResource Pine}" />
+                                                </Border>
+                                                <TextBlock x:Name="PluginName" FontWeight="SemiBold" FontSize="19"
+                                                           Foreground="{StaticResource Pine}" TextWrapping="Wrap" />
+                                            </DockPanel>
+                                            <TextBlock x:Name="PluginAttribution" Foreground="{StaticResource MutedInk}"
+                                                       FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                        <Border BorderThickness="0,1,0,0" BorderBrush="#EADFC9" Background="#FCF6E8" Padding="14,10">
+                                            <StackPanel>
+                                                <TextBlock x:Name="PluginSummary" Style="{StaticResource InlineFeedback}" Margin="0,0,0,7" />
+                                                <WrapPanel>
+                                                    <Button x:Name="OpenPluginSettings" Content="打开插件设置" Style="{StaticResource PrimaryButton}"
+                                                            Margin="0,0,7,4" Click="OpenPluginSettingsClicked" />
+                                                    <Button x:Name="TogglePluginRun" Content="启用插件" Margin="0,0,7,4" Click="TogglePluginRunClicked" />
+                                                    <Button x:Name="RestartPlugin" Content="重启插件" Style="{StaticResource PrimaryButton}"
+                                                            Margin="0,0,0,4" Visibility="Collapsed" Click="RestartPluginClicked" />
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border BorderThickness="0,1,0,0" BorderBrush="#EADFC9" Padding="14,10">
+                                            <ToggleButton x:Name="PluginAutoStart" Content="随伴侣程序自动启动"
+                                                          AutomationProperties.Name="随伴侣程序自动启动"
+                                                          Style="{StaticResource PluginSwitch}"
+                                                          Checked="PluginAutoStartChanged" Unchecked="PluginAutoStartChanged" />
+                                        </Border>
+                                        <Border BorderThickness="0,1,0,0" BorderBrush="#EADFC9" Padding="8,5">
+                                            <WrapPanel>
+                                                <Button x:Name="OpenPluginLogs" Content="打开日志目录" Click="OpenPluginLogsClicked"
+                                                        Background="Transparent" BorderBrush="Transparent" Margin="0" />
+                                                <Button x:Name="DisablePlugin" Content="停用插件" Click="DisablePluginClicked"
+                                                        Background="Transparent" BorderBrush="Transparent" Margin="0" />
+                                                <Button x:Name="UninstallPlugin" Content="卸载插件" Click="UninstallPluginClicked"
+                                                        Background="Transparent" BorderBrush="Transparent" Foreground="#8C382B" Margin="0" />
+                                            </WrapPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
             <TabItem x:Name="SettingsPage" Header="设置" Tag="&#xE713;" Style="{StaticResource RoomPage}">
                 <TabControl x:Name="SettingsTabs" Style="{StaticResource SectionTabs}" SelectionChanged="SaveViewSelected">
                     <TabItem x:Name="LaunchSettingsTab" Header="游戏启动" Style="{StaticResource SectionTab}">

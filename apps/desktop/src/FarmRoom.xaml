@@ -66,6 +66,38 @@
         <Setter Property="Padding" Value="16,6" />
         <Setter Property="Margin" Value="0" />
     </Style>
+    <Style x:Key="PluginSwitch" TargetType="ToggleButton">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <DockPanel Background="Transparent" MinHeight="26">
+                        <Border x:Name="Track" DockPanel.Dock="Right" Width="42" Height="24" Padding="2"
+                                CornerRadius="12" BorderThickness="1" BorderBrush="#847763" Background="#E7DDC9">
+                            <Ellipse x:Name="Thumb" Width="18" Height="18" HorizontalAlignment="Left" Fill="#FFFAF0" />
+                        </Border>
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </DockPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Track" Property="Background" Value="{StaticResource Pine}" />
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource Pine}" />
+                            <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Track" Property="BorderBrush" Value="#89652E" />
+                            <Setter TargetName="Track" Property="BorderThickness" Value="2" />
+                            <Setter TargetName="Track" Property="Padding" Value="1" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Track" Property="Opacity" Value="0.55" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
     <Style TargetType="TextBox">
         <Setter Property="Padding" Value="9,6" />
         <Setter Property="Background" Value="#FFFFFB" />

@@ -16,6 +16,7 @@
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="../../shared/dotnet/FileLogger.cs" Link="Logging/FileLogger.cs" />
     <Using Remove="System.Drawing;System.Windows.Forms" />
     <Resource Include="Assets/*.png;Assets/companion.ico" />
