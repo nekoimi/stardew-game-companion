@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using StardewAI.Companion.Logging;
 
@@ -25,18 +26,23 @@ internal sealed class PluginHost : IAsyncDisposable
     private readonly HashSet<(string, string)> _messageIds = [];
     private readonly Queue<(string, string)> _recentMessages = new();
     private readonly Func<string, object, Task<PluginCallResult>> _runtime;
+    private readonly HttpClient _catalogClient;
+    private readonly string _catalogSettings;
     private PluginServer? _server;
 
-    internal PluginHost(string root, FileLogger logger, Func<string, object, Task<PluginCallResult>>? runtime = null)
+    internal PluginHost(string root, FileLogger logger, Func<string, object, Task<PluginCallResult>>? runtime = null,
+        HttpMessageHandler? catalogTransport = null)
     {
         _logger = logger;
         _runtime = runtime ?? ((_, _) => Task.FromResult(PluginCallResult.Unavailable()));
         var data = Path.Combine(root, "data");
+        _catalogSettings = Path.Combine(data, "plugin-catalog.json");
         Directory.CreateDirectory(data);
         try { _lease = File.Open(Path.Combine(data, "plugin-host.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
         catch (IOException ex) { throw new InvalidOperationException("此绿色包的插件中心已在运行。", ex); }
         try { _registry = new PluginRegistry(root); }
         catch { _lease.Dispose(); throw; }
+        _catalogClient = new(catalogTransport ?? new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
     }
 
     internal event Action? Changed;
@@ -54,6 +60,110 @@ internal sealed class PluginHost : IAsyncDisposable
     }).ToArray();
 
     internal string LogDirectory(string id) => Path.Combine(_logger.DirectoryPath, "plugins", id);
+
+    internal CatalogSource? CatalogSettings() => File.Exists(_catalogSettings)
+        ? JsonSerializer.Deserialize<CatalogSource>(File.ReadAllText(_catalogSettings), PluginPackages.Json) : null;
+
+    internal async Task<CatalogIndex> ReadCatalogAsync(CatalogSource source, CancellationToken cancellation)
+    {
+        using var token = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token, cancellation);
+        var index = await new PluginCatalog(_catalogClient).ReadAsync(source, token.Token).ConfigureAwait(false);
+        PluginRegistry.WriteAtomic(_catalogSettings, source);
+        return index;
+    }
+
+    internal Task ApplyCatalogAsync(CatalogIndex index, CatalogEntry entry) => RunExclusiveAsync(async token =>
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromMinutes(3));
+        string download = Path.Combine(Path.GetTempPath(), $"companion-plugin-{Guid.NewGuid():N}.zip");
+        try
+        {
+            await new PluginCatalog(_catalogClient).DownloadAsync(index, entry, download, timeout.Token).ConfigureAwait(false);
+            string key = index.Publishers.Single(publisher => publisher.Name == entry.Publisher).PublicKey;
+            if (!_registry.List().Any(plugin => plugin.Manifest.Id == entry.Id))
+            {
+                await _registry.InstallAsync(download, _ => Task.FromResult(true), token, entry, key).ConfigureAwait(false);
+                Notify();
+                return true;
+            }
+            var next = await _registry.StageUpdateAsync(download, entry, key, token).ConfigureAwait(false);
+            await SwitchVersionAsync(next, backup: null, token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            throw new TimeoutException("插件包下载超时。");
+        }
+        finally { File.Delete(download); }
+    });
+
+    internal Task RollbackAsync(string id) => RunExclusiveAsync(async token =>
+    {
+        var current = _registry.Find(id);
+        var backup = current.Backup ?? throw new InvalidOperationException("没有可回退的版本。");
+        var next = current with { Manifest = backup.Manifest, Backup = null, DataVersion = backup.DataVersion };
+        var manifest = await PluginPackages.ValidateAsync(_registry.ProgramDirectory(next), token).ConfigureAwait(false);
+        if (manifest.Id != next.Manifest.Id || manifest.Version != next.Manifest.Version)
+            throw new InvalidDataException("回退版本与登记记录不一致。");
+        await SwitchVersionAsync(next, backup, token).ConfigureAwait(false);
+        return true;
+    });
+
+    private async Task SwitchVersionAsync(InstalledPlugin next, PluginBackup? backup, CancellationToken token)
+    {
+        string id = next.Manifest.Id;
+        CancelRestart(id);
+        bool wasRunning = _runs.ContainsKey(id);
+        await StopLockedAsync(id).ConfigureAwait(false);
+        PluginUpdate? update = null;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            update = _registry.BeginUpdate(id);
+            if (backup is not null) _registry.RestoreBackupData(id, backup);
+            _registry.UseVersion(next);
+            if (next.Enabled)
+            {
+                var run = await StartLockedAsync(id, 0, token).ConfigureAwait(false);
+                await WaitForUsableAsync(run, token).ConfigureAwait(false);
+                if (!wasRunning) await StopLockedAsync(id).ConfigureAwait(false);
+            }
+            _registry.CommitUpdate(next, update, savePrevious: backup is null);
+            Notify();
+        }
+        catch (Exception error) when (IsPluginFailure(error) || error is OperationCanceledException)
+        {
+            if (update is not null)
+            {
+                await StopLockedAsync(id).ConfigureAwait(false);
+                _registry.RecoverUpdate();
+            }
+            if (wasRunning && !token.IsCancellationRequested)
+            {
+                try { await StartLockedAsync(id, 0, token).ConfigureAwait(false); }
+                catch (Exception restartError) when (IsPluginFailure(restartError))
+                {
+                    throw new InvalidOperationException("已恢复原插件版本和数据，原版本启动失败，请查看日志。", restartError);
+                }
+            }
+            Notify();
+            throw;
+        }
+    }
+
+    private static async Task WaitForUsableAsync(PluginRun run, CancellationToken token)
+    {
+        long start = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(start) < PluginServer.HeartbeatTimeout)
+        {
+            var state = run.Instance.Status.State;
+            if (run.Process.Exited || state is "degraded" or "stopping") break;
+            if (state is "ready" or "needs_configuration") return;
+            await Task.Delay(100, token).ConfigureAwait(false);
+        }
+        throw new InvalidOperationException("新版本未能启动，插件版本与数据将恢复。");
+    }
 
     internal async Task StartAutomaticAsync()
     {
@@ -331,6 +441,7 @@ internal sealed class PluginHost : IAsyncDisposable
         }
         finally
         {
+            _catalogClient.Dispose();
             _lease.Dispose();
             _operation.Release();
         }
@@ -338,7 +449,7 @@ internal sealed class PluginHost : IAsyncDisposable
 
     internal static bool IsPluginFailure(Exception error) => error is IOException or InvalidDataException
         or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or Win32Exception
-        or TimeoutException or ArgumentException;
+        or TimeoutException or ArgumentException or HttpRequestException;
 
     private void Notify() => Changed?.Invoke();
 

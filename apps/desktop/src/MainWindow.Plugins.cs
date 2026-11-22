@@ -80,6 +80,7 @@ public partial class MainWindow
     private void RefreshPluginDetail()
     {
         InstallPlugin.IsEnabled = _plugins is not null && !_pluginBusy;
+        BrowsePluginCatalog.IsEnabled = InstallPlugin.IsEnabled;
         PluginList.IsEnabled = !_pluginBusy;
         var row = PluginList.SelectedItem as PluginRow;
         PluginEmpty.Visibility = row is null ? Visibility.Visible : Visibility.Collapsed;
@@ -113,6 +114,22 @@ public partial class MainWindow
         try { PluginAutoStart.IsChecked = view.Installation.AutoStart; }
         finally { _applyingPluginSwitch = false; }
         DisablePlugin.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        RollbackPlugin.Visibility = view.Installation.Backup is not null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void BrowsePluginCatalogClicked(object sender, RoutedEventArgs e)
+    {
+        if (_plugins is not { } host || _closing) return;
+        new PluginCatalogWindow(host) { Owner = this }.ShowDialog();
+        if (!_closing) RefreshPlugins();
+    }
+
+    private async void RollbackPluginClicked(object sender, RoutedEventArgs e)
+    {
+        if (PluginList.SelectedItem is not PluginRow row || row.View.Installation.Backup is not { } backup) return;
+        if (MessageBox.Show(this, $"回退到 v{backup.Manifest.Version}并恢复更新前的插件数据？",
+            "回退插件版本", MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK)
+            await RunPluginOperationAsync(host => host.RollbackAsync(row.Id));
     }
 
     private async void InstallPluginClicked(object sender, RoutedEventArgs e)

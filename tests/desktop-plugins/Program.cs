@@ -2,9 +2,15 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Security;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using StardewAI.Companion.Desktop.Plugins;
 using StardewAI.Companion.Logging;
 
@@ -146,6 +152,7 @@ try
         await host.UninstallAsync(id, keepData: false);
         Check(!Directory.Exists(data), "remove-data uninstall kept configuration");
     }
+    await CheckCatalog(original, payload);
     Console.WriteLine("Plugin host passed package rollback, lifecycle, notification deduplication, state projection, replay and stream limits.");
 }
 catch
@@ -184,6 +191,111 @@ string WriteZip(JsonObject manifest, string name, byte[] executable, bool corrup
     }));
     if (escape) Add("../escape", [1]);
     return path;
+}
+
+async Task CheckCatalog(JsonObject manifest, byte[] executable)
+{
+    using var directoryKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+    using var publisherKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+    var format = DSASignatureFormat.Rfc3279DerSequence;
+    var algorithm = HashAlgorithmName.SHA256;
+    var publisher = manifest["publisher"]!.GetValue<string>();
+    var name = manifest["name"]!.GetValue<string>();
+    var publicKey = Convert.ToBase64String(publisherKey.ExportSubjectPublicKeyInfo());
+    const string catalogRoute = "/catalog.json";
+    const string originalVersion = "0.1.0";
+    await using var transport = await CatalogFixture.StartAsync();
+    var source = new CatalogSource(transport.Address + catalogRoute, Convert.ToBase64String(directoryKey.ExportSubjectPublicKeyInfo()));
+    var first = Entry(originalVersion, "", 1);
+    var bad = Entry("0.2.0", "--fail-migration", 2);
+    var second = Entry("0.3.0", "--migrate", 2);
+    var incompatible = second with { Version = "5.0.0", HostProtocol = new(2, 2) };
+    var index = new CatalogIndex(1, DateTimeOffset.UtcNow.AddDays(1), [new(publisher, publicKey)],
+        [first, bad, second, incompatible]);
+    byte[] body = JsonSerializer.SerializeToUtf8Bytes(index, PluginPackages.Json);
+    SetDirectory(invalidSignature: true);
+
+    await using (var host = new PluginHost(root, logger, catalogTransport: transport.CreateClientHandler()))
+    {
+        await Expect<InvalidDataException>(() => host.ReadCatalogAsync(source, default));
+        Check(host.CatalogSettings() is null && host.List().Length == 0, "untrusted catalog changed state");
+        SetDirectory(invalidSignature: false);
+        var loaded = await host.ReadCatalogAsync(source, default);
+        Check(host.CatalogSettings() == source, "trusted catalog settings did not persist");
+        var packages = loaded.Plugins.ToDictionary(item => item.Version);
+        await Expect<InvalidDataException>(() => host.ApplyCatalogAsync(loaded, packages["5.0.0"]));
+        Check(transport.Requests("/plugin-0.3.0.zip") == 0, "downloaded an incompatible version");
+        await host.ApplyCatalogAsync(loaded, packages[originalVersion]);
+        var installed = host.List().Single().Installation;
+        Check(installed.Manifest.Version == originalVersion && !installed.Enabled && installed.PublisherKey == publicKey,
+            "signed package was not registered correctly");
+        Directory.CreateDirectory(data);
+        File.WriteAllText(flag("configured"), "original settings");
+        await host.StartAsync(id);
+        await host.SetAutoStartAsync(id, true);
+        await Eventually(() => host.List().Single().Status.State == "ready", "signed plugin start");
+
+        byte[] signedUpdate = transport.Files["/plugin-0.3.0.zip"];
+        transport.Files["/plugin-0.3.0.zip"] = [1, 2, 3];
+        await Expect<InvalidDataException>(() => host.ApplyCatalogAsync(loaded, packages["0.3.0"]));
+        Check(host.List().Single().Installation.Manifest.Version == originalVersion, "corrupt update changed installation");
+        transport.Files["/plugin-0.3.0.zip"] = signedUpdate;
+
+        var invalid = packages["0.3.0"] with { PackageSignature = Convert.ToBase64String([0, 1]) };
+        var wrong = loaded with { Plugins = [invalid] };
+        await Expect<InvalidDataException>(() => host.ApplyCatalogAsync(wrong, invalid));
+        Check(host.List().Single().Installation.Manifest.Version == originalVersion, "invalid publisher signature changed installation");
+
+        await Expect<InvalidOperationException>(() => host.ApplyCatalogAsync(loaded, packages["0.2.0"]));
+        await Eventually(() => host.List().Single().Status.State == "ready", "previous version restored after failure");
+        installed = host.List().Single().Installation;
+        Check(installed.Manifest.Version == originalVersion && installed.AutoStart
+            && File.ReadAllText(flag("configured")) == "original settings", "failed migration changed data or preferences");
+
+        await host.ApplyCatalogAsync(loaded, packages["0.3.0"]);
+        installed = host.List().Single().Installation;
+        Check(installed is { DataVersion: 2, AutoStart: true, Backup.Manifest.Version: originalVersion }
+            && File.ReadAllText(flag("configured")) == "migrated", "successful update did not retain backup");
+    }
+
+    await using (var host = new PluginHost(root, logger))
+    {
+        await host.StartAutomaticAsync();
+        await host.RollbackAsync(id);
+        var installed = host.List().Single().Installation;
+        Check(installed is { DataVersion: 1, AutoStart: true, Backup: null } && installed.Manifest.Version == originalVersion
+            && File.ReadAllText(flag("configured")) == "original settings", "manual rollback failed after restart");
+    }
+
+    var registry = new PluginRegistry(root);
+    registry.BeginUpdate(id);
+    File.WriteAllText(flag("configured"), "interrupted migration");
+    registry.UseVersion(registry.Find(id) with { Manifest = registry.Find(id).Manifest with { Version = "0.4.0" } });
+    registry = new PluginRegistry(root);
+    Check(registry.Find(id).Manifest.Version == originalVersion && File.ReadAllText(flag("configured")) == "original settings",
+        "interrupted transaction did not restore settings and registration");
+    Console.WriteLine("Signed catalog passed incompatibility, invalid signatures, corrupt download, migration failure, version rollback and crash recovery.");
+
+    CatalogEntry Entry(string version, string args, int dataVersion)
+    {
+        var copy = manifest.DeepClone().AsObject();
+        copy["version"] = version;
+        if (args.Length > 0) copy["entry"]!["args"]!.AsArray().Add(args);
+        var zip = WriteZip(copy, "catalog-" + version, executable);
+        var bytes = File.ReadAllBytes(zip);
+        var hash = SHA256.HashData(bytes);
+        var route = "/plugin-" + version + ".zip";
+        transport.Files[route] = bytes;
+        return new(id, name, publisher, version, new(1, 1), transport.Address + route,
+            Convert.ToHexStringLower(hash), Convert.ToBase64String(publisherKey.SignData(hash, algorithm, format)), dataVersion);
+    }
+
+    void SetDirectory(bool invalidSignature)
+    {
+        var signature = invalidSignature ? publisherKey.SignData(body, algorithm, format) : directoryKey.SignData(body, algorithm, format);
+        transport.Files[catalogRoute] = JsonSerializer.SerializeToUtf8Bytes(
+            new CatalogEnvelope(Convert.ToBase64String(body), Convert.ToBase64String(signature)), PluginPackages.Json);
+    }
 }
 
 static Task<bool> Confirm(PluginManifest _) => Task.FromResult(true);
@@ -309,4 +421,63 @@ static async Task<string> Frame(StreamReader reader, CancellationToken token)
         if (!line.StartsWith(':')) result += line;
     }
     throw new InvalidOperationException("Expected a plugin event.");
+}
+
+sealed class CatalogFixture : IAsyncDisposable
+{
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _requests = new();
+    private readonly WebApplication _server;
+    private readonly X509Certificate2 _certificate;
+    internal System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> Files { get; } = new();
+    internal string Address => _server.Urls.Single();
+
+    private CatalogFixture(WebApplication server, X509Certificate2 certificate)
+    {
+        _server = server;
+        _certificate = certificate;
+    }
+
+    internal int Requests(string route) => _requests.GetValueOrDefault(route);
+
+    internal static async Task<CatalogFixture> StartAsync()
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var subject = new SubjectAlternativeNameBuilder();
+        subject.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(subject.Build());
+        using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        var certificate = X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pkcs12), null, X509KeyStorageFlags.UserKeySet);
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.Logging.ClearProviders();
+        builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(certificate)));
+        var app = builder.Build();
+        var fixture = new CatalogFixture(app, certificate);
+        app.Run(fixture.RespondAsync);
+        await app.StartAsync();
+        return fixture;
+    }
+
+    internal HttpClientHandler CreateClientHandler() => new()
+    {
+        UseProxy = false, AllowAutoRedirect = false,
+        ServerCertificateCustomValidationCallback = (_, certificate, _, errors) =>
+            certificate?.Thumbprint == _certificate.Thumbprint && (errors & ~SslPolicyErrors.RemoteCertificateChainErrors) == 0
+    };
+
+    private async Task RespondAsync(HttpContext context)
+    {
+        string route = context.Request.Path;
+        _requests.AddOrUpdate(route, 1, (_, count) => count + 1);
+        if (Files.TryGetValue(route, out var bytes))
+            await context.Response.Body.WriteAsync(bytes, context.RequestAborted);
+        else context.Response.StatusCode = 404;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _server.StopAsync();
+        await _server.DisposeAsync();
+        _certificate.Dispose();
+    }
 }

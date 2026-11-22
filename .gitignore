@@ -102,3 +102,4 @@ MagicMock/
 !/tools/dev/detect-game.ps1
 !/tools/dev/preflight.ps1
 !/tools/dev/test.ps1
+!/tools/dev/sign-plugin-catalog.ps1

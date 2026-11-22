@@ -222,6 +222,14 @@ try {
     Wait-Check { $app.Refresh(); $app.MainWindowHandle -ne 0 } 'Packaged WPF did not start.' 30
     $mainHwnd = $app.MainWindowHandle
     Select-Tab 'PluginsPage'
+    if (Find-Ui 'BrowsePluginCatalog') {
+        Click 'BrowsePluginCatalog'
+        Wait-Check {
+            $script:catalogWindow = [PluginAcceptanceWindow]::FindDialog([uint32]$app.Id, '在线插件目录')
+            $script:catalogWindow -ne [IntPtr]::Zero -and (Find-Ui 'CatalogUrl')
+        } 'Online catalog dialog did not render.'
+        [void][PluginAcceptanceWindow]::PostMessage($catalogWindow, 0x10, 0, 0)
+    }
     Install-Sample (Join-Path $Samples 'command-0.1.0-win-x64.zip')
     Activate-Plugin '指令示例' '待配置'
     $sampleSettingsLog = Join-Path $desktop 'data/logs/plugins/org.example.command/settings.log'
@@ -269,6 +277,9 @@ try {
     } 'Second plugin did not observe the same native receipt.'
     $origin = Read-Lines $trace | Where-Object { $_.type -eq 'submitted' -and $_.payload.pluginSource -eq 'org.example.command' } | Select-Object -Last 1
     if (!$origin -or !(Find-Ui '插件 · org.example.command' -ByName)) { throw 'Desktop did not label the plugin source.' }
+    Wait-Check {
+        Read-Lines $eventLog | Where-Object { $_.type -eq 'agent.reply.completed' -and $_.payload.messageId -eq $origin.payload.requestId }
+    } 'Subscriber did not receive the completed public reply.'
     $firstId = $pluginResult.requestId
     $same = Get-SettingsResult 'retry' | ConvertFrom-Json
     if ($same.requestId -ne $firstId -or $same.actions[0].actionId -ne $pluginResult.actions[0].actionId) { throw 'Retry did not retain the original receipt.' }

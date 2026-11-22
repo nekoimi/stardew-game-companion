@@ -221,6 +221,7 @@ export class TurnRunner {
     const productive = actions.some(action => typeof action.completedCount === "number" && action.completedCount > 0
       && !["navigate-to", "sleep", "rest"].includes(String(action.skillId)));
     const nativePartial = actions.some(action => action.terminalState === "partially-succeeded");
+    const confirmedSuccess = actions.length > 0 && actions.every(action => action.terminalState === "succeeded");
     const progress = productive && (nativePartial || !command.goalCompleted
       || actions.some(action => action.terminalState !== "succeeded"));
     let status = command.status;
@@ -229,7 +230,7 @@ export class TurnRunner {
     else if (command.turnEnded && unresolved) status = "recovery_pending";
     else if (command.turnEnded && status === "completed" && progress) status = "partial";
     const outcome = unresolved || !command.turnEnded && !interrupted ? "unknown" : progress ? "partial"
-      : command.goalCompleted && productive && status === "completed" ? "achieved"
+      : command.goalCompleted && confirmedSuccess && status === "completed" ? "achieved"
       : status === "failed" || status === "cancelled" ? "unmet" : "unknown";
     return { requestId: command.input.requestId, sessionId: command.input.sessionId, status,
       turnEnded: command.turnEnded || interrupted, goalOutcome: outcome, actions,

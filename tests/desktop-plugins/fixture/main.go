@@ -23,9 +23,15 @@ func main() {
 	data := os.Getenv("STARDEW_PLUGIN_DATA_DIR")
 	_ = os.MkdirAll(data, 0700)
 	write := func(name, value string) { _ = os.WriteFile(filepath.Join(data, name), []byte(value), 0600) }
-	if len(os.Args) != 3 || os.Args[1] != "--label" || os.Args[2] != "农场 测试" || os.Getenv("OPENAI_API_KEY") != "" {
+	if len(os.Args) < 3 || os.Args[1] != "--label" || os.Args[2] != "农场 测试" || os.Getenv("OPENAI_API_KEY") != "" {
 		write("http-error", fmt.Sprintf("invalid arguments %q or filtered credential", os.Args[1:]))
 		os.Exit(2)
+	}
+	if len(os.Args) == 4 {
+		write("configured", "migrated")
+		if os.Args[3] == "--fail-migration" {
+			os.Exit(4)
+		}
 	}
 	executable, err := os.Executable()
 	if err != nil {
