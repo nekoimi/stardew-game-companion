@@ -1,0 +1,139 @@
+name: Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (blank creates a unique development prerelease)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+      version: ${{ steps.build.outputs.version }}
+      prerelease: ${{ steps.build.outputs.prerelease }}
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Fetch Stardew Valley build references
+        id: references
+        shell: pwsh
+        env:
+          BUILD_REFS_URL: ${{ secrets.STARDEW_BUILD_REFS_URL }}
+          BUILD_REFS_SHA256: ${{ vars.STARDEW_BUILD_REFS_SHA256 }}
+        run: |
+          if ([string]$env:BUILD_REFS_URL -notmatch '^https://') {
+            throw 'Set STARDEW_BUILD_REFS_URL to a private HTTPS download URL.'
+          }
+          if ([string]$env:BUILD_REFS_SHA256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'Set STARDEW_BUILD_REFS_SHA256 to the SHA256 of the build references ZIP.'
+          }
+          $archive = Join-Path $env:RUNNER_TEMP 'stardew-build-references.zip'
+          try {
+            Invoke-WebRequest -Uri $env:BUILD_REFS_URL -OutFile $archive -TimeoutSec 120
+          } catch {
+            throw 'Could not download the build references. Check access and the download URL.'
+          }
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $env:BUILD_REFS_SHA256) {
+            throw 'The build references ZIP failed SHA256 verification.'
+          }
+          $references = Join-Path $env:RUNNER_TEMP 'stardew-build-references'
+          Expand-Archive -LiteralPath $archive -DestinationPath $references
+          "path=$references" >> $env:GITHUB_OUTPUT
+      - name: Build and verify green package
+        id: build
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          STARDEW_GAME_PATH: ${{ steps.references.outputs.path }}
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          $tag = ([string]$env:RELEASE_TAG).Trim()
+          $prerelease = $version.Contains('-') -or $tag -match '^v?\d+\.\d+\.\d+-'
+          if (!$tag) {
+            $date = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTimeOffset]::UtcNow, 'China Standard Time').ToString('yyyyMMdd')
+            $tag = "v$version-dev.$date.$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT"
+            $prerelease = $true
+          }
+          if ($tag.StartsWith('-')) { throw 'A release tag cannot start with a hyphen.' }
+          git check-ref-format "refs/tags/$tag"
+          if ($LASTEXITCODE) { throw 'Invalid Git release tag.' }
+
+          $output = Join-Path $env:RUNNER_TEMP "companion-release-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          & ./packaging/windows/build-node-release.ps1 -Output $output
+
+          $archive = Join-Path $output "StardewGameCompanion-$version-windows-x64.zip"
+          @("tag=$tag", "version=$version", "archive=$archive", "prerelease=$($prerelease.ToString().ToLowerInvariant())") >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
+        with:
+          name: windows-release-${{ github.run_attempt }}
+          path: |
+            ${{ steps.build.outputs.archive }}
+            ${{ steps.build.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact }}
+          path: release
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          $archive = "release/StardewGameCompanion-$env:RELEASE_VERSION-windows-x64.zip"
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksum = (Get-Content -LiteralPath "$archive.sha256" -Raw).Trim()
+          if ($checksum -cne "$hash  $([IO.Path]::GetFileName($archive))") {
+            throw 'The downloaded archive does not match its SHA256 checksum.'
+          }
+
+          $tag = $env:RELEASE_TAG
+          $ref = "refs/tags/$tag"
+          $tagRefs = @{}
+          $remote = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY.git"
+          foreach ($line in (git ls-remote --tags $remote $ref "$ref^{}")) {
+            $sha, $name = $line -split "`t", 2
+            $tagRefs[$name] = $sha
+          }
+          if ($LASTEXITCODE) { throw 'Could not verify the remote tag.' }
+          $tagSha = $tagRefs["$ref^{}"] ?? $tagRefs[$ref]
+          if ($tagSha -and $tagSha -ne $env:GITHUB_SHA) {
+            throw "Tag '$tag' already points to another commit. Select its commit or use a new tag."
+          }
+
+          $title = "星露谷游戏伴侣 $tag - Windows x64"
+          $releaseArgs = @('--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--generate-notes', '--title', $title)
+          if ($tagSha) { $releaseArgs += '--verify-tag' }
+          if ($env:RELEASE_PRERELEASE -eq 'true') { $releaseArgs += '--prerelease' }
+          gh release create @releaseArgs -- $tag $archive "$archive.sha256"
+          if ($LASTEXITCODE) { throw 'GitHub Release creation failed.' }

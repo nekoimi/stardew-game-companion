@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /apps/runtime
+    schedule:
+      interval: weekly
+  - package-ecosystem: nuget
+    directories:
+      - /apps/game-mod/tests/StardewAI.Companion.Mod.Tests
+      - /apps/game-mod/tests/StardewAI.Companion.Transport.Tests
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /tests
+    schedule:
+      interval: weekly

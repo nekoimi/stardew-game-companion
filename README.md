@@ -52,6 +52,8 @@
 
 [参与开发](CONTRIBUTING.md) · [文档索引](docs/README.md) · [通信协议](contracts/game-bridge/README.md) · [隔离实机回归](docs/repeatable-companion-acceptance.md)
 
+Dependabot 每周提交依赖更新。Windows 绿色包由维护者通过 GitHub Actions 手动发布。[发布流程](CONTRIBUTING.md#发布-windows-绿色包)
+
 桌面插件平台的开发进度和接口见[实施 TODO](docs/development/desktop-plugin-platform-todo.md)与[插件契约](contracts/plugin-host/README.md)。
 
 `apps/` 存放 Windows 桌面程序、共享 TypeScript 运行时和 SMAPI Mod。协议位于 `contracts/`，游戏提示词与指导位于 `resources/agent/prompts/`。[架构方案](docs/development/agent-runtime-rewrite.md) · [实施进度](docs/development/agent-runtime-rewrite-todo.md)

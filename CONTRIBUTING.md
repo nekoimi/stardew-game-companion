@@ -15,6 +15,21 @@ pwsh -File packaging/windows/verify-node-release.ps1 -Archive '<ZIP 路径>'
 
 解压 ZIP 后从根目录的「星露谷游戏伴侣.exe」启动。归档包含配套 Mod、Node、许可清单和 SHA256 文件清单。
 
+## 发布 Windows 绿色包
+
+发布使用 GitHub 托管的 Windows runner。首次发布时，在已安装游戏和 SMAPI 的 Windows 电脑上用 .NET 10 SDK 导出仅含编译元数据的引用包。
+
+```powershell
+dotnet tool install --global JetBrains.Refasmer.CliTool --version 2.0.3
+pwsh -File packaging/windows/export-build-references.ps1 -GamePath '<SMAPI 游戏目录>' -Output artifacts/stardew-build-references.zip
+```
+
+将引用包放在私有存储中，在 GitHub 的「Settings → Secrets and variables → Actions」添加 Secret `STARDEW_BUILD_REFS_URL`，值为 runner 可访问的 HTTPS 下载链接，并添加 Variable `STARDEW_BUILD_REFS_SHA256`，值为导出脚本输出的哈希。工作流校验后将引用包用于编译，公开 Release 只包含绿色 ZIP 和 `.sha256`。更新游戏或 SMAPI 编译目标时重新导出并更新配置。
+
+发布工作流合并到默认分支后，在「Actions → Release Windows → Run workflow」选择要构建的 Git 引用。`tag` 留空时生成 `v<VERSION>-dev.<北京时间日期>.<运行编号>.<重跑次数>`，例如 `v0.1.0-dev.20261123.42.1`，并标记为预发布；每次新运行或重跑构建都会生成不同标签。手填时使用指定标签，可以新建或复用指向同一提交的标签，已有 Release 保持原样。
+
+Release 展示名称为「星露谷游戏伴侣 <tag> - Windows x64」，下载包名为 `StardewGameCompanion-<VERSION>-windows-x64.zip`，并附带同名 `.sha256`。包名、程序集和 Mod 版本统一读取 `VERSION`，预发布构建由所属 Release 的标签区分。
+
 ## 开发与测试
 
 - apps/desktop/src 负责 WPF、Windows 凭据和运行时宿主。
@@ -23,7 +38,7 @@ pwsh -File packaging/windows/verify-node-release.ps1 -Archive '<ZIP 路径>'
 
 准备 Node 22.22.2、npm 10.9.7、可编译 Mod 的 .NET SDK，以及安装了 pytest 的开发用 Python。在仓库根目录运行 `pwsh -File tools/dev/test.ps1 -GamePath '<SMAPI 游戏目录>'`。原生扩展编译用例可通过 `-DotNet` 指向本地 .NET 6 SDK。Python 用于隔离验收报告判定。
 
-插件宿主可脱离游戏验证。准备 Go 和 .NET 10 SDK，运行 `pwsh -File tests/desktop-plugins/run.ps1`。清单 Schema 验证使用开发依赖 `jsonschema`，运行 `python tests/contracts/check-plugin-contract.py`。
+插件宿主可脱离游戏验证。准备 Go 和 .NET 10 SDK，运行 `pwsh -File tests/desktop-plugins/run.ps1`。使用 `python -m pip install -r tests/requirements.txt` 安装验收依赖，再运行 `python tests/contracts/check-plugin-contract.py` 检查清单 Schema。
 
 实际游戏测试使用复制出的隔离存档。桌面交互和三组固定场景的复现见[隔离实机回归](docs/repeatable-companion-acceptance.md)。测试用存档、截图、游戏文件和模型密钥留在本地。
 

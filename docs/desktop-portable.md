@@ -2,7 +2,7 @@
 
 ## 启动
 
-1. 准备 Windows x64、《星露谷物语》及已安装的 SMAPI。将绿色 ZIP 完整解压到可写目录，双击根目录的 **星露谷游戏伴侣.exe**，启动后进入「今天」。
+1. 准备 Windows x64、《星露谷物语》及已安装的 SMAPI。从 GitHub Releases 下载 `StardewGameCompanion-*-windows-x64.zip`，可用同名 `.sha256` 文件核对下载。完整解压到可写目录，双击根目录的 **星露谷游戏伴侣.exe**，启动后进入「今天」。[下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases)
 2. 在「设置 → 游戏启动」选中包含 StardewModdingAPI.exe 的游戏目录和游玩方式。在「模型连接」配置服务商、模型和 API Key，点击「测试连接」。
 3. 点击「启动游戏」，加载单人存档。在「今天」发送自然语言指令。
 
