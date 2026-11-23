@@ -8,6 +8,10 @@ updates:
     directory: /apps/runtime
     schedule:
       interval: weekly
+  - package-ecosystem: npm
+    directory: /docs/site
+    schedule:
+      interval: weekly
   - package-ecosystem: nuget
     directories:
       - /apps/game-mod/tests/StardewAI.Companion.Mod.Tests

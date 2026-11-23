@@ -1,5 +1,5 @@
 # 界面截图
 
-`desktop-home.png` 为当前 Windows 桌面程序启动后的「今天」页面，截图时未连接游戏。
+[`docs/site/public/desktop-home.png`](../site/public/desktop-home.png) 为当前 Windows 桌面程序启动后的「今天」页面，截图时未连接游戏。README 与文档站共用这一个源文件。
 
 更新截图时，从当前构建在全新目录启动程序，保留真实界面与默认提示，只截取应用窗口，避免包含模型密钥、私人路径、存档或对话。界面变化后同步 README 和使用指南中的截图。

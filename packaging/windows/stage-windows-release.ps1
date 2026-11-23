@@ -27,7 +27,10 @@ foreach ($name in 'DotNet-LICENSE.txt', 'DotNet-ThirdPartyNotices.txt') {
 foreach ($name in 'LICENSE', 'NOTICE') { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $docs }
 Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/prompts/agent-ts-instructions.md') -Destination $modDocs
 Copy-Item -LiteralPath (Join-Path $repo 'resources/agent/prompts/agent-guidance') -Destination $modDocs -Recurse
-Copy-Item -LiteralPath (Join-Path $repo 'docs/desktop-portable.md'), (Join-Path $repo 'CHANGELOG.md') -Destination $docs
+$guide = Get-Content -LiteralPath (Join-Path $repo 'docs/development/desktop-portable.md') -Raw
+$guide.Replace('../site/public/desktop-home.png', 'https://nekoimi.github.io/stardew-game-companion/desktop-home.png') |
+    Set-Content -LiteralPath (Join-Path $docs 'desktop-portable.md') -Encoding utf8NoBOM
+Copy-Item -LiteralPath (Join-Path $repo 'CHANGELOG.md') -Destination $docs
 $files = @(Get-ChildItem -LiteralPath $root -File -Recurse | Sort-Object FullName | ForEach-Object {
     [ordered]@{
         path = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\','/')

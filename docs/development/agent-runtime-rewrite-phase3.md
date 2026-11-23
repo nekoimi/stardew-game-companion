@@ -68,7 +68,7 @@
 
 `tests/acceptance/start-desktop-acceptance.ps1` 从解压候选复制桌面和存档，装入仓库内的 TestDriver，记录发行清单哈希、游戏和 SMAPI 版本。桌面仍从原 EXE 配置模型、启动游戏。模拟参数会将两家模型请求导向本机测试服务。
 
-使用新入口对 `851447b` 候选跑完桌面模拟冒烟。通过游戏菜单选择复制的存档后，验证了原生移动、思考中和移动中 F9、改派、待确认项、同一存档模型切换、断线核对、重载、托盘和退出。源存档哈希一致，链接形式的存档在启动前被拒绝。运行目录为 `desktop-1121-185757-c5da`，正式操作步骤见[桌面与同一存档切换](../repeatable-companion-acceptance.md#桌面与同一存档切换)。
+使用新入口对 `851447b` 候选跑完桌面模拟冒烟。通过游戏菜单选择复制的存档后，验证了原生移动、思考中和移动中 F9、改派、待确认项、同一存档模型切换、断线核对、重载、托盘和退出。源存档哈希一致，链接形式的存档在启动前被拒绝。运行目录为 `desktop-1121-185757-c5da`，正式操作步骤见[桌面与同一存档切换](repeatable-companion-acceptance.md#桌面与同一存档切换)。
 
 正式模式的桌面预检也已打开并退出候选包，运行目录为 `desktop-1121-190409-9e56`。这次预检止于正式 API 凭据设置之前。
 
@@ -141,4 +141,4 @@ pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir '<解压目录
 pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir '<解压目录>' -SavePath '<春季隔离来源存档>' -Provider deepseek -Model deepseek-flash -Cases rest-forestry
 ```
 
-实机执行由已打包的运行时和 Mod 完成，TestDriver 布置存档、发送自然语言和采集原生结果。真实 API 从当前进程读取相应厂商或网关凭据。[三组固定场景和正式入口](../repeatable-companion-acceptance.md)
+实机执行由已打包的运行时和 Mod 完成，TestDriver 布置存档、发送自然语言和采集原生结果。真实 API 从当前进程读取相应厂商或网关凭据。[三组固定场景和正式入口](repeatable-companion-acceptance.md)

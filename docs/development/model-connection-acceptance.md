@@ -46,4 +46,4 @@ pwsh -File packaging/windows/verify-node-release.ps1 -Archive '<ZIP 路径>'
 pwsh -File tests/acceptance/run-companion-presets.ps1 -ReleaseDir '<解压目录>' -SavePath '<隔离来源存档>' -Provider custom -Protocol responses -Model gpt-6.1-sol -NonStreaming
 ```
 
-测试用第三方网关凭据从进程环境读取，复用 `OPENAI_COMPATIBLE_BASE_URL` 和 `OPENAI_COMPATIBLE_API_KEY`。[隔离验收说明](../repeatable-companion-acceptance.md)
+测试用第三方网关凭据从进程环境读取，复用 `OPENAI_COMPATIBLE_BASE_URL` 和 `OPENAI_COMPATIBLE_API_KEY`。[隔离验收说明](repeatable-companion-acceptance.md)

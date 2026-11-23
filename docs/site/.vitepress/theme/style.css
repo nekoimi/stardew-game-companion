@@ -1,0 +1,52 @@
+:root {
+  --vp-c-brand-1: #30654c;
+  --vp-c-brand-2: #427c5b;
+  --vp-c-brand-3: #285541;
+  --vp-c-brand-soft: rgba(74, 126, 83, 0.13);
+  --vp-home-hero-name-color: #285541;
+  --vp-c-bg: #fffdf8;
+  --vp-c-bg-alt: #f5f1e5;
+  --vp-c-bg-soft: #f5f1e5;
+}
+
+.dark {
+  --vp-c-brand-1: #a9d9ae;
+  --vp-c-brand-2: #8ac89a;
+  --vp-c-brand-3: #497e59;
+  --vp-c-brand-soft: rgba(138, 200, 154, 0.13);
+  --vp-home-hero-name-color: #c3e3b4;
+  --vp-c-bg: #1b2420;
+  --vp-c-bg-alt: #161e1a;
+  --vp-c-bg-soft: #243029;
+}
+
+.home-preview {
+  max-width: 1152px;
+  margin: 40px auto 64px;
+  padding: 0 24px;
+}
+
+.home-preview img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(27, 54, 35, 0.12);
+}
+
+.home-preview p {
+  margin-top: 14px;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  text-align: center;
+}
+
+.vp-doc .mermaid {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 16px 0;
+}
+
+.vp-doc .mermaid svg {
+  min-width: 680px;
+}

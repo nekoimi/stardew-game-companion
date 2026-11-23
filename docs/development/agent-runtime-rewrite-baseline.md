@@ -2,7 +2,7 @@
 
 实施前的源码为 `f59bd41`，分支为 `dev`。旧绿色包保存在本地 `artifacts/releases/gui-single-player-cn/StardewGameCompanion-0.3.22-windows-x64.zip`，SHA256 为 `ecc9d8e2ee1503532c69cd47b56ca85043e9f133a3ef3005fefc1dcf0c8ff009`。已校验包内 1793 个 Mod 文件。使用隔离存档和模拟 Pi 复跑绿色包，原生移动在隐藏窗口时完成，恢复后显示回执，退出伴侣后游戏仍运行。
 
-本机基线为 Windows x64、游戏 1.6.15.24356、SMAPI 4.5.2、WPF SDK 10.0.404、.NET SDK 8.0.428 和 uv 0.7.14。隔离验收沿用[三组固定场景](../repeatable-companion-acceptance.md)，基线的桌面联调使用本地隔离存档和模拟进程。正式厂商 API 与三组实机结果仍待后续阶段。
+本机基线为 Windows x64、游戏 1.6.15.24356、SMAPI 4.5.2、WPF SDK 10.0.404、.NET SDK 8.0.428 和 uv 0.7.14。隔离验收沿用[三组固定场景](repeatable-companion-acceptance.md)，基线的桌面联调使用本地隔离存档和模拟进程。正式厂商 API 与三组实机结果仍待后续阶段。
 
 | 当前调用点 | 替换或保留 |
 | --- | --- |

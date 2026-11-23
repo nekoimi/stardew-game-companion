@@ -5,10 +5,10 @@
 用自然语言安排农场生活，和 AI 伙伴一起玩《星露谷物语》。
 
 [![Release](https://img.shields.io/github/v/release/nekoimi/stardew-game-companion?include_prereleases&label=Release)](https://github.com/nekoimi/stardew-game-companion/releases)
-[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4.svg)](docs/desktop-portable.md)
+[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4.svg)](https://nekoimi.github.io/stardew-game-companion/guide/getting-started)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-[下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases) · [使用指南](docs/desktop-portable.md) · [更新日志](CHANGELOG.md) · [报告问题](https://github.com/nekoimi/stardew-game-companion/issues) · [参与贡献](CONTRIBUTING.md)
+[下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases) · [在线文档](https://nekoimi.github.io/stardew-game-companion/) · [使用指南](https://nekoimi.github.io/stardew-game-companion/guide/getting-started) · [更新日志](https://nekoimi.github.io/stardew-game-companion/reference/changelog) · [报告问题](https://github.com/nekoimi/stardew-game-companion/issues) · [参与贡献](https://nekoimi.github.io/stardew-game-companion/reference/contributing)
 
 </div>
 
@@ -18,7 +18,7 @@
 
 ## 预览
 
-![星露谷游戏伴侣启动后的「今天」页面，包含侧边导航、对话区域和左下角 Agent 状态](docs/images/desktop-home.png)
+![星露谷游戏伴侣启动后的「今天」页面，包含侧边导航、对话区域和左下角 Agent 状态](docs/site/public/desktop-home.png)
 
 *当前 GUI 的实际启动界面，尚未连接游戏。进入存档后可在「今天」交流、发送指令并查看执行状态。*
 
@@ -41,7 +41,7 @@
 >
 > 接下来农场交给你，优先发展种植，记得按时回家休息。
 
-目前已覆盖种植、收获、动物照料、加工、仓储和部分布局施工。具体范围与限制见[农场工作说明](docs/farm-projects.md)，社区中心献祭仍需玩家提交。
+目前已覆盖种植、收获、动物照料、加工、仓储和部分布局施工。具体范围与限制见[农场工作说明](https://nekoimi.github.io/stardew-game-companion/reference/farm-projects)，社区中心献祭仍需玩家提交。
 
 ## 快速开始
 
@@ -58,7 +58,7 @@
 3. 在「设置」选择游戏目录和游玩方式，再到「模型连接」选择服务商、填写 API Key，点击「测试连接」并保存。
 4. 点击「启动游戏」，进入单人存档后，在桌面「今天」发送指令。使用「AI 自己玩」时，点击「交给 AI」开始托管。
 
-关闭窗口时可选择最小化到托盘，双击通知区域的伴侣图标可恢复窗口。常见操作、配置位置和日志入口见[使用指南](docs/desktop-portable.md)。
+关闭窗口时可选择最小化到托盘，双击通知区域的伴侣图标可恢复窗口。常见操作、配置位置和日志入口见[使用指南](https://nekoimi.github.io/stardew-game-companion/guide/getting-started)。
 
 ## 游玩方式
 
@@ -79,7 +79,7 @@
 | OpenAI 官方 | API Key 与模型。 |
 | 自定义接口 | OpenAI Chat Completions 或 Responses 协议，自定义 HTTPS Base URL、模型 ID 与 API Key。 |
 
-支持流式与非流式响应，可按服务能力配置。「测试连接」会验证工具调用和回执。[模型配置说明](docs/desktop-portable.md#模型配置)
+支持流式与非流式响应，可按服务能力配置。「测试连接」会验证工具调用和回执。[模型配置说明](https://nekoimi.github.io/stardew-game-companion/guide/models)
 
 游戏存档由游戏保存。伙伴资料、聊天和用量按存档保存在绿色包的 `data/companion.sqlite`，API Key 交由 Windows 凭据管理器保存。运行时会向你选择的模型服务发送指令、相关游戏状态和工具结果。
 
@@ -91,7 +91,7 @@
 
 插件通过通用接口订阅公开游戏状态、接收伙伴回复、提交指令并查询结果。业务规则由插件实现，桌面程序负责进程管理和通信。玩家仍可暂停、改派或接管。
 
-[玩家使用说明](docs/desktop-portable.md#插件中心) · [插件协议](contracts/plugin-host/README.md) · [参考插件](examples/plugins/README.md)
+[玩家使用说明](https://nekoimi.github.io/stardew-game-companion/guide/plugins) · [插件协议](https://nekoimi.github.io/stardew-game-companion/reference/plugin-protocol) · [参考插件](https://nekoimi.github.io/stardew-game-companion/reference/plugin-examples)
 
 ## 开发与贡献
 
@@ -103,16 +103,16 @@
 | `apps/runtime` | TypeScript / Node.js | 模型接入、伙伴数据、回合执行与任务调度。 |
 | `apps/game-mod` | C# / SMAPI | 游戏观察、原生动作执行和结果回执。 |
 
-`contracts/` 定义通信协议，`resources/agent/` 存放提示词与游戏指导，`packaging/` 负责绿色包构建和校验。开发环境、构建命令与验收步骤见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+`contracts/` 定义通信协议，`resources/agent/` 存放提示词与游戏指导，`packaging/` 负责绿色包构建和校验。开发环境、构建命令与验收步骤见[贡献指南](https://nekoimi.github.io/stardew-game-companion/reference/contributing)。
 
 欢迎提交问题报告、功能建议和 Pull Request。问题报告请附上程序版本、复现步骤、预期行为与实际结果；涉及游戏时说明游玩模式和存档场景。
 
-- [源码构建与测试](CONTRIBUTING.md#从源码构建)
-- [文档索引](docs/README.md)
-- [游戏通信协议](contracts/game-bridge/README.md)与[桌面 HTTP 接口](contracts/desktop-api/README.md)
-- [隔离实机回归](docs/repeatable-companion-acceptance.md)
+- [源码构建与测试](https://nekoimi.github.io/stardew-game-companion/reference/contributing#从源码构建)
+- [文档索引](https://nekoimi.github.io/stardew-game-companion/)
+- [游戏通信协议](https://nekoimi.github.io/stardew-game-companion/reference/game-protocol)与[桌面 HTTP 接口](https://nekoimi.github.io/stardew-game-companion/reference/desktop-api)
+- [隔离实机回归](https://nekoimi.github.io/stardew-game-companion/reference/acceptance)
 
-产品版本统一维护在根目录的 [VERSION](VERSION)。Dependabot 每周提交依赖更新，Windows 绿色包由维护者通过 GitHub Actions [手动发布](CONTRIBUTING.md#发布-windows-绿色包)。
+产品版本统一维护在根目录的 [VERSION](VERSION)。Dependabot 每周提交依赖更新，Windows 绿色包由维护者通过 GitHub Actions [手动发布](https://nekoimi.github.io/stardew-game-companion/reference/contributing#发布-windows-绿色包)。
 
 ## 许可与致谢
 

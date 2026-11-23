@@ -90,4 +90,4 @@ packaging/windows/             Windows 绿色包构建、校验与启动验证
 - **可启动可执行。** 绿色包解压后，只填服务商、Key 和模型，进入隔离单人存档，提交一句自然语言并收到对应的原生动作回执。
 - **可接管可恢复。** 覆盖模型流中断、F9、改派、原生动作回执丢失、读档和同一游戏内重连。核对已有成果、控制权、回执去重和续作状态。
 - **可更换模型。** 同一存档完成一次 DeepSeek 与 OpenAI 的切换，验证伙伴名字、记忆、历史、状态和未完成目标的连续性。
-- **玩法回归。** 沿用 `care-guidance`、`harvest-logistics`、`rest-forestry` 的自然语言任务和游戏证据，验收入口改走新运行时。分别核对动作结果、物品、碰撞、动画和等待状态。[固定实机任务](../repeatable-companion-acceptance.md)
+- **玩法回归。** 沿用 `care-guidance`、`harvest-logistics`、`rest-forestry` 的自然语言任务和游戏证据，验收入口改走新运行时。分别核对动作结果、物品、碰撞、动画和等待状态。[固定实机任务](repeatable-companion-acceptance.md)

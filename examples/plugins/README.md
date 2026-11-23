@@ -13,4 +13,4 @@ pwsh -File examples/plugins/build.ps1 -Output artifacts/plugin-samples
 
 在交互式 Windows 会话中，可运行 `pwsh -File tests/desktop-plugins/accept-game.ps1 -Archive <绿色包ZIP> -Samples <参考插件构建目录> -SavePath <隔离测试源存档> -GamePath <SMAPI游戏目录>`。脚本复制测试存档并使用本地模拟模型，验收两个安装包、原生行动与事件反馈。
 
-[插件宿主 v1 契约](../../contracts/plugin-host/v1.md)
+[插件宿主 v1 契约](https://nekoimi.github.io/stardew-game-companion/reference/plugin-protocol)

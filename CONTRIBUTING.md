@@ -32,6 +32,8 @@ Release 展示名称直接使用标签，例如 `v0.1.0-dev.20261123.2.1`。下�
 
 ## 开发与测试
 
+文档站独立维护在 `docs/site/`，进入该目录后运行 `npm ci`、`npm run dev` 即可预览；`npm run build` 检查正式构建与链接。GitHub Pages 的首次设置和文档来源规则见[文档站维护说明](docs/site/README.md)。
+
 - apps/desktop/src 负责 WPF、Windows 凭据和运行时宿主。
 - apps/runtime 负责 TypeScript 回合、模型工具、SQLite 和两侧接口。
 - apps/game-mod/src 负责 SMAPI、游戏观察、主线程原生动作和回执。
@@ -40,6 +42,6 @@ Release 展示名称直接使用标签，例如 `v0.1.0-dev.20261123.2.1`。下�
 
 插件宿主可脱离游戏验证。准备 Go 和 .NET 10 SDK，运行 `pwsh -File tests/desktop-plugins/run.ps1`。使用 `python -m pip install -r tests/requirements.txt` 安装验收依赖，再运行 `python tests/contracts/check-plugin-contract.py` 检查清单 Schema。
 
-实际游戏测试使用复制出的隔离存档。桌面交互和三组固定场景的复现见[隔离实机回归](docs/repeatable-companion-acceptance.md)。测试用存档、截图、游戏文件和模型密钥留在本地。
+实际游戏测试使用复制出的隔离存档。桌面交互和三组固定场景的复现见[隔离实机回归](https://nekoimi.github.io/stardew-game-companion/reference/acceptance)。测试用存档、截图、游戏文件和模型密钥留在本地。
 
 调试游戏内 F8 界面时，先运行 `tests/acceptance/build-testdriver.ps1`，再通过 `tests/acceptance/launch-game.ps1 -Mode interactive -Scenario free-mode-control -FrozenProdDir '<解压目录>' -CustomSavePath '<测试存档目录>' -ApiProvider deepseek -ApiModel deepseek-flash -TimeoutSeconds 1800` 启动隔离游戏。DeepSeek 密钥从当前进程的 `DEEPSEEK_API_KEY` 读取，打开游戏后从标题菜单读档。

@@ -29,6 +29,11 @@ dist/
 build/
 node_modules/
 
+# VitePress generated content and caches
+/docs/site/.vitepress/cache/
+/docs/site/.vitepress/.temp/
+/docs/site/reference/
+
 # Secrets and local configuration
 .env
 .env.*
@@ -82,6 +87,8 @@ MagicMock/
 # Private development notes and acceptance workflows
 /docs/[0-9]*
 /docs/HANDOFF.md
+/docs/development/[0-9]*
+/docs/development/HANDOFF.md
 /三天自由模式试用.md
 /安装三天候选并启动伙伴.cmd
 /检查三天候选（不安装）.cmd

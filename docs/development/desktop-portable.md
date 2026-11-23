@@ -1,5 +1,7 @@
 # 星露谷游戏伴侣使用指南
 
+也可阅读[在线文档](https://nekoimi.github.io/stardew-game-companion/)，按安装、模型、页面功能与常见问题逐项查看。本文件继续作为绿色包随附的完整说明。
+
 ## 启动
 
 1. 准备 Windows x64、《星露谷物语》及已安装的 SMAPI。从 GitHub Releases 下载 `StardewGameCompanion-*-windows-x64.zip`，可用同名 `.sha256` 文件核对下载。完整解压到可写目录，双击根目录的 **星露谷游戏伴侣.exe**，启动后进入「今天」。[下载绿色包](https://github.com/nekoimi/stardew-game-companion/releases)
@@ -8,7 +10,7 @@
 
 Node、模型 SDK 和桌面运行库随包提供。启动器加载绿色包的独立 Mod 目录。关闭窗口时可最小化到通知区域，双击图标恢复。退出伴侣会停止 Agent，游戏由玩家保存并退出。
 
-![伴侣启动后的「今天」页面，尚未连接游戏](images/desktop-home.png)
+![伴侣启动后的「今天」页面，尚未连接游戏](../site/public/desktop-home.png)
 
 ## 插件中心
 
@@ -16,9 +18,9 @@ Node、模型 SDK 和桌面运行库随包提供。启动器加载绿色包的�
 
 带设置页的插件可点击「打开插件设置」，由系统浏览器打开对应的本机页面。插件显示「需重启」时可以从详情页重启。卸载确认框默认勾选「保留插件的数据与设置」。插件自己的日志入口位于详情页，宿主的启停和连接日志可从「诊断」查看。
 
-运行中的插件可以订阅公开的游戏状态、动作结果和伙伴回复，也可以向 Agent 提交独立指令。「今天」会标出指令来自哪个插件。玩家仍可改派、暂停或用 F9 接管。「停止插件」会中止该插件的活动回合。 [插件接口](../contracts/plugin-host/README.md)
+运行中的插件可以订阅公开的游戏状态、动作结果和伙伴回复，也可以向 Agent 提交独立指令。「今天」会标出指令来自哪个插件。玩家仍可改派、暂停或用 F9 接管。「停止插件」会中止该插件的活动回合。 [插件接口](https://nekoimi.github.io/stardew-game-companion/reference/plugin-protocol)
 
-在「插件中心 → 在线目录」填写目录的 HTTPS 地址并加载，即可选择兼容版本并确认安装或更新。宿主自动校验发布者签名和 ZIP 哈希。可从详情页「回退版本」恢复上一版本及数据。 [在线目录协议](../contracts/plugin-host/catalog-v1.md)
+在「插件中心 → 在线目录」填写目录的 HTTPS 地址并加载，即可选择兼容版本并确认安装或更新。宿主自动校验发布者签名和 ZIP 哈希。可从详情页「回退版本」恢复上一版本及数据。 [在线目录协议](https://nekoimi.github.io/stardew-game-companion/reference/plugin-catalog)
 
 ## 模型配置
 

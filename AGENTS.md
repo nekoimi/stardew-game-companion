@@ -26,4 +26,4 @@
 
 动作返回失败后释放其执行权；日间休息失败不能后台重启旧导航。拾取观察只列现有掉落物和可直接收集物，障碍与放置物由地图或农事观察提供。
 
-“伙伴实机回归”指固定的 care-guidance、harvest-logistics、rest-forestry 三组隔离实机任务，定义与验收见 docs/repeatable-companion-acceptance.md。工具边界接入玩家新消息；运行层限制无响应间隔，不以总工作时长中断正常进展。
+“伙伴实机回归”指固定的 care-guidance、harvest-logistics、rest-forestry 三组隔离实机任务，定义与验收见 docs/development/repeatable-companion-acceptance.md。工具边界接入玩家新消息；运行层限制无响应间隔，不以总工作时长中断正常进展。
