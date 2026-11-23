@@ -17,6 +17,8 @@ public partial class MainWindow : Window
 {
     private readonly ObservableCollection<TimelineEntry> _entries = new();
     private readonly HashSet<string> _seenResults = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _attentionNotices = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _seenCareMessages = new(StringComparer.Ordinal);
     private readonly HashSet<string> _pendingChatRequests = new(StringComparer.Ordinal);
     private readonly string _root = AppContext.BaseDirectory;
     private readonly FileLogger _logger;
@@ -343,7 +345,11 @@ public partial class MainWindow : Window
                 AddEntry("正在改派", "等待上一项动作停止并核对结果。");
                 RefreshComposer();
                 break;
-            case "life.care": AddEntry("提醒", Text(payload, "text")); break;
+            case "life.care":
+                var noticeId = Text(payload, "eventKey");
+                if (Text(payload, "kind") != "work-done" && (noticeId.Length == 0 || _seenCareMessages.Add(noticeId)))
+                    AddEntry("提醒", Text(payload, "text"));
+                break;
             case "chat.reply":
             case "life.chat.reply":
                 if (Text(payload, "status") is not ("accepted" or "queued" or "processing"))
@@ -403,9 +409,9 @@ public partial class MainWindow : Window
         bool staleAction = reportedCommandId.Length > 0 && _seenResults.Contains(reportedCommandId);
         _activeCommandId = staleAction ? "" : reportedCommandId;
         var action = staleAction ? "idle" : Text(payload, "activity");
-        var progress = Text(payload, "progress");
         var clockPauseOwner = Text(payload, "clockPauseOwner");
-        var execution = $"游戏执行中 · {(progress.Length > 0 ? progress : StatusLabel(action))}";
+        var skill = Text(payload, "activeSkillId");
+        var execution = ActionPresentation.Activity(skill.Length > 0 ? skill : action);
         var thinking = payload.TryGetProperty("modelStreaming", out var streaming) && streaming.ValueKind == JsonValueKind.False
             ? "等待模型响应" : "伴侣正在规划或回复";
         if (clockPauseOwner == "model-thinking") thinking += " · 游戏时钟已暂停";
@@ -425,7 +431,7 @@ public partial class MainWindow : Window
             : clockPauseOwner == "program-protection" ? ("已暂停", "保护暂停 · 游戏时钟已暂停")
             : isThinking ? ("正在思考", thinking)
             : !_partnerReady ? ("等待伙伴", "请在「设置」检查伙伴连接。")
-            : action is "" or "idle" ? ("等待指令", "可以在「今天」和伙伴聊聊。") : ("正在工作", StatusLabel(action));
+            : action is "" or "idle" ? ("等待指令", "可以在「今天」和伙伴聊聊。") : ("正在工作", ActionPresentation.Activity(action));
         if (_lastGameSessionId is not null && _lastGameSessionId != _gameSessionId)
         {
             _entries.Clear();
@@ -434,6 +440,7 @@ public partial class MainWindow : Window
         _lastGameSessionId = _gameSessionId;
         if (payload.TryGetProperty("decisions", out var decisions)) ApplyDecisions(decisions);
         if (payload.TryGetProperty("work", out var work)) ApplyWork(work);
+        RenderWork(activityOnly: true);
         ApplyInboxStatus(payload);
         RefreshControls();
         if (usageChanged && Pages.SelectedItem == UsagePage) _ = ReadUsageAsync();
@@ -487,45 +494,31 @@ public partial class MainWindow : Window
 
     private void ApplyResult(JsonElement result)
     {
+        if (_gameSessionId is null || (Text(result, "gameSessionId") is { Length: > 0 } game && game != _gameSessionId)
+            || (Text(result, "saveId") is { Length: > 0 } save && save != _saveId)) return;
         var id = Text(result, "commandId");
         if (id.Length == 0 || !_seenResults.Add(id)) return;
         if (_seenResults.Count > 512) _seenResults.Remove(_seenResults.First());
-        var operation = StatusLabel(Text(result, "skillId"));
-        var state = StatusLabel(Text(result, "terminalState"));
-        int Count(string name) => result.TryGetProperty(name, out var value) && value.TryGetInt32(out int count) ? count : 0;
-        string reason = result.TryGetProperty("error", out var error) ? Text(error, "message") : "";
-        AddEntry("游戏回执", $"{operation} · {state} · 完成 {Count("completedCount")}，跳过 {Count("skippedCount")}，失败 {Count("failedCount")}"
-            + (reason.Length > 0 ? $"\n{reason}" : ""));
+        var display = ActionPresentation.Read(result);
+        ActionFeedbackText.Text = display.Text;
+        ActionFeedbackPanel.Visibility = Visibility.Visible;
+        ActionFeedbackPanel.Background = new System.Windows.Media.SolidColorBrush(display.IsIssue
+            ? System.Windows.Media.Color.FromRgb(255, 242, 220) : System.Windows.Media.Color.FromRgb(232, 237, 220));
+        if (display.NeedsPlayer && _attentionNotices.Add(display.RepeatKey))
+            AddEntry("需要你确认", display.Text + " 可查看农场工作或核对旧动作。");
+        if (_attentionNotices.Count > 512) _attentionNotices.Remove(_attentionNotices.First());
         if (_activeCommandId == id)
         {
             _activeCommandId = "";
-            if (!_interrupting) _chatActivity = "已收到游戏回执。";
+            if (!_interrupting) _chatActivity = "正在确认游戏结果";
             if (AgentStateText.Text == "正在执行")
             {
                 AgentStateText.Text = "已收到回执";
-                ActivityText.Text = $"{operation} · {state}";
+                ActivityText.Text = display.Text;
             }
             RefreshComposer();
         }
     }
-
-    private static string StatusLabel(string value) => value switch
-    {
-        "water-zone" or "watering" => "浇水",
-        "harvest-zone" or "harvesting" => "收获",
-        "navigate-to" or "navigating" => "移动",
-        "chop-tree" => "采木",
-        "clear-debris" => "清障",
-        "pickup-items" => "拾取",
-        "plant-seeds" => "播种",
-        "refill-watering-can" => "补水",
-        "succeeded" => "已完成",
-        "partial" or "partially-succeeded" => "部分完成",
-        "cancelled" => "已取消",
-        "failed" or "rejected" => "未完成",
-        "" or "idle" => "等待状态",
-        _ => value
-    };
 
     private void RefreshControls()
     {

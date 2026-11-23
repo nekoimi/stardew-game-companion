@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -28,6 +28,47 @@ class FakeGame extends EventEmitter {
   async queryAction() { this.queryCount++; return this.recovered; }
   async observe() { return this.snapshot; }
 }
+
+test("work feedback preserves native evidence and bound goals without per-action completion reminders", async () => {
+  const shared = JSON.parse(readFileSync(new URL("../../../contracts/desktop-api/examples/work-feedback.json", import.meta.url), "utf8"));
+  const receipts = ["water", "timeout", "pickup"].map(id => shared.receipts.find(row => row.commandId === id));
+  const store = new CompanionStore(":memory:");
+  store.updateProfile(binding.saveId, { onboarded: true, careFrequency: "chatty" }, 0);
+  const game = new FakeGame();
+  game.snapshot = { ...game.snapshot, world: { year: 1, season: "spring", dayOfMonth: 18, timeOfDay: 900 } };
+  let index = 0;
+  game.nativeResult = (id, skill) => ({ ...receipts[index++], commandId: id, skillId: skill });
+  const events = [];
+  let observedPickup;
+  const runner = new TurnRunner(game, { async *generate({ messages }) {
+    if (messages.at(-1).role === "user") yield done([
+      { id: "goal", name: "manage_arrangements", arguments: { change: { manage_goal: { action: "add", text: "照料和拾取" } } } },
+      { id: "water", name: "submit_work", arguments: { action: { water_tiles: { tiles: [{ x: 40, y: 35 }] } } } },
+      action,
+      { id: "pickup", name: "submit_work", arguments: { action: { pickup_items: { tiles: [{ x: 41, y: 35 }] } } } },
+    ]);
+    else { observedPickup = messages.at(-1).result; yield done([], "已完成部分工作，需要重新确认剩余拾取目标。"); }
+  } }, (type, payload) => events.push({ type, payload }), "", store);
+  try {
+    game.emit("changed");
+    await runner.submit(binding, "work-request", "先照料再拾取", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(game.executed.length, 3);
+    assert.equal(observedPickup.completedCount, 2);
+    assert.equal(observedPickup.skippedCount, 12);
+    assert.equal(observedPickup.error.message, receipts[2].error.message);
+    assert.equal(events.filter(event => event.type === "result").length, 3);
+    assert.ok(!events.some(event => event.type === "life.care" && event.payload.kind === "work-done"));
+    assert.equal(store.unreadCount(binding.saveId), 0);
+    const work = runner.status().work;
+    assert.equal(work.recentExecutions.length, 3);
+    assert.ok(work.recentExecutions.every(row => row.workContext.goalId === work.currentGoalId && row.workContext.requestId === "work-request"));
+    assert.ok(work.recentExecutions.every(row => row.gameSessionId === binding.gameSessionId && row.commandId && !Object.hasOwn(row, "taskTitle")));
+    assert.deepEqual(work.recentExecutions[1].workContext.target, { x: 12, y: 8 });
+    assert.equal(work.recentExecutions[2].error.code, "no-item");
+    assert.ok(events.some(event => event.type === "status" && event.payload.activeSkillId === "water-zone"));
+  } finally { await runner.stop(); store.close(); }
+});
 
 function fixture(game, model) {
   const events = [];

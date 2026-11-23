@@ -15,6 +15,26 @@
                 </StackPanel>
             </Border>
         </DataTemplate>
+        <DataTemplate DataType="{x:Type local:WorkRecord}">
+            <Border CornerRadius="6" Padding="11,8" Margin="0,0,0,7" BorderThickness="1">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="#FFFCF5" />
+                        <Setter Property="BorderBrush" Value="#E5D8BC" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Tone}" Value="warning">
+                                <Setter Property="Background" Value="#FFF2DC" />
+                                <Setter Property="BorderBrush" Value="#D9B77A" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Text="{Binding Label}" Foreground="{StaticResource Pine}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
     </Window.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
@@ -136,6 +156,15 @@
                                         </StackPanel>
                                     </ScrollViewer>
                                     <StackPanel Grid.Row="2">
+                                        <Border x:Name="ActionFeedbackPanel" Background="#E8EDDC" CornerRadius="5" Padding="9,6" Margin="0,5,0,3" Visibility="Collapsed">
+                                            <DockPanel>
+                                                <Button Content="查看工作" DockPanel.Dock="Right" Click="OpenWorkClicked" FontSize="12" Padding="6,2" MinHeight="25" Margin="7,0,0,0" />
+                                                <StackPanel>
+                                                    <TextBlock Text="最近进展" FontSize="11" Foreground="{StaticResource MutedInk}" />
+                                                    <TextBlock x:Name="ActionFeedbackText" FontSize="12" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </Border>
                                         <DockPanel Margin="0,4,0,0">
                                             <Button x:Name="AuthorityButton" DockPanel.Dock="Right" Click="AuthorityClicked" Content="交给 AI"
                                                     FontSize="12" Padding="8,4" MinHeight="27" Margin="8,0,0,0" />
@@ -233,7 +262,19 @@
                             </ListBox>
                         </DockPanel>
                         <ScrollViewer Grid.Column="1" Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto" Padding="0,0,7,0">
-                            <ItemsControl x:Name="WorkDetails" Focusable="False" />
+                            <StackPanel>
+                                <TextBlock x:Name="WorkOverviewText" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{StaticResource Pine}" Margin="0,0,0,9" />
+                                <Expander x:Name="WorkGoalExpander" Header="完整要求" Margin="0,0,0,10" Visibility="Collapsed">
+                                    <TextBlock x:Name="WorkGoalText" TextWrapping="Wrap" Margin="5,8" />
+                                </Expander>
+                                <ItemsControl x:Name="WorkDetails" Focusable="False" />
+                                <Expander x:Name="WorkProcessExpander" Header="展开工作过程" Margin="0,7,0,0">
+                                    <ItemsControl x:Name="WorkProcess" Focusable="False" Margin="0,8,0,0" />
+                                </Expander>
+                                <Expander x:Name="OtherWorkExpander" Header="其他目标与未关联的历史记录" Margin="0,9,0,0" Visibility="Collapsed">
+                                    <ItemsControl x:Name="OtherWorkDetails" Focusable="False" Margin="0,8,0,0" />
+                                </Expander>
+                            </StackPanel>
                         </ScrollViewer>
                     </Grid>
                 </DockPanel>

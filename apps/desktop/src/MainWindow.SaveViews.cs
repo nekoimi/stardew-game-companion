@@ -4,13 +4,14 @@ using System.Windows.Controls;
 
 namespace StardewAI.Companion.Desktop;
 
-public sealed record DesktopGoal(string Id, string Title, string Details);
+public sealed record DesktopGoal(string Id, string Title, string Details, string FullText);
 public sealed record BedtimeOption(int Value, string Label);
 
 public partial class MainWindow
 {
     private int _saveViewGeneration;
     private string? _workSignature;
+    private JsonElement _workState;
     private bool _withdrawingGoal;
     private bool _readingHistory;
     private bool _hasHistoryPage;
@@ -36,9 +37,16 @@ public partial class MainWindow
         _submittingRequestId = null;
         _activeCommandId = _chatActivity = "";
         _workSignature = null;
+        _workState = default;
+        _attentionNotices.Clear();
+        _seenCareMessages.Clear();
+        ActionFeedbackPanel.Visibility = Visibility.Collapsed;
         _withdrawingGoal = _readingHistory = _hasHistoryPage = _savingPreferences = false;
         _historyBefore = _profileRevision = null;
         GoalPicker.ItemsSource = WorkDetails.ItemsSource = HistoryEntries.ItemsSource = null;
+        WorkProcess.ItemsSource = OtherWorkDetails.ItemsSource = null;
+        WorkGoalExpander.Visibility = OtherWorkExpander.Visibility = WorkProcessExpander.Visibility = Visibility.Collapsed;
+        WorkOverviewText.Text = "";
         WorkStatus.Text = HistoryStatus.Text = "进入存档后可查看。";
         ProfileFeedback.Text = "进入存档后可编辑。";
         TodayGoalText.Text = WorkStatus.Text;
@@ -152,50 +160,58 @@ public partial class MainWindow
         var signature = work.GetRawText();
         if (signature == _workSignature) return;
         _workSignature = signature;
+        _workState = work.Clone();
         var current = Text(work, "currentGoalId");
         var selected = (GoalPicker.SelectedItem as DesktopGoal)?.Id;
         var goals = Rows(work, "activeGoals").Select(goal =>
         {
             var id = Text(goal, "id");
-            var details = Text(goal, "summary");
-            if (id == current) details = details.Length > 0 ? $"当前目标 · {details}" : "当前目标";
-            return new DesktopGoal(id, Text(goal, "text"), details);
+            var details = id == current ? "当前目标" : "进行中";
+            var full = ActionPresentation.DisplayText(Text(goal, "text"));
+            return new DesktopGoal(id, ActionPresentation.GoalTitle(full), details, full);
         }).ToArray();
         GoalPicker.ItemsSource = goals;
         GoalPicker.SelectedItem = goals.FirstOrDefault(goal => goal.Id == selected) ?? goals.FirstOrDefault();
         WorkStatus.Text = goals.Length == 0 ? "暂无进行中的目标。" : "";
         var currentGoal = goals.FirstOrDefault(goal => goal.Id == current) ?? goals.FirstOrDefault();
         TodayGoalText.Text = currentGoal?.Title ?? WorkStatus.Text;
-        AgentNextStep.Text = "";
-
-        var details = new List<TimelineEntry>();
-        if (work.TryGetProperty("activity", out var activity) && Text(activity, "phase") != "idle")
-        {
-            Add("当前进度", Text(activity, "summary"));
-            var nextStep = Text(activity, "nextStep");
-            Add("下一步", nextStep);
-            if (!string.IsNullOrWhiteSpace(nextStep)) AgentNextStep.Text = $"下一步 · {nextStep}";
-        }
-        Add("暂停或等待", Text(work, "pauseReason"));
-        foreach (var condition in Rows(work, "waitingConditions")) Add("等待条件", condition.GetString() ?? "");
-        foreach (var todo in Rows(work, "recentTodos")) Add("待办", Text(todo, "intent"));
-        foreach (var execution in Rows(work, "recentExecutions").Reverse())
-        {
-            var date = Text(execution, "gameDate");
-            var label = date.Length > 0 ? $"工作记录 · {GameDateLabel(date)}" : "工作记录 · 日期未记录";
-            Add(label, $"{Text(execution, "taskTitle")}\n{Text(execution, "summary")}");
-        }
-        WorkDetails.ItemsSource = details;
-
-        void Add(string label, string text)
-        {
-            if (!string.IsNullOrWhiteSpace(text)) details.Add(new TimelineEntry(label, text));
-        }
+        RenderWork();
     }
 
     private void GoalSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (WithdrawGoalButton is not null) RefreshSaveViewControls();
+        if (WithdrawGoalButton is not null)
+        {
+            RefreshSaveViewControls();
+            RenderWork();
+        }
+    }
+
+    private void RenderWork(bool activityOnly = false)
+    {
+        if (WorkOverviewText is null || _workState.ValueKind != JsonValueKind.Object) return;
+        var selected = GoalPicker.SelectedItem as DesktopGoal;
+        bool isCurrent = selected is null || selected.Id == Text(_workState, "currentGoalId");
+        if (isCurrent && !string.IsNullOrEmpty(_chatActivity)) WorkOverviewText.Text = _chatActivity;
+        else if (!isCurrent) WorkOverviewText.Text = "所选目标的近期进展";
+        if (activityOnly) return;
+        var results = Rows(_workState, "recentExecutions").Select(ActionPresentation.Read).ToArray();
+        var relevant = selected is null ? results : results.Where(result => result.GoalId == selected.Id).ToArray();
+        var other = selected is null ? Array.Empty<WorkResult>() : results.Where(result => result.GoalId != selected.Id).ToArray();
+        WorkGoalText.Text = selected?.FullText ?? "";
+        WorkGoalExpander.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
+        var summaries = ActionPresentation.Summaries(relevant);
+        WorkDetails.ItemsSource = summaries;
+        WorkProcess.ItemsSource = ActionPresentation.Process(relevant);
+        OtherWorkDetails.ItemsSource = ActionPresentation.Summaries(other);
+        WorkProcessExpander.Visibility = relevant.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        OtherWorkExpander.Visibility = other.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        WorkOverviewText.Text = isCurrent ? _chatActivity : "所选目标的近期进展";
+        if (string.IsNullOrWhiteSpace(WorkOverviewText.Text)) WorkOverviewText.Text = relevant.Length == 0
+            ? "暂时没有工作记录，交代农活后可在这里查看进展。" : "近期工作摘要";
+        if (selected is not null && relevant.Length == 0)
+            WorkDetails.ItemsSource = new[] { new WorkRecord("暂无关联记录", "所选目标尚无近期动作记录。旧版未关联目标的回执可在下方历史记录中查看。") };
+        AgentNextStep.Text = "";
     }
 
     private async void WithdrawGoalClicked(object sender, RoutedEventArgs e)

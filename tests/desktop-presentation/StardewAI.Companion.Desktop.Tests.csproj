@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <UseWPF>true</UseWPF>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="../../apps/desktop/src/Assets/companion.ico" Link="Assets/companion.ico" />
+    <ProjectReference Include="../../apps/desktop/src/StardewAI.Companion.Desktop.csproj" />
+    <None Include="../../contracts/desktop-api/examples/work-feedback.json" Link="work-feedback.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

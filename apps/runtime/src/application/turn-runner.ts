@@ -18,6 +18,7 @@ interface Turn {
   binding: GameBinding;
   abort: AbortController;
   nativeAction?: string;
+  nativeSkill?: string;
   additional: { requestId: string; text: string }[];
   requests: string[];
   settled: Promise<void>;
@@ -97,6 +98,7 @@ export class TurnRunner {
       paused: this.game.state.paused === true, interrupting: this.transition || this.game.state.interrupting === true,
       recoveryPending: !!this.uncertain || this.game.state.recoveryPending === true,
       activeCommandId: this.active?.nativeAction ?? "", activity: this.game.state.activity ?? "idle",
+      activeSkillId: this.active?.nativeSkill ?? "",
       progress: this.game.state.progress ?? "", clockPauseOwner: this.game.state.clockPauseOwner ?? null,
       thinking: !!this.active && !this.active.nativeAction && !this.active.abort.signal.aborted,
       modelStreaming: this.selection?.stream !== false,
@@ -112,16 +114,20 @@ export class TurnRunner {
   private work(save: string): JsonObject {
     const goals = this.store?.items(save, "goals").filter(item => item.status === "active") ?? [];
     const current = goals.find(item => item.id === this.active?.goalId) ?? goals.at(-1);
-    const details = this.store?.recentReceipts(save).map(receipt => ({
-      gameDate: receipt.gameDate ?? null, taskTitle: receipt.skillId ?? "游戏动作",
-      summary: `${receipt.terminalState ?? "待核对"} · 已完成 ${receipt.completedCount ?? "未记录"}`,
+    const details = this.store?.recentReceipts(save, 40).map(receipt => ({
+      commandId: receipt.commandId ?? "", gameSessionId: receipt.gameSessionId ?? "", gameDate: receipt.gameDate ?? "",
+      skillId: receipt.skillId ?? "", terminalState: receipt.terminalState ?? "unknown",
+      completedCount: receipt.completedCount ?? null, skippedCount: receipt.skippedCount ?? null, failedCount: receipt.failedCount ?? null,
+      error: { code: object(receipt.error).code ?? "" }, playerActionRequired: receipt.playerActionRequired === true,
+      workContext: receipt.workContext ?? {},
     })) ?? [];
     return { mode: this.store?.profile(save).initiativeMode ?? "command", paused: this.game.state.paused === true,
       goal: current?.text ?? null, currentGoalId: current?.id ?? null, activeGoals: goals, recentExecutions: details,
       recentTodos: this.store?.items(save, "todos").slice(-8) ?? [],
       playerDecisions: this.store?.items(save, "decisions").filter(item => item.status === "pending") ?? [],
       activity: { phase: this.active ? "executing" : current ? "waiting" : "idle",
-        summary: this.game.state.progress ?? current?.summary ?? "", nextStep: current?.summary ?? "" } };
+        skillId: this.active?.nativeSkill ?? "", goalId: this.active?.goalId ?? "",
+        summary: current?.summary ?? "", nextStep: "" } };
   }
 
   changed(): void {
@@ -580,7 +586,7 @@ export class TurnRunner {
         const sleep = plugin ? undefined : await this.sleepAtBedtime(turn);
         if (bedtimeOnly && !turn.additional.length) {
           if (!signal.aborted && sleep && sleep.terminalState !== "succeeded") {
-            failure = `就寝未完成。${object(sleep.error).message ?? "请查看游戏状态。"}`;
+            failure = "按作息就寝未完成，请在农场工作查看原因。";
             if (sleep.terminalState !== "partially-succeeded") this.bedtimeRecovery = gameDate(this.game.snapshot);
           }
           break;
@@ -736,11 +742,10 @@ export class TurnRunner {
   }
 
   private settleReceipt(binding: GameBinding, actionId: string, receipt: JsonObject): void {
-    if (!this.store || this.store.recordReceipt(binding, actionId, { ...receipt, gameDate: gameDate(this.game.snapshot) })) {
-      this.publish("result", { ...binding, ...receipt });
-      if (receipt.terminalState === "succeeded" && Number(receipt.completedCount) > 0 && receipt.skillId !== "navigate-to" && receipt.skillId !== "sleep") {
-        this.remind(binding, "work-done", actionId, `刚核对了游戏回执，这项工作已完成 ${receipt.completedCount} 项。`);
-      }
+    const recorded = { ...receipt, gameDate: gameDate(this.game.snapshot), gameSessionId: binding.gameSessionId,
+      workContext: this.store?.actionContext(binding, actionId) ?? {} };
+    if (!this.store || this.store.recordReceipt(binding, actionId, recorded)) {
+      this.publish("result", { ...recorded, ...binding });
     }
   }
 
@@ -752,9 +757,13 @@ export class TurnRunner {
       throw new Error("当前控制权或暂停状态不允许执行动作。");
     }
     const actionId = turn.nativeAction = randomUUID();
+    turn.nativeSkill = skill;
     this.changed();
     try {
-      if (!observation) this.store?.beginAction(turn.binding, actionId, turn.plugin?.internalId);
+      if (!observation) this.store?.beginAction(turn.binding, actionId, turn.plugin?.internalId, {
+        goalId: turn.goalId, requestId: turn.originalRequestId, locationId: parameters.locationId ?? "",
+        target: parameters.tile ?? parameters.tiles ?? null,
+      });
       let receipt: JsonObject | undefined;
       try { receipt = await this.game.execute(actionId, turn.id, skill, parameters); }
       catch {
@@ -775,6 +784,6 @@ export class TurnRunner {
       this.assertBinding(turn.binding);
       if (!observation) this.settleReceipt(turn.binding, actionId, receipt);
       return receipt;
-    } finally { turn.nativeAction = undefined; this.changed(); }
+    } finally { turn.nativeAction = undefined; turn.nativeSkill = undefined; this.changed(); }
   }
 }

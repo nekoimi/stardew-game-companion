@@ -1,0 +1,57 @@
+{
+  "binding": { "saveId": "farm", "gameSessionId": "game" },
+  "goals": [
+    { "id": "care", "text": "先给作物浇水；按 bedtime 23:30 提前返程。", "status": "active" },
+    { "id": "wood", "text": "采集木材，保留幼树。", "status": "active" }
+  ],
+  "receipts": [
+    {
+      "commandId": "water", "skillId": "water-zone", "terminalState": "succeeded", "gameDate": "1:spring:18",
+      "completedCount": 2, "skippedCount": 0, "failedCount": 0,
+      "workContext": { "goalId": "care", "requestId": "care-request", "locationId": "Farm", "target": [{ "x": 40, "y": 35 }] }
+    },
+    {
+      "commandId": "walk-one", "skillId": "navigate-to", "terminalState": "failed", "gameDate": "1:spring:18",
+      "completedCount": 0, "failedCount": 1,
+      "error": { "code": "DESTINATION_UNREACHABLE", "message": "Requested standing tile is blocked or a map transition trigger." },
+      "workContext": { "goalId": "wood", "requestId": "wood-request", "locationId": "Farm", "target": { "x": 41, "y": 35 } }
+    },
+    {
+      "commandId": "walk-two", "skillId": "navigate-to", "terminalState": "failed", "gameDate": "1:spring:18",
+      "error": { "code": "DESTINATION_UNREACHABLE", "message": "Requested standing tile is blocked or a map transition trigger." },
+      "workContext": { "goalId": "wood", "requestId": "wood-request", "locationId": "Farm", "target": { "x": 41, "y": 35 } }
+    },
+    {
+      "commandId": "walk-care", "skillId": "navigate-to", "terminalState": "failed", "gameDate": "1:spring:18",
+      "error": { "code": "DESTINATION_UNREACHABLE", "message": "Requested standing tile is blocked." },
+      "workContext": { "goalId": "care", "requestId": "care-request", "locationId": "Farm", "target": { "x": 41, "y": 35 } }
+    },
+    {
+      "commandId": "timeout", "skillId": "navigate-to", "terminalState": "failed", "gameDate": "1:spring:18",
+      "error": { "code": "ROUTE_PLANNING_TIMEOUT", "message": "Route planning timed out. Inspect the approach and choose a nearer reachable waypoint." },
+      "workContext": { "goalId": "wood", "requestId": "wood-request", "locationId": "Farm", "target": { "x": 50, "y": 36 } }
+    },
+    {
+      "commandId": "walk-done", "skillId": "navigate-to", "terminalState": "succeeded", "gameDate": "1:spring:18",
+      "workContext": { "goalId": "wood", "requestId": "wood-request", "locationId": "Farm", "target": { "x": 42, "y": 35 } }
+    },
+    {
+      "commandId": "pickup", "skillId": "pickup-items", "terminalState": "partially-succeeded", "gameDate": "1:spring:18",
+      "completedCount": 2, "skippedCount": 12, "failedCount": 0,
+      "error": { "code": "no-item", "message": "Tile (41,35) currently has no loose drop or directly collectible ground item." },
+      "workContext": { "goalId": "wood", "requestId": "wood-request", "locationId": "Farm", "target": [{ "x": 41, "y": 35 }] }
+    },
+    {
+      "commandId": "needs-player", "skillId": "native-advance", "terminalState": "failed", "gameDate": "1:spring:18",
+      "playerActionRequired": true, "error": { "code": "MENU_BLOCKED", "message": "Native UI blocks the action." },
+      "workContext": { "goalId": "wood", "requestId": "wood-request" }
+    },
+    {
+      "commandId": "unknown", "skillId": "future-skill", "terminalState": "future-state", "gameDate": "1:spring:18",
+      "error": { "code": "FUTURE_ERROR", "message": "Raw technical details must not reach the player." }
+    },
+    {
+      "commandId": "legacy", "skillId": "chop-tree", "terminalState": "succeeded", "gameDate": "1:spring:17"
+    }
+  ]
+}

@@ -57,6 +57,10 @@ export class CompanionStore {
       CREATE TABLE IF NOT EXISTS plugin_actions (
         internal_id TEXT NOT NULL, action_id TEXT NOT NULL, PRIMARY KEY(internal_id, action_id)
       );
+      CREATE TABLE IF NOT EXISTS action_contexts (
+        save_id TEXT NOT NULL, game_id TEXT NOT NULL, action_id TEXT NOT NULL, value TEXT NOT NULL,
+        PRIMARY KEY(save_id, game_id, action_id)
+      );
     `);
   }
 
@@ -144,7 +148,8 @@ export class CompanionStore {
   }
 
   history(save: string, before?: number, reminders = false): JsonObject {
-    const where = reminders ? " AND kind = 'care'" : "";
+    const where = reminders ? " AND kind = 'care' AND coalesce(json_extract(value, '$.kind'), '') <> 'work-done'"
+      : " AND (kind <> 'care' OR coalesce(json_extract(value, '$.kind'), '') <> 'work-done')";
     const rows = this.db.prepare(`SELECT seq, value FROM conversations
       WHERE save_id = ? AND seq < ? ${where} ORDER BY seq DESC LIMIT 31`)
       .all(save, before ?? Number.MAX_SAFE_INTEGER);
@@ -163,7 +168,8 @@ export class CompanionStore {
 
   unreadCount(save: string): number {
     return Number(this.db.prepare(`SELECT count(*) AS count FROM conversations WHERE save_id = ?
-      AND kind = 'care' AND json_extract(value, '$.unread') = 1`).get(save)?.count);
+      AND kind = 'care' AND json_extract(value, '$.unread') = 1
+      AND coalesce(json_extract(value, '$.kind'), '') <> 'work-done'`).get(save)?.count);
   }
 
   reminderRevision(save: string): number {
@@ -176,7 +182,8 @@ export class CompanionStore {
     const limit = profile.careFrequency === "quiet" ? 0 : profile.careFrequency === "chatty" ? 4 : 2;
     if (!limit || profile.onboarded !== true) return;
     const day = this.db.prepare(`SELECT count(*) AS count, max(json_extract(value, '$.gameMinute')) AS latest
-      FROM conversations WHERE save_id = ? AND kind = 'care' AND json_extract(value, '$.gameDate') = ?`).get(save, date);
+      FROM conversations WHERE save_id = ? AND kind = 'care' AND json_extract(value, '$.gameDate') = ?
+      AND coalesce(json_extract(value, '$.kind'), '') <> 'work-done'`).get(save, date);
     const minute = Math.floor(time / 100) * 60 + time % 100;
     if (Number(day?.count) >= limit || (day?.latest != null && minute - Number(day.latest) < 120)) return;
     const eventKey = `${kind}:${date}:${ref}`;
@@ -270,18 +277,25 @@ export class CompanionStore {
       .map(row => ({ actionId: String(row.action_id), receipt: row.value === null ? undefined : decode<JsonObject>(row, {}) }));
   }
 
-  beginAction(binding: GameBinding, actionId: string, pluginRequest?: string): void {
-    if (pluginRequest) this.db.exec("BEGIN IMMEDIATE");
+  beginAction(binding: GameBinding, actionId: string, pluginRequest?: string, context?: JsonObject): void {
+    this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.prepare("INSERT INTO unsettled_actions VALUES (?, ?, ?)").run(binding.saveId, binding.gameSessionId, actionId);
+      if (context) this.db.prepare("INSERT INTO action_contexts VALUES (?, ?, ?, ?)")
+        .run(binding.saveId, binding.gameSessionId, actionId, JSON.stringify(context));
       if (pluginRequest) {
         this.db.prepare("INSERT INTO plugin_actions VALUES (?, ?)").run(pluginRequest, actionId);
-        this.db.exec("COMMIT");
       }
+      this.db.exec("COMMIT");
     } catch (error) {
-      if (pluginRequest) this.db.exec("ROLLBACK");
+      this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  actionContext(binding: GameBinding, actionId: string): JsonObject {
+    return decode(this.db.prepare("SELECT value FROM action_contexts WHERE save_id = ? AND game_id = ? AND action_id = ?")
+      .get(binding.saveId, binding.gameSessionId, actionId), {});
   }
 
   pendingAction(binding: GameBinding): string | undefined {
@@ -302,9 +316,9 @@ export class CompanionStore {
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
-  recentReceipts(save: string): JsonObject[] {
-    return this.db.prepare("SELECT value FROM receipts WHERE save_id = ? ORDER BY seq DESC LIMIT 8")
-      .all(save).reverse().map(row => decode<JsonObject>(row, {}));
+  recentReceipts(save: string, limit = 8): JsonObject[] {
+    return this.db.prepare("SELECT value FROM receipts WHERE save_id = ? ORDER BY seq DESC LIMIT ?")
+      .all(save, limit).reverse().map(row => decode<JsonObject>(row, {}));
   }
 
   recordUsage(save: string, requestId: string, provider: string, model: string, value?: ModelUsage): void {
