@@ -29,6 +29,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="Template">
@@ -78,6 +79,7 @@
         <Setter Property="Width" Value="42" />
         <Setter Property="Height" Value="24" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
@@ -119,6 +121,10 @@
         <Setter Property="Background" Value="#FFFFFB" />
         <Setter Property="BorderBrush" Value="{StaticResource PaperEdge}" />
         <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    </Style>
+    <Style x:Key="PageScrollViewer" TargetType="ScrollViewer">
+        <Setter Property="Focusable" Value="False" />
     </Style>
     <Style TargetType="TabControl">
         <Setter Property="Background" Value="{StaticResource Paper}" />
@@ -149,6 +155,7 @@
     </Style>
     <Style x:Key="RoomTabs" TargetType="TabControl">
         <Setter Property="TabStripPlacement" Value="Left" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabControl">
@@ -164,7 +171,7 @@
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="{StaticResource RoomAgentSlotHeight}" />
                                 </Grid.RowDefinitions>
-                                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                     <TabPanel IsItemsHost="True" KeyboardNavigation.TabNavigation="Once" />
                                 </ScrollViewer>
                             </Grid>
@@ -190,6 +197,7 @@
         </Setter>
     </Style>
     <Style x:Key="SectionTabs" TargetType="TabControl">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabControl">
@@ -210,6 +218,7 @@
     <Style x:Key="SectionTab" TargetType="TabItem">
         <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
         <Setter Property="Padding" Value="14,6" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
@@ -236,6 +245,7 @@
     </Style>
     <Style x:Key="RoomPage" TargetType="TabItem">
         <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="BorderBrush" Value="{x:Null}" />
         <Setter Property="Padding" Value="10,5" />
         <Setter Property="MinHeight" Value="33" />

@@ -101,8 +101,8 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
                                     <TextBlock Text="和伙伴聊聊" Foreground="{StaticResource Pine}" FontWeight="SemiBold" Margin="0,0,0,7" />
-                                    <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                                                  HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                                    <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" Style="{StaticResource PageScrollViewer}"
+                                                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                         <StackPanel>
                                             <TextBlock x:Name="TimelineHint"
                                                        Foreground="{StaticResource MutedInk}" TextWrapping="Wrap" Margin="0,0,0,6">
@@ -116,7 +116,7 @@
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
-                                            <ItemsControl x:Name="Timeline" />
+                                            <ItemsControl x:Name="Timeline" Focusable="False" />
                                             <Border x:Name="DecisionPanel" Background="#E8EDDC" CornerRadius="5" Padding="10" Margin="0,4,0,6" Visibility="Collapsed">
                                                 <StackPanel>
                                                     <ComboBox x:Name="DecisionPicker" DisplayMemberPath="Title" SelectedValuePath="Id"
@@ -232,8 +232,8 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </DockPanel>
-                        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0,0,7,0">
-                            <ItemsControl x:Name="WorkDetails" />
+                        <ScrollViewer Grid.Column="1" Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto" Padding="0,0,7,0">
+                            <ItemsControl x:Name="WorkDetails" Focusable="False" />
                         </ScrollViewer>
                     </Grid>
                 </DockPanel>
@@ -254,8 +254,8 @@
                             <Button x:Name="AdoptMilestoneButton" Tag="adopt" Content="采纳计划" Click="MilestoneClicked" />
                             <Button x:Name="DeferMilestoneButton" Tag="defer" Content="暂缓计划" Click="MilestoneClicked" />
                         </WrapPanel>
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <ItemsControl x:Name="MilestoneDetails" />
+                        <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="MilestoneDetails" Focusable="False" />
                         </ScrollViewer>
                     </DockPanel>
                 </Grid>
@@ -267,8 +267,8 @@
                         <Button x:Name="HistoryOlderButton" Content="查看更早记录" Click="OlderHistoryClicked" />
                     </WrapPanel>
                     <TextBlock x:Name="HistoryStatus" DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" />
-                    <ScrollViewer x:Name="HistoryScroll" VerticalScrollBarVisibility="Auto" Focusable="False">
-                        <ItemsControl x:Name="HistoryEntries" />
+                    <ScrollViewer x:Name="HistoryScroll" Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="HistoryEntries" Focusable="False" />
                     </ScrollViewer>
                 </DockPanel>
             </TabItem>
@@ -354,7 +354,7 @@
             </TabItem>
             <TabItem x:Name="PluginsPage" Header="插件中心" Tag="&#xEA86;" Style="{StaticResource RoomPage}"
                      BorderBrush="{StaticResource PaperEdge}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <Border CornerRadius="9" BorderThickness="1" BorderBrush="#335C43" Background="{StaticResource Pine}">
                             <Grid ClipToBounds="True">
@@ -512,7 +512,7 @@
             <TabItem x:Name="SettingsPage" Header="设置" Tag="&#xE713;" Style="{StaticResource RoomPage}">
                 <TabControl x:Name="SettingsTabs" Style="{StaticResource SectionTabs}" SelectionChanged="SaveViewSelected">
                     <TabItem x:Name="LaunchSettingsTab" Header="游戏启动" Style="{StaticResource SectionTab}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
                             <StackPanel x:Name="SettingsFields" Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock Text="游戏目录" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <DockPanel>
@@ -538,7 +538,7 @@
                         </ScrollViewer>
                     </TabItem>
                     <TabItem x:Name="ModelSettingsTab" Header="模型连接" Style="{StaticResource SectionTab}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
                             <StackPanel x:Name="ApiModelFields" Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock Text="模型服务商" FontWeight="SemiBold" Margin="0,0,0,6" />
                                 <ComboBox x:Name="ApiProvider" SelectedValuePath="Id" DisplayMemberPath="Name" SelectionChanged="ApiProviderSelected"
@@ -590,7 +590,7 @@
                         </ScrollViewer>
                     </TabItem>
                     <TabItem x:Name="ProfileSettingsTab" Header="存档偏好" Style="{StaticResource SectionTab}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock x:Name="ProfileFeedback" TextWrapping="Wrap" Margin="0,0,0,8" />
                                 <Button x:Name="ReadProfileButton" Content="重新读取存档偏好" HorizontalAlignment="Left" Click="ReadProfileClicked" Visibility="Collapsed" />
@@ -658,8 +658,8 @@
                                 HorizontalAlignment="Left" />
                         <TextBlock x:Name="UsageStatus" TextWrapping="Wrap" Foreground="#537261" Margin="0,4,0,0" />
                     </StackPanel>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="UsageEntries" AutomationProperties.Name="模型用量汇总" />
+                    <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="UsageEntries" AutomationProperties.Name="模型用量汇总" Focusable="False" />
                     </ScrollViewer>
                 </DockPanel>
             </TabItem>

@@ -220,6 +220,10 @@ $app = Get-Process -Id $run.DesktopProcessId
 try {
     Wait-Check { $app.Refresh(); $app.MainWindowHandle -ne 0 } 'Packaged WPF did not start.' 30
     $mainHwnd = $app.MainWindowHandle
+    Wait-Check {
+        $initialTab = Find-Ui 'CommandPage'
+        $initialTab -and $initialTab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected
+    } 'Packaged WPF did not open on Today.'
     Select-Tab 'PluginsPage'
     if (Find-Ui 'BrowsePluginCatalog') {
         Click 'BrowsePluginCatalog'
