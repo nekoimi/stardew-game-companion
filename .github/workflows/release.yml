@@ -131,8 +131,7 @@ jobs:
             throw "Tag '$tag' already points to another commit. Select its commit or use a new tag."
           }
 
-          $title = "星露谷游戏伴侣 $tag - Windows x64"
-          $releaseArgs = @('--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--generate-notes', '--title', $title)
+          $releaseArgs = @('--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--generate-notes', '--title', $tag)
           if ($tagSha) { $releaseArgs += '--verify-tag' }
           if ($env:RELEASE_PRERELEASE -eq 'true') { $releaseArgs += '--prerelease' }
           gh release create @releaseArgs -- $tag $archive "$archive.sha256"

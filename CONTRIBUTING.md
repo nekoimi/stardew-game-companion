@@ -28,7 +28,7 @@ pwsh -File packaging/windows/export-build-references.ps1 -GamePath '<SMAPI 游�
 
 发布工作流合并到默认分支后，在「Actions → Release Windows → Run workflow」选择要构建的 Git 引用。`tag` 留空时生成 `v<VERSION>-dev.<北京时间日期>.<运行编号>.<重跑次数>`，例如 `v0.1.0-dev.20261123.42.1`，并标记为预发布；每次新运行或重跑构建都会生成不同标签。手填时使用指定标签，可以新建或复用指向同一提交的标签，已有 Release 保持原样。
 
-Release 展示名称为「星露谷游戏伴侣 <tag> - Windows x64」，下载包名为 `StardewGameCompanion-<VERSION>-windows-x64.zip`，并附带同名 `.sha256`。包名、程序集和 Mod 版本统一读取 `VERSION`，预发布构建由所属 Release 的标签区分。
+Release 展示名称直接使用标签，例如 `v0.1.0-dev.20261123.2.1`。下载包名为 `StardewGameCompanion-<VERSION>-windows-x64.zip`，并附带同名 `.sha256`。包名、程序集和 Mod 版本统一读取 `VERSION`，预发布构建由所属 Release 的标签区分。
 
 ## 开发与测试
 
