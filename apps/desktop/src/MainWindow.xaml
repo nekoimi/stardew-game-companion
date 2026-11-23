@@ -409,7 +409,7 @@
                                             <Setter Property="Template">
                                                 <Setter.Value>
                                                     <ControlTemplate TargetType="ListBoxItem">
-                                                        <Border x:Name="Card" Background="{StaticResource Paper}" CornerRadius="7"
+                                                        <Border x:Name="Card" Background="{StaticResource Paper}" CornerRadius="7" Cursor="Hand"
                                                                 BorderBrush="{StaticResource PaperEdge}" BorderThickness="1" Padding="{TemplateBinding Padding}">
                                                             <ContentPresenter />
                                                         </Border>
@@ -478,10 +478,17 @@
                                             </StackPanel>
                                         </Border>
                                         <Border BorderThickness="0,1,0,0" BorderBrush="#EADFC9" Padding="14,10">
-                                            <ToggleButton x:Name="PluginAutoStart" Content="随伴侣程序自动启动"
-                                                          AutomationProperties.Name="随伴侣程序自动启动"
-                                                          Style="{StaticResource PluginSwitch}"
-                                                          Checked="PluginAutoStartChanged" Unchecked="PluginAutoStartChanged" />
+                                            <Grid MinHeight="26">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="随伴侣程序自动启动" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,8,0" />
+                                                <ToggleButton x:Name="PluginAutoStart" Grid.Column="1" VerticalAlignment="Center"
+                                                              AutomationProperties.Name="随伴侣程序自动启动"
+                                                              Style="{StaticResource PluginSwitch}"
+                                                              Checked="PluginAutoStartChanged" Unchecked="PluginAutoStartChanged" />
+                                            </Grid>
                                         </Border>
                                         <Border BorderThickness="0,1,0,0" BorderBrush="#EADFC9" Padding="8,5">
                                             <WrapPanel>

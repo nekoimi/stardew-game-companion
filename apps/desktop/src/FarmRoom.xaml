@@ -75,17 +75,16 @@
         <Setter Property="Margin" Value="0" />
     </Style>
     <Style x:Key="PluginSwitch" TargetType="ToggleButton">
+        <Setter Property="Width" Value="42" />
+        <Setter Property="Height" Value="24" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
-                    <DockPanel Background="Transparent" MinHeight="26">
-                        <Border x:Name="Track" DockPanel.Dock="Right" Width="42" Height="24" Padding="2"
-                                CornerRadius="12" BorderThickness="1" BorderBrush="#847763" Background="#E7DDC9">
-                            <Ellipse x:Name="Thumb" Width="18" Height="18" HorizontalAlignment="Left" Fill="#FFFAF0" />
-                        </Border>
-                        <ContentPresenter VerticalAlignment="Center" />
-                    </DockPanel>
+                    <Border x:Name="Track" Padding="2" CornerRadius="12" BorderThickness="1"
+                            BorderBrush="#847763" Background="#E7DDC9">
+                        <Ellipse x:Name="Thumb" Width="18" Height="18" HorizontalAlignment="Left" Fill="#FFFAF0" />
+                    </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="Track" Property="Background" Value="{StaticResource Pine}" />
@@ -211,12 +210,11 @@
     <Style x:Key="SectionTab" TargetType="TabItem">
         <Setter Property="Foreground" Value="{StaticResource MutedInk}" />
         <Setter Property="Padding" Value="14,6" />
-        <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
                     <Border x:Name="Surface" Padding="{TemplateBinding Padding}" Margin="0,0,4,0"
-                            Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6">
+                            Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6" Cursor="Hand">
                         <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" />
                     </Border>
                     <ControlTemplate.Triggers>
@@ -241,7 +239,6 @@
         <Setter Property="BorderBrush" Value="{x:Null}" />
         <Setter Property="Padding" Value="10,5" />
         <Setter Property="MinHeight" Value="33" />
-        <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
@@ -249,7 +246,7 @@
                         <Border x:Name="GroupDivider" Height="1" Margin="3,7,3,8"
                                 Background="{TemplateBinding BorderBrush}" IsHitTestVisible="False" />
                         <Border x:Name="Surface" Padding="{TemplateBinding Padding}" Margin="0,0,0,2"
-                                Background="Transparent" BorderThickness="1" BorderBrush="Transparent" CornerRadius="6">
+                                Background="Transparent" BorderThickness="1" BorderBrush="Transparent" CornerRadius="6" Cursor="Hand">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                            Width="23" VerticalAlignment="Center" />
