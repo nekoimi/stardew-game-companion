@@ -18,8 +18,11 @@ export async function startDesktopService(
   runDirectory: string, secret: string, stopFile: string, ownerPid: number, modelTestOnly = false,
 ): Promise<void> {
   if (!secret || !stopFile || !Number.isSafeInteger(ownerPid) || ownerPid < 1) throw new Error("Invalid desktop launch parameters");
+  const diagnostic = (event: string, details: JsonObject = {}) =>
+    process.stderr.write("STARDEW_COMPANION_LOG " + JSON.stringify({ event, ...details }) + "\n");
   const game = new GameConnection(runDirectory);
-  const store = modelTestOnly ? undefined : new CompanionStore(join(runDirectory, "..", "..", "data", "companion.sqlite"));
+  const store = modelTestOnly ? undefined : new CompanionStore(join(runDirectory, "..", "..", "data", "companion.sqlite"),
+    () => { diagnostic("receipt_retention_failed"); });
   const provider = new PiModelAdapter();
   const streams = new Set<ServerResponse>();
   const events: { id: number; data: string }[] = [];
@@ -31,8 +34,6 @@ export async function startDesktopService(
   let sequence = 0;
   let lastStatus = "";
   let activeGameId: string | undefined;
-  const diagnostic = (event: string, details: JsonObject = {}) =>
-    process.stderr.write("STARDEW_COMPANION_LOG " + JSON.stringify({ event, ...details }) + "\n");
   const publish = (type: string, payload: JsonObject) => {
     if (type === "submitted" || type === "life.chat.reply" || type === "result") trace?.(type, payload);
     if (type === "result") {

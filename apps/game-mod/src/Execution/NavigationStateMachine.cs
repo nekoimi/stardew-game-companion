@@ -119,6 +119,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
         {
             result["reason"] = failure?.Message ?? "No reachable route";
             result["reasonCode"] = failure?.ReasonCode ?? "NO_ROUTE";
+            if (failure?.Details is { } details) result["details"] = details;
         }
         else
         {

@@ -8,17 +8,20 @@ import { modelResponseTimeout, object } from "./model.js";
 import type { JsonObject, JsonValue, ModelContext, ModelEvent, ModelMessage, ModelSelection } from "./model.js";
 import { PluginCommandError, pluginAction } from "./plugin-command.js";
 import type { PluginCommand, PluginRequest } from "./plugin-command.js";
+import { actionEvidence } from "./work-feedback.js";
 
 type Complete = Extract<ModelEvent, { type: "done" }>;
 interface Turn {
   id: string;
   requestId: string;
   originalRequestId: string;
+  appliedRequestId: string;
   goalId: string;
   binding: GameBinding;
   abort: AbortController;
   nativeAction?: string;
   nativeSkill?: string;
+  phase?: string;
   additional: { requestId: string; text: string }[];
   requests: string[];
   settled: Promise<void>;
@@ -98,7 +101,7 @@ export class TurnRunner {
       paused: this.game.state.paused === true, interrupting: this.transition || this.game.state.interrupting === true,
       recoveryPending: !!this.uncertain || this.game.state.recoveryPending === true,
       activeCommandId: this.active?.nativeAction ?? "", activity: this.game.state.activity ?? "idle",
-      activeSkillId: this.active?.nativeSkill ?? "",
+      activeSkillId: this.active?.nativeSkill ?? "", agentPhase: this.phase(),
       progress: this.game.state.progress ?? "", clockPauseOwner: this.game.state.clockPauseOwner ?? null,
       thinking: !!this.active && !this.active.nativeAction && !this.active.abort.signal.aborted,
       modelStreaming: this.selection?.stream !== false,
@@ -119,15 +122,31 @@ export class TurnRunner {
       skillId: receipt.skillId ?? "", terminalState: receipt.terminalState ?? "unknown",
       completedCount: receipt.completedCount ?? null, skippedCount: receipt.skippedCount ?? null, failedCount: receipt.failedCount ?? null,
       error: { code: object(receipt.error).code ?? "" }, playerActionRequired: receipt.playerActionRequired === true,
-      workContext: receipt.workContext ?? {},
+      workContext: receipt.workContext ?? {}, evidence: receipt.evidence ?? actionEvidence(receipt),
+      recordedAt: receipt.recordedAt ?? null,
     })) ?? [];
     return { mode: this.store?.profile(save).initiativeMode ?? "command", paused: this.game.state.paused === true,
       goal: current?.text ?? null, currentGoalId: current?.id ?? null, activeGoals: goals, recentExecutions: details,
       recentTodos: this.store?.items(save, "todos").slice(-8) ?? [],
       playerDecisions: this.store?.items(save, "decisions").filter(item => item.status === "pending") ?? [],
-      activity: { phase: this.active ? "executing" : current ? "waiting" : "idle",
+      activity: { phase: this.phase(),
         skillId: this.active?.nativeSkill ?? "", goalId: this.active?.goalId ?? "",
         summary: current?.summary ?? "", nextStep: "" } };
+  }
+
+  private phase(): string {
+    if (this.uncertain || this.game.state.recoveryPending === true) return "unresolved";
+    if (this.transition || this.game.state.interrupting === true) return "stopping";
+    if (this.game.actorMode === "player" && this.game.state.controlOwner !== "agent") return "player-control";
+    if (this.game.state.paused === true) return "paused";
+    if (this.active?.phase === "reconciling") return "reconciling";
+    if (this.active?.nativeAction) {
+      return this.game.state.activeCommandId === this.active.nativeAction
+        ? String(this.game.state.actionPhase ?? "executing") : "waiting-game";
+    }
+    if (this.active) return "thinking";
+    if (this.game.binding && this.store?.items(this.game.binding.saveId, "decisions").some(row => row.status === "pending")) return "needs-player";
+    return "idle";
   }
 
   changed(): void {
@@ -338,7 +357,7 @@ export class TurnRunner {
   private startTurn(binding: GameBinding, requestId: string, goalId: string, text: string, autonomous = false,
                     originalRequestId = requestId, bedtimeOnly = false, plugin?: PluginCommand): void {
     if (!this.model) return;
-    const turn: Turn = { id: randomUUID(), requestId, originalRequestId, goalId, binding, abort: new AbortController(), additional: [],
+    const turn: Turn = { id: randomUUID(), requestId, originalRequestId, appliedRequestId: requestId, goalId, binding, abort: new AbortController(), additional: [],
       requests: [requestId], settled: Promise.resolve(), plugin };
     this.active = turn;
     if (plugin) {
@@ -466,6 +485,12 @@ export class TurnRunner {
 
   async control(binding: GameBinding, action: string, goalId?: string): Promise<JsonObject> {
     this.assertBinding(binding);
+    if (action === "observe") {
+      const observation = await this.game.observe();
+      this.assertBinding(binding);
+      this.changed();
+      return { observation };
+    }
     if (this.transition && action !== "takeover") throw new Error("请等待旧动作停止。");
     if (action === "takeover") this.active?.abort.abort();
     if (action === "cancel") {
@@ -510,7 +535,10 @@ export class TurnRunner {
           await this.game.control("unhold");
           this.assertBinding(binding);
         }
-        this.publish("recovery", { ...binding, hasReceipt: confirmedActionId !== undefined });
+        const confirmed = confirmedActionId ? this.store?.recentReceipts(binding.saveId, 40)
+          .find(row => row.commandId === confirmedActionId && row.gameSessionId === binding.gameSessionId) : undefined;
+        this.publish("recovery", { ...binding, hasReceipt: confirmedActionId !== undefined,
+          ...(confirmed ? { receipt: confirmed } : {}) });
         return result;
       } finally {
         this.transition = false;
@@ -565,6 +593,7 @@ export class TurnRunner {
       const arrived = turn.additional.splice(0);
       for (const item of arrived) {
         messages.push({ role: "user", text: item.text });
+        turn.appliedRequestId = item.requestId;
         this.trace?.("player-update", { turnId: turn.id, requestId: item.requestId, text: item.text });
       }
       return arrived.length > 0;
@@ -742,8 +771,10 @@ export class TurnRunner {
   }
 
   private settleReceipt(binding: GameBinding, actionId: string, receipt: JsonObject): void {
-    const recorded = { ...receipt, gameDate: gameDate(this.game.snapshot), gameSessionId: binding.gameSessionId,
-      workContext: this.store?.actionContext(binding, actionId) ?? {} };
+    const context = this.store?.actionContext(binding, actionId) ?? {};
+    const recorded = { ...receipt, gameDate: context.gameDate ?? receipt.gameDate ?? "", gameSessionId: binding.gameSessionId,
+      recordedAt: new Date().toISOString(), evidence: actionEvidence(receipt),
+      workContext: context };
     if (!this.store || this.store.recordReceipt(binding, actionId, recorded)) {
       this.publish("result", { ...recorded, ...binding });
     }
@@ -762,11 +793,14 @@ export class TurnRunner {
     try {
       if (!observation) this.store?.beginAction(turn.binding, actionId, turn.plugin?.internalId, {
         goalId: turn.goalId, requestId: turn.originalRequestId, locationId: parameters.locationId ?? "",
-        target: parameters.tile ?? parameters.tiles ?? null,
+        target: parameters.tile ?? parameters.tiles ?? parameters.chestTile ?? null,
+        gameDate: gameDate(this.game.snapshot), turnId: turn.id, triggerRequestId: turn.appliedRequestId,
       });
       let receipt: JsonObject | undefined;
       try { receipt = await this.game.execute(actionId, turn.id, skill, parameters); }
       catch {
+        turn.phase = "reconciling";
+        this.changed();
         try {
           this.assertBinding(turn.binding);
           receipt = await this.game.queryAction(actionId);
@@ -784,6 +818,6 @@ export class TurnRunner {
       this.assertBinding(turn.binding);
       if (!observation) this.settleReceipt(turn.binding, actionId, receipt);
       return receipt;
-    } finally { turn.nativeAction = undefined; turn.nativeSkill = undefined; this.changed(); }
+    } finally { turn.nativeAction = undefined; turn.nativeSkill = undefined; turn.phase = undefined; this.changed(); }
   }
 }

@@ -76,7 +76,7 @@ public class CompanionMechanicsCoordinatorTests
         Assert.True(coordinator.TryAcceptSkillExecute(work, workEnvelope, out _));
         coordinator.ActiveMachine!.RequestPause();
         var query = work with { CommandId = "route-query", TaskId = "route-query-task", SkillId = "inspect-route",
-            Parameters = new WaterZoneParameters("Farm") { Tile = new(100, 100) } };
+            Parameters = new WaterZoneParameters("Farm") { Tile = new(1000, 1000) } };
         var queryEnvelope = CreateEnvelope("skill.execute", "query-message");
         Assert.True(coordinator.TryAcceptSkillExecute(query, queryEnvelope, out _));
         Assert.Null(coordinator.LastSkillResultPayload);
@@ -112,7 +112,7 @@ public class CompanionMechanicsCoordinatorTests
         Assert.Equal("succeeded", result.TerminalState);
         var route = Assert.IsType<Dictionary<string, object>>(result.Details!["route"]);
         Assert.Equal(true, route["reachable"]);
-        Assert.Equal(29, route["walkingTiles"]);
+        Assert.Equal(30, route["walkingTiles"]);
         Assert.Equal(new TileCoordinate(10, 10), actor.Tile);
         Assert.Null(coordinator.ActiveMachine);
     }

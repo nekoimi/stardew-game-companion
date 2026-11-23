@@ -159,8 +159,10 @@
                                         <Border x:Name="ActionFeedbackPanel" Background="#E8EDDC" CornerRadius="5" Padding="9,6" Margin="0,5,0,3" Visibility="Collapsed">
                                             <DockPanel>
                                                 <Button Content="查看工作" DockPanel.Dock="Right" Click="OpenWorkClicked" FontSize="12" Padding="6,2" MinHeight="25" Margin="7,0,0,0" />
+                                                <Button x:Name="RecentRecoverButton" Content="核对旧动作" Tag="recover" DockPanel.Dock="Right" Click="ControlClicked" FontSize="12" Padding="6,2" MinHeight="25" Margin="7,0,0,0" Visibility="Collapsed" />
+                                                <Button x:Name="RecentObserveButton" Content="重新查看" DockPanel.Dock="Right" Click="ObserveRecentClicked" ToolTip="刷新游戏观察，不会重新执行上一项操作" FontSize="12" Padding="6,2" MinHeight="25" Margin="7,0,0,0" />
                                                 <StackPanel>
-                                                    <TextBlock Text="最近进展" FontSize="11" Foreground="{StaticResource MutedInk}" />
+                                                    <TextBlock x:Name="ActionFeedbackCaption" Text="最近进展" FontSize="11" TextWrapping="Wrap" Foreground="{StaticResource MutedInk}" />
                                                     <TextBlock x:Name="ActionFeedbackText" FontSize="12" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                                                 </StackPanel>
                                             </DockPanel>

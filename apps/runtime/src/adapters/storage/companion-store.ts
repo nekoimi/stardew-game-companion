@@ -19,8 +19,9 @@ function decode<T>(row: Record<string, unknown> | undefined, fallback: T): T {
 
 export class CompanionStore {
   private readonly db: DatabaseSync;
+  private receiptWrites = 0;
 
-  constructor(path: string) {
+  constructor(path: string, private readonly maintenanceFailed?: () => void) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(`
@@ -39,6 +40,7 @@ export class CompanionStore {
         seq INTEGER PRIMARY KEY, save_id TEXT NOT NULL, game_id TEXT NOT NULL, action_id TEXT NOT NULL, value TEXT NOT NULL,
         UNIQUE(save_id, game_id, action_id)
       );
+      CREATE INDEX IF NOT EXISTS receipts_save_seq ON receipts(save_id, seq DESC);
       CREATE TABLE IF NOT EXISTS usage (
         save_id TEXT NOT NULL, request_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
         day TEXT NOT NULL, value TEXT, PRIMARY KEY(save_id, request_id)
@@ -57,11 +59,13 @@ export class CompanionStore {
       CREATE TABLE IF NOT EXISTS plugin_actions (
         internal_id TEXT NOT NULL, action_id TEXT NOT NULL, PRIMARY KEY(internal_id, action_id)
       );
+      CREATE INDEX IF NOT EXISTS plugin_actions_action ON plugin_actions(action_id);
       CREATE TABLE IF NOT EXISTS action_contexts (
         save_id TEXT NOT NULL, game_id TEXT NOT NULL, action_id TEXT NOT NULL, value TEXT NOT NULL,
         PRIMARY KEY(save_id, game_id, action_id)
       );
     `);
+    for (const row of this.db.prepare("SELECT DISTINCT save_id FROM receipts").all()) this.maintainReceipts(String(row.save_id));
   }
 
   close(): void { this.db.close(); }
@@ -305,6 +309,7 @@ export class CompanionStore {
   }
 
   recordReceipt(binding: GameBinding, actionId: string, receipt: JsonObject): boolean {
+    let inserted = false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const { changes } = this.db.prepare("INSERT OR IGNORE INTO receipts(save_id, game_id, action_id, value) VALUES (?, ?, ?, ?)")
@@ -312,7 +317,45 @@ export class CompanionStore {
       this.db.prepare("DELETE FROM unsettled_actions WHERE save_id = ? AND game_id = ? AND action_id = ?")
         .run(binding.saveId, binding.gameSessionId, actionId);
       this.db.exec("COMMIT");
-      return changes === 1;
+      inserted = changes === 1;
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    if (inserted && ++this.receiptWrites % 128 === 0) this.maintainReceipts(binding.saveId);
+    return inserted;
+  }
+
+  private maintainReceipts(save: string): void {
+    try { this.pruneReceipts(save); }
+    catch { this.maintenanceFailed?.(); } // Cleanup cannot invalidate a committed native receipt.
+  }
+
+  /** Keep recent evidence plus unresolved, plugin-referenced and active-goal evidence.
+   * Freed SQLite pages are reused; no blocking VACUUM on the live game connection. */
+  pruneReceipts(save: string, retain = 2000): number {
+    if (!Number.isSafeInteger(retain) || retain < 1) throw new Error("回执保留数量无效。");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const { changes } = this.db.prepare(`DELETE FROM receipts AS r WHERE r.save_id = ?
+        AND json_extract(r.value, '$.terminalState') IN ('succeeded', 'partially-succeeded', 'partial', 'cancelled', 'failed', 'rejected')
+        AND r.seq NOT IN (SELECT seq FROM receipts WHERE save_id = ? ORDER BY seq DESC LIMIT ?)
+        AND NOT EXISTS (SELECT 1 FROM unsettled_actions u
+          WHERE u.save_id = r.save_id AND u.game_id = r.game_id AND u.action_id = r.action_id)
+        AND NOT EXISTS (SELECT 1 FROM plugin_actions p WHERE p.action_id = r.action_id)
+        AND NOT EXISTS (SELECT 1 FROM action_contexts c
+          JOIN save_sections s ON s.save_id = c.save_id AND s.name = 'goals'
+          JOIN json_each(s.value) g
+          WHERE c.save_id = r.save_id AND c.game_id = r.game_id AND c.action_id = r.action_id
+            AND json_extract(g.value, '$.status') = 'active'
+            AND json_extract(g.value, '$.id') = json_extract(c.value, '$.goalId'))`)
+        .run(save, save, retain);
+      this.db.prepare(`DELETE FROM action_contexts AS c WHERE c.save_id = ?
+        AND NOT EXISTS (SELECT 1 FROM receipts r
+          WHERE r.save_id = c.save_id AND r.game_id = c.game_id AND r.action_id = c.action_id)
+        AND NOT EXISTS (SELECT 1 FROM unsettled_actions u
+          WHERE u.save_id = c.save_id AND u.game_id = c.game_id AND u.action_id = c.action_id)
+        AND NOT EXISTS (SELECT 1 FROM plugin_actions p WHERE p.action_id = c.action_id)`)
+        .run(save);
+      this.db.exec("COMMIT");
+      return Number(changes);
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 

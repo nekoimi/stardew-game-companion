@@ -18,6 +18,7 @@
 - [桌面插件宿主协议](../../contracts/plugin-host/README.md)
 - [通用参考插件与绿色包验收](../../examples/plugins/README.md)
 - [固定的隔离实机回归](repeatable-companion-acceptance.md)
+- [执行可靠性与工作反馈优化进度](work-reliability-optimization.md)
 - [运行时提示词](../../resources/agent/prompts/agent-ts-instructions.md)与[游戏指导](../../resources/agent/prompts/agent-guidance)
 - [TypeScript 运行时方案](agent-runtime-rewrite.md)
 - [改造进度](agent-runtime-rewrite-todo.md)与[发行验收](agent-runtime-rewrite-phase3.md)

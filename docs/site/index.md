@@ -16,7 +16,7 @@ hero:
       link: https://github.com/nekoimi/stardew-game-companion
 features:
   - title: 自然语言交代工作
-    details: 聊天、补充约定、暂停或改派。根据游戏观察和动作回执持续推进目标。
+    details: 聊天、补充约定、暂停或改派。查看思考、寻路和执行状态，根据实际游戏回执持续推进目标。
   - title: 伙伴帮忙，也能交给 AI
     details: 独立伙伴拥有自己的背包、工具和体力；AI 自玩模式可以随时按 F9 接管。
   - title: 模型由你选择

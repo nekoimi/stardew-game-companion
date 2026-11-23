@@ -59,7 +59,11 @@ public sealed class ReachableRoutePlanner
         {
             var failure = new RouteFailure("DESTINATION_UNREACHABLE", "Requested standing tile is blocked or a map transition trigger. Choose an observed walkable standing tile; an adjacent arrival is not exact arrival.",
                 new Dictionary<string, object> { ["blockedSide"] = "destination", ["locationId"] = targetLocation,
-                    ["requestedTile"] = target, ["exactArrivalRequired"] = true });
+                    ["requestedTile"] = target, ["exactArrivalRequired"] = true,
+                    ["standingCandidates"] = target.CardinalNeighbors().Where(tile =>
+                        !IsTrigger(targetLocation, tile) && _observer.IsTilePassable(targetLocation, tile)
+                        && !_observer.IsPlayerOnTile(targetLocation, tile)).ToArray(),
+                    ["candidateScope"] = "standable-only; inspect-route must confirm reachability before dispatch" });
             search.Result = new RouteSearchResult(null, failure);
             yield break;
         }
@@ -88,7 +92,7 @@ public sealed class ReachableRoutePlanner
                 var final = finalSearch.Result;
                 if (final.Success)
                 {
-                    int total = cost + Math.Max(0, final.Steps.Count - 1);
+                    int total = cost + WalkingTiles(final, node.State.Tile);
                     if (best is null || total < best.WalkingTiles)
                     {
                         var edges = new List<MapEdge>();
@@ -100,6 +104,13 @@ public sealed class ReachableRoutePlanner
                         }
                         edges.Reverse();
                         best = new ReachableRoute(edges, total, final.Steps[^1].Tile);
+                        // A directly reachable same-map destination needs no tour
+                        // of unrelated exits. Blocked direct paths still try detours.
+                        if (edges.Count == 0)
+                        {
+                            search.Result = new RouteSearchResult(best, null);
+                            yield break;
+                        }
                     }
                 }
                 else destinationFailures.Add((node.Name, node.State.Tile));
@@ -107,6 +118,9 @@ public sealed class ReachableRoutePlanner
             foreach (var edge in _graph.GetOutgoingEdges(node.Name))
             {
                 yield return null;
+                int lowerBound = Math.Abs(node.State.Tile.X - edge.SourceTile.X)
+                    + Math.Abs(node.State.Tile.Y - edge.SourceTile.Y);
+                if (best is not null && cost + lowerBound >= best.WalkingTiles) continue;
                 if (!_graph.CheckEdgeTraversable(edge, time, farmer, out var blocked, out _))
                 {
                     // Only a reachable entrance into the requested destination can
@@ -133,7 +147,7 @@ public sealed class ReachableRoutePlanner
                     arrivalFailures.Add(new EdgeAttempt(edge, node.Name, node.State.Tile));
                     continue;
                 }
-                int nextCost = cost + Math.Max(0, walk.Steps.Count - 1) + 1;
+                int nextCost = cost + WalkingTiles(walk, node.State.Tile) + 1;
                 var next = Key(edge.TargetLocation, arrival);
                 if (costs.TryGetValue(next, out int old) && old <= nextCost) continue;
                 costs[next] = nextCost;
@@ -155,6 +169,9 @@ public sealed class ReachableRoutePlanner
         search.Result = new RouteSearchResult(best, best is not null ? null : ClassifyFailure(location, start, targetLocation, queue.Count > 0,
             unavailable, exitFailures, arrivalFailures, firstLockReason, target, destinationFailures, blocking));
     }
+
+    private static int WalkingTiles(PathResult path, TileCoordinate start) =>
+        path.Steps.Count == 1 && path.Steps[0].Tile == start ? 0 : path.Steps.Count;
 
     private RouteFailure ClassifyFailure(string location, TileCoordinate start, string targetLocation,
         bool searchLimitExceeded, string? unavailable,

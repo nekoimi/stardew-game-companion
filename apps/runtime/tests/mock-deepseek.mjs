@@ -44,6 +44,25 @@ export async function createMockDeepSeek(plan) {
       return res.end("data: [DONE]\n\n");
     }
     else if (plan) ({ name, args } = plan(body));
+    else if (user === "等到明天再确认农场情况") {
+      if (last.role === "user") {
+        name = "manage_arrangements";
+        args = { change: { manage_goal: { action: "add", text: user } } };
+      } else if (body.messages.findLast(item => item.tool_calls)?.tool_calls[0].function.arguments.includes('"manage_goal"')) {
+        name = "manage_arrangements";
+        args = { change: { set_goal_continuation: { status: "wait", reason: "等到明天再确认农场情况", next_day: true } } };
+      }
+    }
+    else if (user === "现在回床睡觉") {
+      if (last.role === "user") { name = "submit_work"; args = { action: { sleep: {} } }; }
+    }
+    else if (user.startsWith("继续当前目标：等到明天再确认农场情况")) {
+      if (last.role === "user") name = "get_status";
+      else if (body.messages.findLast(item => item.tool_calls)?.tool_calls[0].function.name === "get_status") {
+        name = "manage_arrangements";
+        args = { change: { manage_goal: { action: "complete", summary: "已读取次日农场观察" } } };
+      }
+    }
     else if (user.includes("记住今日目标") && last.role === "user") {
       name = "manage_arrangements";
       args = { change: { manage_goal: { action: "add", text: "今天先照料田地", summary: "等玩家交代范围" } } };

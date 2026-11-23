@@ -7,6 +7,7 @@ import { setTimeout } from "node:timers/promises";
 import { test } from "node:test";
 import { TurnRunner } from "../dist/application/turn-runner.js";
 import { CompanionStore } from "../dist/adapters/storage/companion-store.js";
+import { actionEvidence } from "../dist/application/work-feedback.js";
 
 const binding = { saveId: "farm", gameSessionId: "game" };
 const action = { id: "model-action", name: "submit_work", arguments: {
@@ -31,6 +32,7 @@ class FakeGame extends EventEmitter {
 
 test("work feedback preserves native evidence and bound goals without per-action completion reminders", async () => {
   const shared = JSON.parse(readFileSync(new URL("../../../contracts/desktop-api/examples/work-feedback.json", import.meta.url), "utf8"));
+  for (const receipt of shared.receipts) assert.deepEqual(actionEvidence(receipt), receipt.evidence ?? { quantities: [] });
   const receipts = ["water", "timeout", "pickup"].map(id => shared.receipts.find(row => row.commandId === id));
   const store = new CompanionStore(":memory:");
   store.updateProfile(binding.saveId, { onboarded: true, careFrequency: "chatty" }, 0);
@@ -66,7 +68,59 @@ test("work feedback preserves native evidence and bound goals without per-action
     assert.ok(work.recentExecutions.every(row => row.gameSessionId === binding.gameSessionId && row.commandId && !Object.hasOwn(row, "taskTitle")));
     assert.deepEqual(work.recentExecutions[1].workContext.target, { x: 12, y: 8 });
     assert.equal(work.recentExecutions[2].error.code, "no-item");
+    assert.deepEqual(work.recentExecutions[2].evidence, receipts[2].evidence);
+    assert.ok(work.recentExecutions.every(row => row.workContext.turnId && row.workContext.triggerRequestId === "work-request" && row.recordedAt));
     assert.ok(events.some(event => event.type === "status" && event.payload.activeSkillId === "water-zone"));
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("observation and recovery query actual state without executing or handing control back", async () => {
+  const game = new FakeGame();
+  game.nativeResult = () => { throw new Error("missing receipt"); };
+  const { runner, events } = fixture(game, { async *generate() { yield done([action]); } });
+  try {
+    await runner.submit(binding, "missing", "走到出口", "send");
+    await waitFor(() => runner.status().recoveryPending);
+    assert.equal(runner.status().agentPhase, "unresolved");
+    const executed = game.executed.length;
+    game.state.controlOwner = "human";
+    const observed = await runner.control(binding, "observe");
+    assert.deepEqual(observed.observation, game.snapshot);
+    assert.equal(game.executed.length, executed);
+    assert.equal(runner.status().recoveryPending, true);
+    game.recovered = { commandId: game.executed[0], skillId: "navigate-to", terminalState: "partially-succeeded", completedCount: 1 };
+    await runner.control(binding, "recover");
+    assert.equal(runner.status().recoveryPending, false);
+    assert.equal(runner.status().agentPhase, "player-control");
+    assert.ok(!game.controls.includes("handoff"));
+    assert.ok(events.some(event => event.type === "status" && event.payload.agentPhase === "reconciling"));
+  } finally { await runner.stop(); }
+});
+
+test("messages received during an action apply to following work, not the in-flight action's attribution", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  let release, step = 0;
+  game.nativeResult = async (commandId, skillId) => {
+    if (skillId === "water-zone") await new Promise(resolve => { release = resolve; });
+    return { commandId, skillId, terminalState: "succeeded" };
+  };
+  const runner = new TurnRunner(game, { async *generate() {
+    yield done(step++ === 0 ? [{ id: "water", name: "submit_work", arguments: {
+      action: { water_tiles: { tiles: [{ x: 1, y: 1 }] } } } }] : step === 2 ? [action] : []);
+  } }, () => undefined, "", store);
+  try {
+    await runner.submit(binding, "first", "先浇水", "send");
+    await waitFor(() => release);
+    await runner.submit(binding, "update", "再走到出口", "send");
+    release();
+    await waitFor(() => !runner.status().modelBusy);
+    const receipts = store.recentReceipts(binding.saveId);
+    assert.equal(receipts.length, 2);
+    assert.equal(receipts[0].workContext.requestId, "first");
+    assert.equal(receipts[0].workContext.triggerRequestId, "first");
+    assert.equal(receipts[1].workContext.requestId, "first");
+    assert.equal(receipts[1].workContext.triggerRequestId, "update");
   } finally { await runner.stop(); store.close(); }
 });
 

@@ -326,6 +326,8 @@ public sealed class TestDriverMod : Mod
     {
         if (_isolationFailed) return;
         HandleLifecycleRequest();
+        if (_testMode == "interactive" && _scenario == "free-mode-control" && Context.IsWorldReady && _evidenceDir is { } interactiveEvidence)
+            HandlePendingLifeUiRequest(interactiveEvidence);
         if (_scenario == "free-mode-control")
         {
             long measuredNow = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -956,28 +958,7 @@ public sealed class TestDriverMod : Mod
                         }
                     }
 
-                    var lifeUiRequest = Path.Combine(outDirCoordWait, "life-ui-request.json");
-                    if (File.Exists(lifeUiRequest))
-                    {
-                        string? lifeLabel = null;
-                        try
-                        {
-                            string requestText = File.ReadAllText(lifeUiRequest);
-                            File.Delete(lifeUiRequest);
-                            using var request = JsonDocument.Parse(requestText);
-                            lifeLabel = request.RootElement.TryGetProperty("label", out var lp) ? lp.GetString() : null;
-                            HandleLifeUiRequest(outDirCoordWait, request.RootElement);
-                        }
-                        catch (Exception ex)
-                        {
-                            Monitor.Log($"[TestDriver] Life UI request failed: {ex.Message}", LogLevel.Warn);
-                            if (!string.IsNullOrEmpty(lifeLabel) && lifeLabel.Length <= 48 &&
-                                lifeLabel.All(c => char.IsLetterOrDigit(c) || c is '-' or '_'))
-                                File.WriteAllText(Path.Combine(outDirCoordWait, $"life-ui-{lifeLabel}.json"),
-                                    JsonSerializer.Serialize(new { runId = _runId, label = lifeLabel, error = ex.Message }),
-                                    new System.Text.UTF8Encoding(false));
-                        }
-                    }
+                    HandlePendingLifeUiRequest(outDirCoordWait);
 
                     if (_scenario.Equals("free-mode-control", StringComparison.OrdinalIgnoreCase) ||
                         _scenario.Equals("farm-flow-interrupt", StringComparison.OrdinalIgnoreCase) ||
@@ -3770,6 +3751,28 @@ public sealed class TestDriverMod : Mod
             provenance = "Initial isolated native furniture only; no rotate method invoked by TestDriver" };
         File.WriteAllText(Path.Combine(outDir, $"native-growth-fixture-{label}.json"), JsonSerializer.Serialize(fixture));
         WriteFreeModeNativeSnapshot(outDir, label);
+    }
+
+    private void HandlePendingLifeUiRequest(string outDir)
+    {
+        var path = Path.Combine(outDir, "life-ui-request.json");
+        if (!File.Exists(path)) return;
+        string? label = null;
+        try
+        {
+            string text = File.ReadAllText(path);
+            File.Delete(path);
+            using var request = JsonDocument.Parse(text);
+            label = request.RootElement.TryGetProperty("label", out var lp) ? lp.GetString() : null;
+            HandleLifeUiRequest(outDir, request.RootElement);
+        }
+        catch (Exception ex)
+        {
+            Monitor.Log($"[TestDriver] Life UI request failed: {ex.Message}", LogLevel.Warn);
+            if (!string.IsNullOrEmpty(label) && label.Length <= 48 && label.All(c => char.IsLetterOrDigit(c) || c is '-' or '_'))
+                File.WriteAllText(Path.Combine(outDir, $"life-ui-{label}.json"),
+                    JsonSerializer.Serialize(new { runId = _runId, label, error = ex.Message }), new System.Text.UTF8Encoding(false));
+        }
     }
 
     private void HandleLifeUiRequest(string outDir, JsonElement request)

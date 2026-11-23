@@ -3,11 +3,14 @@ param(
     [Parameter(Mandatory)][string]$ReleaseDir,
     [Parameter(Mandatory)][string]$SavePath,
     [string]$GamePath = $env:STARDEW_GAME_PATH,
-    [switch]$Simulated
+    [switch]$Simulated,
+    [switch]$ControlRegression,
+    [string]$DesktopDotNet = 'dotnet'
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+if ($ControlRegression -and !$Simulated) { throw 'Control regression requires -Simulated.' }
 if (Get-Process -Name 'Stardew Valley','StardewModdingAPI' -ErrorAction SilentlyContinue) {
     throw '请先退出正在运行的游戏。'
 }
@@ -36,6 +39,10 @@ if ($runs -isnot [IO.DirectoryInfo] -or ($runs.Attributes -band [IO.FileAttribut
 }
 & (Join-Path $PSScriptRoot 'build-testdriver.ps1') -GamePath $game | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'TestDriver build failed.' }
+if ($ControlRegression) {
+    & $DesktopDotNet build (Join-Path $repo 'tests/desktop-presentation/StardewAI.Companion.Desktop.Tests.csproj') -c Release | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'Desktop test harness build failed.' }
+}
 $runId = 'desktop-' + (Get-Date -Format 'MMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 4)
 $run = Join-Path $runs.FullName $runId
 $evidence = Join-Path $run 'evidence'
@@ -65,8 +72,17 @@ $session = Join-Path $run 'test-session.json'
     packageManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $desktop 'release-manifest.json')).Hash.ToLowerInvariant()
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'desktop-package.json') -Encoding utf8NoBOM
 
-$start = [Diagnostics.ProcessStartInfo]::new((Join-Path $desktop '星露谷游戏伴侣.exe'))
+$entry = Join-Path $desktop '星露谷游戏伴侣.exe'
+if ($ControlRegression) {
+    $harness = Join-Path $repo 'artifacts/bin/StardewAI.Companion.Desktop.Tests/Release/net10.0-windows/win-x64'
+    Get-ChildItem -LiteralPath $harness -Force | Where-Object { $_.Name -notin 'data','Mods','runtime' } |
+        Copy-Item -Destination $desktop -Recurse -Force
+    $entry = Join-Path $desktop 'StardewAI.Companion.Desktop.Tests.exe'
+}
+$start = [Diagnostics.ProcessStartInfo]::new($entry)
 $start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+if ($ControlRegression) { $start.ArgumentList.Add('--controls'); $start.ArgumentList.Add($evidence) }
 $start.WorkingDirectory = $desktop
 $start.Environment['PATH'] = "$env:SystemRoot/System32;$env:SystemRoot"
 $start.Environment['STARDEW_AI_SESSION_CONFIG'] = $session
@@ -80,4 +96,8 @@ if ($Simulated) {
 }
 $process = [Diagnostics.Process]::Start($start)
 [pscustomobject]@{ RunDirectory = $run; DesktopProcessId = $process.Id }
+if ($ControlRegression) {
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) { throw "Desktop control regression failed. See $evidence/desktop-controls.json" }
+}
 $process.Dispose()

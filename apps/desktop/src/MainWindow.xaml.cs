@@ -39,6 +39,11 @@ public partial class MainWindow : Window
     private bool _submissionAccepted;
     private string _activeCommandId = "";
     private string _chatActivity = "";
+    private DateTimeOffset? _feedbackAt;
+    private string _feedbackId = "", _feedbackDate = "", _gameDate = "";
+    private bool _observingRecent;
+    private string _observedFeedbackId = "";
+    private DateTimeOffset? _recentObservedAt;
 
     public MainWindow()
     {
@@ -363,8 +368,11 @@ public partial class MainWindow : Window
                 break;
             case "result": ApplyResult(payload); break;
             case "recovery":
-                AddEntry("连接已恢复", Flag(payload, "hasReceipt") ? "已核对旧动作的游戏回执，工作仍保持暂停。"
-                    : "已核对游戏中没有待结算的旧动作，工作仍保持暂停。");
+                if (Text(payload, "gameSessionId") != _gameSessionId || Text(payload, "saveId") != _saveId) break;
+                var confirmed = payload.TryGetProperty("receipt", out var recovered) && recovered.ValueKind == JsonValueKind.Object
+                    ? ActionPresentation.Read(recovered).Text : "已核对旧动作的游戏回执。";
+                AddEntry("核对结果", (Flag(payload, "hasReceipt") ? confirmed : "游戏中没有待结算的旧动作。")
+                    + "请确认当前控制状态后再继续。");
                 break;
         }
     }
@@ -390,6 +398,8 @@ public partial class MainWindow : Window
         _interrupting = Flag(payload, "interrupting");
         _recoveryPending = Flag(payload, "recoveryPending");
         _modelBusy = Flag(payload, "modelBusy");
+        _gameDate = Text(payload, "gameDate");
+        RefreshRecentFeedback();
         if (_gameSessionId is null)
         {
             if (previous is not null)
@@ -411,7 +421,8 @@ public partial class MainWindow : Window
         var action = staleAction ? "idle" : Text(payload, "activity");
         var clockPauseOwner = Text(payload, "clockPauseOwner");
         var skill = Text(payload, "activeSkillId");
-        var execution = ActionPresentation.Activity(skill.Length > 0 ? skill : action);
+        var phase = Text(payload, "agentPhase");
+        var execution = phase.Length > 0 ? ActionPresentation.Phase(phase, skill) : ActionPresentation.Activity(skill.Length > 0 ? skill : action);
         var thinking = payload.TryGetProperty("modelStreaming", out var streaming) && streaming.ValueKind == JsonValueKind.False
             ? "等待模型响应" : "伴侣正在规划或回复";
         if (clockPauseOwner == "model-thinking") thinking += " · 游戏时钟已暂停";
@@ -427,10 +438,11 @@ public partial class MainWindow : Window
             : playerControls ? ("玩家控制中", "点击「交给 AI」开始托管。")
             : _paused ? ("已暂停", "可在「今天」继续当前工作。")
             : _interrupting ? ("交接中", "正在确认旧动作终态。")
-            : _activeCommandId.Length > 0 ? ("正在执行", execution)
+            : _activeCommandId.Length > 0 ? (phase is "planning-route" ? "正在寻路" : phase is "verifying" or "reconciling" or "waiting-receipt" ? "正在核对" : "正在执行", execution)
             : clockPauseOwner == "program-protection" ? ("已暂停", "保护暂停 · 游戏时钟已暂停")
             : isThinking ? ("正在思考", thinking)
             : !_partnerReady ? ("等待伙伴", "请在「设置」检查伙伴连接。")
+            : phase == "needs-player" ? ("需要你确认", ActionPresentation.Phase(phase))
             : action is "" or "idle" ? ("等待指令", "可以在「今天」和伙伴聊聊。") : ("正在工作", ActionPresentation.Activity(action));
         if (_lastGameSessionId is not null && _lastGameSessionId != _gameSessionId)
         {
@@ -500,6 +512,10 @@ public partial class MainWindow : Window
         if (id.Length == 0 || !_seenResults.Add(id)) return;
         if (_seenResults.Count > 512) _seenResults.Remove(_seenResults.First());
         var display = ActionPresentation.Read(result);
+        _feedbackId = id;
+        _feedbackDate = display.Date;
+        _feedbackAt = DateTimeOffset.TryParse(Text(result, "recordedAt"), out var recordedAt) ? recordedAt : DateTimeOffset.UtcNow;
+        RefreshRecentFeedback();
         ActionFeedbackText.Text = display.Text;
         ActionFeedbackPanel.Visibility = Visibility.Visible;
         ActionFeedbackPanel.Background = new System.Windows.Media.SolidColorBrush(display.IsIssue
@@ -517,6 +533,53 @@ public partial class MainWindow : Window
                 ActivityText.Text = display.Text;
             }
             RefreshComposer();
+        }
+    }
+
+    private void RefreshRecentFeedback()
+    {
+        RecentRecoverButton.Visibility = _recoveryPending ? Visibility.Visible : Visibility.Collapsed;
+        RecentRecoverButton.IsEnabled = _gameSessionId is not null && !_interrupting && !_closing;
+        RecentObserveButton.IsEnabled = _gameSessionId is not null && !_observingRecent && !_closing;
+        if (_feedbackAt is null) return;
+        ActionFeedbackCaption.Text = _feedbackDate.Length > 0 && _gameDate.Length > 0 && _feedbackDate != _gameDate
+            ? "上次进展 · 来自之前的游戏日期，请以当前观察为准"
+            : _observedFeedbackId == _feedbackId && _recentObservedAt is { } observed && DateTimeOffset.UtcNow - observed < TimeSpan.FromMinutes(2)
+                ? "已刷新游戏观察 · 下方保留上次操作结果"
+            : DateTimeOffset.UtcNow - _feedbackAt.Value > TimeSpan.FromMinutes(2)
+                ? "上次进展 · 距今已超过 2 分钟，可重新查看游戏"
+                : "最近进展 · 已确认的历史回执";
+    }
+
+    private async void ObserveRecentClicked(object sender, RoutedEventArgs e)
+    {
+        if (_observingRecent || _session is not { } session || _gameSessionId is not { } game) return;
+        int view = _saveViewGeneration;
+        var id = _feedbackId;
+        _observingRecent = true;
+        RefreshRecentFeedback();
+        try
+        {
+            await session.PostAsync("/v2/control", new { gameSessionId = game, saveId = _saveId, action = "observe" });
+            if (view == _saveViewGeneration && id == _feedbackId)
+            {
+                _observedFeedbackId = id;
+                _recentObservedAt = DateTimeOffset.UtcNow;
+                RefreshRecentFeedback();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (view == _saveViewGeneration) WorkFeedback.Text = "刷新游戏观察失败，请稍后重试。";
+            LogError("recent_observe_failed", "刷新游戏观察失败。", ex);
+        }
+        finally
+        {
+            if (view == _saveViewGeneration)
+            {
+                _observingRecent = false;
+                RecentObserveButton.IsEnabled = !_closing;
+            }
         }
     }
 

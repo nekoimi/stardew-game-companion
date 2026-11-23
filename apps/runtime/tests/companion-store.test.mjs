@@ -55,3 +55,46 @@ test("legacy action-completion notices do not consume reminder quota or unread c
     assert.equal(store.unreadCount("farm"), 2);
   } finally { store.close(); }
 });
+
+test("receipt retention preserves unresolved, plugin and active-goal evidence and only removes matching orphan contexts", () => {
+  const store = new CompanionStore(":memory:");
+  const binding = { saveId: "farm", gameSessionId: "game" };
+  try {
+    store.updateItem("farm", "goals", "active", { status: "active", text: "剩余农活" });
+    for (const id of ["old", "plugin", "goal", "recent-one", "recent-two"]) {
+      store.beginAction(binding, id, id === "plugin" ? "plugin-run" : undefined,
+        { goalId: id === "goal" ? "active" : "done", requestId: id });
+      store.recordReceipt(binding, id, { commandId: id, terminalState: "succeeded" });
+    }
+    store.beginAction(binding, "unresolved", undefined, { goalId: "pending" });
+    store.recordReceipt({ saveId: "other", gameSessionId: "game" }, "other", { commandId: "other", terminalState: "succeeded" });
+    assert.equal(store.pruneReceipts("farm", 2), 1);
+    assert.deepEqual(store.recentReceipts("farm").map(row => row.commandId), ["plugin", "goal", "recent-one", "recent-two"]);
+    assert.deepEqual(store.actionContext(binding, "old"), {});
+    assert.equal(store.pendingAction(binding), "unresolved");
+    assert.equal(store.actionContext(binding, "unresolved").goalId, "pending");
+    assert.equal(store.recentReceipts("other")[0].commandId, "other");
+    store.updateItem("farm", "goals", "active", { status: "completed" });
+    assert.equal(store.pruneReceipts("farm", 2), 1);
+    assert.equal(store.actionContext(binding, "plugin").requestId, "plugin");
+    assert.deepEqual(store.actionContext(binding, "goal"), {});
+  } finally { store.close(); }
+});
+
+test("failed retention never invalidates an already committed action receipt", () => {
+  let warnings = 0;
+  const store = new CompanionStore(":memory:", () => { warnings++; });
+  const binding = { saveId: "farm", gameSessionId: "game" };
+  try {
+    store.pruneReceipts = () => { throw new Error("cleanup unavailable"); };
+    for (let index = 0; index < 128; index++) {
+      const id = `action-${index}`;
+      store.beginAction(binding, id);
+      assert.equal(store.recordReceipt(binding, id, { commandId: id, terminalState: "succeeded" }), true);
+    }
+    assert.equal(warnings, 1);
+    assert.equal(store.pendingAction(binding), undefined);
+    assert.equal(store.recentReceipts("farm", 128).length, 128);
+    assert.equal(store.recentReceipts("farm").at(-1).commandId, "action-127");
+  } finally { store.close(); }
+});

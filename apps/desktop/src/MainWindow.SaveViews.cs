@@ -41,6 +41,11 @@ public partial class MainWindow
         _attentionNotices.Clear();
         _seenCareMessages.Clear();
         ActionFeedbackPanel.Visibility = Visibility.Collapsed;
+        _feedbackAt = null;
+        _feedbackId = _feedbackDate = _gameDate = "";
+        _observedFeedbackId = "";
+        _recentObservedAt = null;
+        _observingRecent = false;
         _withdrawingGoal = _readingHistory = _hasHistoryPage = _savingPreferences = false;
         _historyBefore = _profileRevision = null;
         GoalPicker.ItemsSource = WorkDetails.ItemsSource = HistoryEntries.ItemsSource = null;
@@ -200,8 +205,7 @@ public partial class MainWindow
         var other = selected is null ? Array.Empty<WorkResult>() : results.Where(result => result.GoalId != selected.Id).ToArray();
         WorkGoalText.Text = selected?.FullText ?? "";
         WorkGoalExpander.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
-        var summaries = ActionPresentation.Summaries(relevant);
-        WorkDetails.ItemsSource = summaries;
+        WorkDetails.ItemsSource = ActionPresentation.Stages(relevant);
         WorkProcess.ItemsSource = ActionPresentation.Process(relevant);
         OtherWorkDetails.ItemsSource = ActionPresentation.Summaries(other);
         WorkProcessExpander.Visibility = relevant.Length > 0 ? Visibility.Visible : Visibility.Collapsed;

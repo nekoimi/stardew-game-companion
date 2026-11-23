@@ -2239,6 +2239,17 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             : activity;
     }
 
+    public string GetExecutionPhase() => ActiveMachine?.CurrentState switch
+    {
+        ExecutionState.Preparing => "planning-route",
+        ExecutionState.Validating => "validating",
+        ExecutionState.Navigating or ExecutionState.Acting or ExecutionState.Facing or ExecutionState.Watering => "executing",
+        ExecutionState.Verifying => "verifying",
+        ExecutionState.Paused => "paused",
+        ExecutionState.Cancelling => "stopping",
+        _ => Rest.IsResting ? "executing" : "waiting-receipt"
+    };
+
     public void OnTransportDisconnected(string reason)
     {
         lock (_taskLock)

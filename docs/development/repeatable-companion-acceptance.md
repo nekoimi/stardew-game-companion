@@ -38,3 +38,9 @@ pwsh -File tests/acceptance/start-desktop-acceptance.ps1 -ReleaseDir '<解压目
 4. 让隔离桌面的运行时断线，从桌面重连并核对旧动作。退出到标题并重载同一存档，检查会话更新、控制权由玩家持有、目标仍在。
 
 在运行目录的 `evidence` 留存包版本、进程与回执证据，并记录各项通过、失败或未执行。自动事件记录在 `agent-runtime-events.jsonl`，用量与角色数据保存在副本的 `desktop/data/companion.sqlite`。结束时退出隔离游戏和桌面。
+
+### 自动桌面控制回归
+
+同一入口增加 `-Simulated -ControlRegression -DesktopDotNet <.NET 10 dotnet.exe>`，会在隔离副本加载桌面测试宿主，自动启动和加载游戏，检查思考／移动中 F9 接管、打断改派、所属运行时断线后核对旧动作、原生就寝和次日目标接续。报告为 `evidence/desktop-controls.json`；模拟模型只按固定目标发出工具请求，游戏状态和结果仍来自正式 Mod，不接触日常存档。
+
+测试宿主是源码验收入口，不进入玩家绿色包。正常启动仍使用根目录「星露谷游戏伴侣.exe」。该验收会在副本保存并退出游戏，只清理本次测试所属进程；启动前须退出已有游戏。

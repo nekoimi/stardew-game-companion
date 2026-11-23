@@ -104,28 +104,33 @@ public sealed class SameMapNavigator
         }
         search.Result = PathResult.Failed($"No passable path from {start} to {goal} on map '{location}'.");
         if (!IsTileNavigable(location, goal, avoid)) yield break;
-        var queue = new Queue<TileCoordinate>();
+        // A* keeps native collision checks close to the requested route. Favor
+        // deeper nodes at equal f to avoid flooding an open map's entire rectangle.
+        var queue = new PriorityQueue<(TileCoordinate Tile, int Cost), (int Estimate, int Tie)>();
         var parents = new Dictionary<TileCoordinate, TileCoordinate>();
-        var visited = new HashSet<TileCoordinate> { start };
-        // Only memoize within this BFS. Physical walking still checks the live world.
+        var costs = new Dictionary<TileCoordinate, int> { [start] = 0 };
+        // Only memoize within this search. Physical walking still checks the live world.
         var passable = new Dictionary<TileCoordinate, bool> { [goal] = true };
-        queue.Enqueue(start);
+        int Distance(TileCoordinate tile) => Math.Abs(tile.X - goal.X) + Math.Abs(tile.Y - goal.Y);
+        queue.Enqueue((start, 0), (Distance(start), 0));
         int explored = 0;
         bool found = false;
         while (queue.Count > 0 && explored++ < MaxSearchDepth * 10)
         {
-            var current = queue.Dequeue();
+            var (current, cost) = queue.Dequeue();
+            if (costs[current] != cost) { yield return null; continue; }
             if (current == goal) { found = true; break; }
             foreach (var neighbor in current.CardinalNeighbors())
             {
-                if (visited.Contains(neighbor)) continue;
+                int nextCost = cost + 1;
+                if (costs.TryGetValue(neighbor, out int previousCost) && previousCost <= nextCost) continue;
                 if (!passable.TryGetValue(neighbor, out bool open))
                     passable[neighbor] = open = IsTileNavigable(location, neighbor, avoid);
                 if (open && _observer.CanWalkBetween(location, current, neighbor))
                 {
-                    visited.Add(neighbor);
+                    costs[neighbor] = nextCost;
                     parents[neighbor] = current;
-                    queue.Enqueue(neighbor);
+                    queue.Enqueue((neighbor, nextCost), (nextCost + Distance(neighbor), -nextCost));
                 }
             }
             yield return null;

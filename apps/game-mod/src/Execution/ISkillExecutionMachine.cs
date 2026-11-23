@@ -11,6 +11,7 @@ public interface ISkillExecutionMachine
 {
     bool IsExecuting { get; }
     bool IsPaused { get; }
+    ExecutionState CurrentState => IsPaused ? ExecutionState.Paused : IsExecuting ? ExecutionState.Acting : ExecutionState.Created;
     int TotalTargets { get; }
     int CurrentTargetIndex { get; }
     string? ActiveTaskId { get; }

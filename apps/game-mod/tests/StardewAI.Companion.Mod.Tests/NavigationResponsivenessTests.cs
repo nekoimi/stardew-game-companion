@@ -16,7 +16,7 @@ public class NavigationResponsivenessTests
         observer.SetPassable("Town", new(1, 1), true);
         var actor = new MechanicsActor("responsive-test", initialPose: new AuthoritativePose("Farm", 0, 1, FacingDirection.Down));
         var graph = new WorldMapGraph();
-        graph.AddEdge(new MapEdge("Farm", "Town", new(100, 100), new(1, 1), MapEdgeKind.Warp));
+        graph.AddEdge(new MapEdge("Farm", "Town", new(1000, 1000), new(1, 1), MapEdgeKind.Warp));
         var machine = new NavigationStateMachine(actor, observer, new SameMapNavigator(observer), graph);
         int receipts = 0;
         machine.OnCompleted += _ => receipts++;
@@ -50,7 +50,7 @@ public class NavigationResponsivenessTests
         var actor = new MechanicsActor("responsive-test", initialPose: new AuthoritativePose("Farm", 0, 1, FacingDirection.Down));
         var observer = new SimulatedWorldObserver();
         var machine = new NavigationStateMachine(actor, observer, new SameMapNavigator(observer), new WorldMapGraph());
-        var target = new TileCoordinate(100, 100);
+        var target = new TileCoordinate(1000, 1000);
         Assert.True(machine.Start(new("moving-origin", "task", "Farm", target, 0), out _));
         machine.Update(null, 1);
         Assert.Equal(ExecutionState.Preparing, machine.CurrentState);
@@ -85,7 +85,7 @@ public class NavigationResponsivenessTests
         var results = new List<NavigationResult>();
         machine.OnCompleted += results.Add;
         var origin = actor.Tile;
-        Assert.True(machine.Start(new("stall", "task", "Farm", new(100, 100), 0), out _));
+        Assert.True(machine.Start(new("stall", "task", "Farm", new(1000, 1000), 0), out _));
         machine.Update(null, 1);
         Assert.Equal(ExecutionState.Preparing, machine.CurrentState);
 
@@ -119,7 +119,7 @@ public class NavigationResponsivenessTests
         for (int i = 0; i < 100 && !preview.IsComplete; i++) preview.Advance(8, double.PositiveInfinity);
         Assert.True(preview.IsComplete);
         Assert.Equal(true, preview.Result["reachable"]);
-        Assert.Equal(29, preview.Result["walkingTiles"]);
+        Assert.Equal(30, preview.Result["walkingTiles"]);
         Assert.Equal(new TileCoordinate(20, 1), actor.Tile);
         var origin = System.Text.Json.JsonSerializer.SerializeToElement(preview.Result["origin"]);
         Assert.Equal(0, origin.GetProperty("tile").GetProperty("X").GetInt32());
@@ -137,5 +137,36 @@ public class NavigationResponsivenessTests
         for (int i = 0; i < 100 && !search.IsComplete; i++) search.Advance(4, double.PositiveInfinity);
         Assert.True(search.IsComplete);
         Assert.False(search.Result.Success);
+    }
+
+    [Fact]
+    public void DirectRouteAvoidsFloodingOpenMapAndSearchingUnrelatedExits()
+    {
+        var observer = new SimulatedWorldObserver();
+        var graph = new WorldMapGraph();
+        graph.AddEdge(new MapEdge("Farm", "Town", new(500, 500), new(1, 1), MapEdgeKind.Warp));
+        var planner = new ReachableRoutePlanner(observer, new SameMapNavigator(observer), graph);
+        var route = planner.Find("Farm", new(0, 0), "Farm", new(60, 60), 600, null, out var failure,
+            requireExactDestination: true);
+        Assert.Null(failure);
+        Assert.NotNull(route);
+        Assert.Empty(route!.Edges);
+        Assert.Equal(new TileCoordinate(60, 60), route.TargetTile);
+        Assert.Equal(120, route.WalkingTiles);
+        Assert.InRange(observer.TilePassabilityChecks, 1, 600);
+    }
+
+    [Fact]
+    public void PreviewPreservesBlockedDestinationEvidenceWithoutPretendingAdjacentArrival()
+    {
+        var observer = new SimulatedWorldObserver();
+        observer.SetPassable(new(5, 5), false);
+        var planner = new ReachableRoutePlanner(observer, new SameMapNavigator(observer), new WorldMapGraph());
+        var route = planner.Find("Farm", new(0, 0), "Farm", new(5, 5), 600, null, out var failure,
+            requireExactDestination: true);
+        Assert.Null(route);
+        Assert.Equal("DESTINATION_UNREACHABLE", failure!.ReasonCode);
+        Assert.True((bool)failure.Details!["exactArrivalRequired"]);
+        Assert.NotEmpty((TileCoordinate[])failure.Details["standingCandidates"]);
     }
 }

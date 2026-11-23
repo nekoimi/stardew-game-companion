@@ -8,6 +8,8 @@
     {
       "commandId": "water", "skillId": "water-zone", "terminalState": "succeeded", "gameDate": "1:spring:18",
       "completedCount": 2, "skippedCount": 0, "failedCount": 0,
+      "effects": [{ "state": "watered", "tile": { "x": 40, "y": 35 } }, { "state": "watered", "tile": { "x": 41, "y": 35 } }],
+      "evidence": { "quantities": [{ "kind": "watered-tiles", "value": 2 }] },
       "workContext": { "goalId": "care", "requestId": "care-request", "locationId": "Farm", "target": [{ "x": 40, "y": 35 }] }
     },
     {
@@ -38,6 +40,13 @@
     {
       "commandId": "pickup", "skillId": "pickup-items", "terminalState": "partially-succeeded", "gameDate": "1:spring:18",
       "completedCount": 2, "skippedCount": 12, "failedCount": 0,
+      "effects": [
+        { "state": "picked-up", "stack": 7, "collectedItems": [{ "itemId": "(O)388", "stack": 7 }] },
+        { "state": "picked-up", "stack": 2, "collectedItems": [{ "itemId": "(O)388", "stack": 2 }] },
+        { "state": "skipped", "reason": "no-item" }
+      ],
+      "details": { "inventoryDeltaObserved": true, "inventoryDelta": [{ "itemId": "(O)388", "before": 3, "after": 12, "delta": 9 }] },
+      "evidence": { "quantities": [{ "kind": "inventory-gained", "value": 9 }] },
       "error": { "code": "no-item", "message": "Tile (41,35) currently has no loose drop or directly collectible ground item." },
       "workContext": { "goalId": "wood", "requestId": "wood-request", "locationId": "Farm", "target": [{ "x": 41, "y": 35 }] }
     },

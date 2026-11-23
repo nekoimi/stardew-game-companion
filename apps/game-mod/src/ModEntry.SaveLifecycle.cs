@@ -247,7 +247,9 @@ public sealed partial class ModEntry
             if (checkpoint?.SaveId != saveId) checkpoint = null;
             if (checkpoint?.Actor != null) _stateRepository.Save(checkpoint.Actor);
 
-            _observer = new GameWorldObserver(Monitor);
+            // Keep the observer bound to the restored companion, as in player
+            // mode, so planned segments use the same native body as actual walking.
+            _observer = new GameWorldObserver(Monitor) { NativeCollisionActor = () => _actor?.GameFarmer };
             bool isNewCompanion = !_stateRepository.StateExists("companion-1");
             CompanionActorState activeState;
             GameLocation? targetLocation;

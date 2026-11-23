@@ -186,6 +186,7 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
                 "tool_result" => ("info", "Agent 工具调用已返回。"),
                 "turn_failed" => ("warn", "Agent 回合未完成。"),
                 "action_result" => ("info", "收到原生动作回执。"),
+                "receipt_retention_failed" => ("warn", "历史回执整理未完成，将在下次检查时重试。"),
                 _ => (null, null),
             };
             if (message is null) return false;

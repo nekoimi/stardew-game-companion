@@ -16,6 +16,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--controls") return DesktopControlRegression.Run(args[1]);
         using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "work-feedback.json")));
         var fixture = document.RootElement;
         var raw = fixture.GetProperty("receipts").EnumerateArray().ToArray();
@@ -26,9 +27,11 @@ internal static class Program
         Check(process.Single(row => row.Text.Contains("连续")).Text.Contains("连续 2 次"), "Retry evidence was lost.");
         Check(process.Any(row => row.Label.Contains("部分完成") && row.Text.Contains("背包")), "Partial pickup was hidden.");
         Check(!process.Any(row => row.Text.Contains("2 件") || row.Text.Contains("完成 0") || row.Text.Contains("跳过 12")), "Internal counters became item quantities.");
+        Check(process.Any(row => row.Text.Contains("背包增加 9 件")) && process.Any(row => row.Text.Contains("浇水 2 格")), "Observed quantities were lost or double counted.");
         Check(!process.Any(row => row.Text.Contains("Requested") || row.Text.Contains("Raw technical") || row.Label.Contains("future-")), "Raw technical text reached presentation.");
         Check(ActionPresentation.Summaries(receipts).Any(row => row.Label.Contains("移动 · 已完成") && row.Text.Contains("此前有受阻")), "A later success erased earlier failures.");
         Check(ActionPresentation.Read(raw.Single(row => row.GetProperty("commandId").GetString() == "unknown")).NeedsPlayer, "Unknown outcomes must remain visible.");
+        Check(ActionPresentation.Stages(receipts).Any(row => row.Text.Contains("背包增加 9 件")), "Stage quantities did not retain actual inventory evidence.");
         Check(fixture.GetRawText() == original, "Presentation mutated its input.");
 
         var app = new Application();
@@ -69,10 +72,30 @@ internal static class Program
                 var picker = Control<ListBox>(window, "GoalPicker");
                 picker.SelectedItem = picker.Items.Cast<DesktopGoal>().Single(goal => goal.Id == "care");
                 var rows = Control<ItemsControl>(window, "WorkDetails").Items.Cast<WorkRecord>().ToArray();
-                Check(rows.Any(row => row.Label.Contains("浇水")) && !rows.Any(row => row.Label.Contains("拾取")), "Work from another goal leaked into selection.");
+                Check(rows.Any(row => row.Text.Contains("浇水")) && !rows.Any(row => row.Text.Contains("拾取")), "Work from another goal leaked into selection.");
+                Check(Control<Button>(window, "RecentObserveButton").IsEnabled, "Observation shortcut is unavailable.");
                 Check(Control<TextBlock>(window, "WorkGoalText").Text.Contains("就寝时间") && !Control<TextBlock>(window, "WorkGoalText").Text.Contains("bedtime"), "Technical schedule label leaked into the goal.");
                 Check(Control<Expander>(window, "OtherWorkExpander").Visibility == Visibility.Visible, "Unlinked historical work was silently discarded.");
                 Check(!Control<Expander>(window, "WorkProcessExpander").IsExpanded, "Detailed process should start collapsed.");
+                var phaseStatus = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.SerializeToElement(status))!;
+                phaseStatus["agentPhase"] = JsonSerializer.SerializeToElement("planning-route");
+                phaseStatus["activeCommandId"] = JsonSerializer.SerializeToElement("in-flight-route");
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(phaseStatus));
+                Check(Control<TextBlock>(window, "AgentStateText").Text == "正在寻路", "Route planning was presented as model thinking or walking.");
+                phaseStatus["recoveryPending"] = JsonSerializer.SerializeToElement(true);
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(phaseStatus));
+                Check(Control<Button>(window, "RecentRecoverButton").Visibility == Visibility.Visible, "Missing receipt has no recovery shortcut.");
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(status));
+                var oldReceipt = JsonSerializer.SerializeToElement(new { saveId = "farm", gameSessionId = "game", commandId = "old-date-result",
+                    skillId = "water-zone", terminalState = "succeeded", gameDate = "1:spring:17", recordedAt = "2020-01-01T00:00:00Z" });
+                Invoke(window, "ApplyResult", oldReceipt);
+                Check(Control<TextBlock>(window, "ActionFeedbackCaption").Text.Contains("超过 2 分钟"), "Old receipt looks like a live result.");
+                var datedStatus = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.SerializeToElement(status))!;
+                datedStatus["gameDate"] = JsonSerializer.SerializeToElement("1:spring:18");
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(datedStatus));
+                Check(Control<TextBlock>(window, "ActionFeedbackCaption").Text.Contains("之前的游戏日期"), "Yesterday's result appears current.");
+                Invoke(window, "ApplyResult", WithBinding(JsonSerializer.SerializeToElement(new { commandId = "recent-player", skillId = "native-advance",
+                    terminalState = "failed", playerActionRequired = true, error = new { code = "MENU_BLOCKED" } })));
                 picker.SelectedItem = picker.Items.Cast<DesktopGoal>().Single(goal => goal.Id == "wood");
                 window.UpdateLayout();
                 await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
