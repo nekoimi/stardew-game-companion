@@ -8,10 +8,10 @@ using StardewAI.Companion.Updates;
 string workspace = Directory.CreateTempSubdirectory("stardew-updates-").FullName;
 try
 {
-    if (args is ["--verify-release", var archive, var publisherKey, var tag, var channel])
+    if (args is ["--verify-release", var archive, var tag, var channel])
     {
-        VerifyReleaseArchive(archive, publisherKey, tag, channel);
-        Console.WriteLine($"Verified signed release {tag} ({channel}).");
+        VerifyReleaseArchive(archive, tag, channel);
+        Console.WriteLine($"Verified release {tag} ({channel}).");
     }
     else if (args.Length == 0)
     {
@@ -24,15 +24,14 @@ try
     }
     else
     {
-        throw new ArgumentException("Expected --verify-release <archive> <public-key-file> <tag> <channel>.");
+        throw new ArgumentException("Expected --verify-release <archive> <tag> <channel>.");
     }
 }
 finally { Directory.Delete(workspace, recursive: true); }
 
-void VerifyReleaseArchive(string archive, string publisherKey, string tag, string channel)
+void VerifyReleaseArchive(string archive, string tag, string channel)
 {
     string hash = UpdatePackage.ReadChecksum(archive + ".sha256", Path.GetFileName(archive));
-    UpdateSignature.VerifyFile(archive + UpdateSignature.Suffix, hash, File.ReadAllBytes(publisherKey));
     var info = UpdatePackage.Extract(archive, hash, Path.Combine(workspace, "payload"), CancellationToken.None);
     Check(info.Tag == tag && info.Channel == channel, $"The package identifies {info.Tag} ({info.Channel}).");
 }
@@ -155,7 +154,7 @@ void ImportPortableData()
 async Task VerifyPublishedUpdatesAsync()
 {
     const string archiveName = "StardewGameCompanion-0.1.0-windows-x64.zip";
-    const string github = "https://github.com/nekoimi/stardew-game-companion/releases/download";
+    var catalogUrl = new Uri("https://mirror.example/updates/windows-x64.json");
     const string stableTag = "production-beta-label";
     const string previewTag = "v0.1.0-dev.20261124.202.1";
     string source = Path.Combine(workspace, "github-release");
@@ -164,88 +163,82 @@ async Task VerifyPublishedUpdatesAsync()
     ZipFile.CreateFromDirectory(source, zip);
     byte[] archive = File.ReadAllBytes(zip);
     byte[] hash = SHA256.HashData(archive);
-    using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-    byte[] signature = key.SignHash(hash, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+    byte[] corruptedArchive = archive.ToArray();
+    corruptedArchive[0] ^= 1;
     var publishedAt = DateTimeOffset.Parse("2026-11-24T12:00:00Z");
 
-    object Release(string tag, bool preview, bool draft = false, bool signed = true)
-    {
-        var names = signed ? new[] { archiveName, archiveName + ".sha256", archiveName + ".sig" }
-            : [archiveName, archiveName + ".sha256"];
-        return new
-        {
-            tag_name = tag, draft, prerelease = preview, published_at = publishedAt, body = "Release notes",
-            assets = names.Select(name => new
-            {
-                name, created_at = publishedAt, browser_download_url = $"{github}/{tag}/{name}",
-                digest = name == archiveName ? $"sha256:{Convert.ToHexString(hash)}" : null
-            })
-        };
-    }
+    PublishedUpdate Release(string tag, string channel) => new(tag, "Release notes", channel,
+        $"https://download.example/archives/{tag}/{archiveName}", Convert.ToHexString(hash), publishedAt);
+    var stable = Release(stableTag, "stable");
+    var preview = Release(previewTag, "preview");
+    var older = Release("v0.1.0-dev.20261124.201.1", "preview") with { PublishedAt = publishedAt.AddMinutes(-5) };
 
     bool tampered = false;
     bool includeStable = true;
     bool interruptArchive = true;
     int archiveRequests = 0;
+    int catalogRequests = 0;
+    PublishedUpdate? additionalEntry = null;
     using var http = new HttpClient(new TestHttpHandler(request =>
     {
-        string path = request.RequestUri!.AbsolutePath;
-        if (path.EndsWith(".zip", StringComparison.Ordinal))
+        if (request.RequestUri!.Host == "download.example")
         {
             archiveRequests++;
-            var content = new ByteArrayContent(interruptArchive ? archive[..(archive.Length / 2)] : archive);
+            var content = new ByteArrayContent(interruptArchive ? archive[..(archive.Length / 2)] : tampered ? corruptedArchive : archive);
             content.Headers.ContentLength = archive.Length;
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
         }
-        var listing = new List<object>
-        {
-            Release("draft", false, draft: true),
-            Release("unsigned", false, signed: false),
-            Release(previewTag, true),
-        };
-        if (includeStable) listing.Add(Release(stableTag, false));
+        Check(request.RequestUri == catalogUrl && request.Headers.CacheControl?.NoCache == true,
+            "Check for updates must revalidate the configured JSON URL.");
+        catalogRequests++;
+        var listing = new List<PublishedUpdate> { older, preview };
+        if (includeStable) listing.Add(stable);
+        if (additionalEntry is not null) listing.Add(additionalEntry);
         return new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = path.EndsWith(".sig") ? new ByteArrayContent(tampered ? new byte[64] : signature)
-                : path.EndsWith(".sha256") ? new StringContent($"{Convert.ToHexString(hash)}  {archiveName}")
-                : new StringContent(JsonSerializer.Serialize(listing))
+            Content = new StringContent(JsonSerializer.Serialize(new { schemaVersion = 1, releases = listing }, JsonSerializerOptions.Web))
         };
     }));
-    var releases = new GitHubCompanionReleases(http);
-    var stable = await releases.FindAsync(false, CancellationToken.None) ?? throw new InvalidOperationException("Missing stable.");
-    var preview = await releases.FindAsync(true, CancellationToken.None) ?? throw new InvalidOperationException("Missing preview.");
-    Check(stable.Tag == stableTag && preview.Tag == previewTag, "Channels must exclude drafts and unsigned legacy releases.");
+    var releases = new CompanionUpdateCatalog(http);
+    var selectedStable = await releases.FindAsync(catalogUrl, false, CancellationToken.None)
+        ?? throw new InvalidOperationException("Missing stable.");
+    Check(selectedStable == stable && await releases.FindAsync(catalogUrl, true, CancellationToken.None) == preview
+        && catalogRequests == 2 && archiveRequests == 0,
+        "Each channel check must read the JSON once and select the latest matching release.");
     includeStable = false;
-    Check(await releases.FindAsync(false, CancellationToken.None) is null,
-        "A channel with only unsigned or draft assets must not fall back to the other channel.");
+    Check(await releases.FindAsync(catalogUrl, false, CancellationToken.None) is null,
+        "An empty channel must not fall back to the other channel.");
+    additionalEntry = preview;
+    await ExpectAsync<InvalidDataException>(() => releases.FindAsync(catalogUrl, true, CancellationToken.None));
+    additionalEntry = older with { Tag = "insecure-download", Url = "http://download.example/archive.zip" };
+    await ExpectAsync<InvalidDataException>(() => releases.FindAsync(catalogUrl, true, CancellationToken.None));
     Check(!stable.CanOfferTo(new(stableTag, "0.1.0", "stable", 1)), "The installed tag must not be offered again.");
     Check(!preview.CanOfferTo(new("v0.1.0-dev.20261124.203.1", "0.1.0", "preview", 1, publishedAt.AddHours(1))),
         "A same-channel build published before the installed build must be skipped.");
     Check(stable.CanOfferTo(new(previewTag, "0.1.0", "preview", 1)), "Switching to the stable channel must be available.");
 
     var transaction = new UpdateTransaction(Path.Combine(workspace, "download-install"));
-    byte[] publicKey = key.ExportSubjectPublicKeyInfo();
     Task<ReleaseInfo> Download(PublishedUpdate release, Guid id) =>
-        releases.DownloadAsync(release, transaction.Stage(id), transaction.Payload(id), publicKey,
+        releases.DownloadAsync(release, transaction.Stage(id), transaction.Payload(id),
             new Progress<int?>(), CancellationToken.None);
 
     var interrupted = Guid.NewGuid();
-    await ExpectAsync<IOException>(() => Download(stable, interrupted));
+    await ExpectAsync<IOException>(() => Download(selectedStable, interrupted));
     Check(!Directory.Exists(transaction.Payload(interrupted)), "An interrupted archive must never become installable.");
     transaction.DiscardStage(interrupted);
     Check(!Directory.Exists(transaction.Stage(interrupted)), "Discarding a failed download must remove partial assets.");
     interruptArchive = false;
-    var retried = await Download(stable, Guid.NewGuid());
+    var retried = await Download(selectedStable, Guid.NewGuid());
     Check(archiveRequests == 2 && retried.Tag == stableTag && retried.Channel == "stable",
         "Retry must download and validate a fresh copy of the same release.");
 
-    var mismatched = stable with { AssetDigest = $"sha256:{new string('0', 64)}" };
-    await ExpectAsync<InvalidDataException>(() => Download(mismatched, Guid.NewGuid()));
-    Check(archiveRequests == 2, "A mismatch between asset metadata and checksum must prevent archive download.");
+    await ExpectAsync<InvalidDataException>(() => Download(preview, Guid.NewGuid()));
 
     tampered = true;
-    await ExpectAsync<InvalidDataException>(() => Download(stable, Guid.NewGuid()));
-    Check(archiveRequests == 2, "Bad signatures must prevent archive download.");
+    var corrupted = Guid.NewGuid();
+    await ExpectAsync<InvalidDataException>(() => Download(stable, corrupted));
+    Check(archiveRequests == 4 && !Directory.Exists(transaction.Payload(corrupted)),
+        "A downloaded archive with different bytes must fail before extraction.");
 }
 
 static void WriteRelease(string root, string tag, string content)

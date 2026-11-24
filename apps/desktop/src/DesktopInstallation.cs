@@ -25,7 +25,7 @@ internal sealed record ApiModelSettings(string Provider = "deepseek", string Mod
 internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "player",
     ApiModelSettings? ApiModel = null, ApiModelSettings? CustomModel = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ApiModelSettings? CompatibleResponses = null,
-    bool CheckPreviewUpdates = false);
+    bool CheckPreviewUpdates = false, string? UpdateCatalogUrl = null);
 
 internal static class DesktopInstallation
 {

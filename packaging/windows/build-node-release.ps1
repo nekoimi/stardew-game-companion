@@ -5,7 +5,6 @@ param(
     [string]$DotNet = 'dotnet',
     [string]$Cache,
     [string]$ReleaseTag,
-    [string]$UpdatePublicKeyFile,
     [ValidateSet('stable', 'preview')][string]$Channel
 )
 
@@ -26,12 +25,7 @@ $payload = Join-Path $destination 'payload'
 $mod = Join-Path $destination 'mod-build'
 $updater = Join-Path $destination 'updater-build'
 
-$desktopProperties = @()
-if ($UpdatePublicKeyFile) {
-    $publicKey = (Resolve-Path -LiteralPath $UpdatePublicKeyFile).Path
-    $desktopProperties += "-p:UpdatePublicKeyFile=$publicKey"
-}
-& $DotNet publish (Join-Path $repository 'apps/desktop/src') -c Release -o $desktop @desktopProperties
+& $DotNet publish (Join-Path $repository 'apps/desktop/src') -c Release -o $desktop
 if ($LASTEXITCODE) { throw 'Desktop publish failed.' }
 & $DotNet publish (Join-Path $repository 'apps/updater') -c Release -o $updater
 if ($LASTEXITCODE) { throw 'Updater publish failed.' }

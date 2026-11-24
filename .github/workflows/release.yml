@@ -62,7 +62,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           STARDEW_GAME_PATH: ${{ steps.references.outputs.path }}
-          UPDATE_PUBLIC_KEY: ${{ vars.STARDEW_UPDATE_PUBLIC_KEY }}
         run: |
           $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
           $tag = ([string]$env:RELEASE_TAG).Trim()
@@ -72,34 +71,23 @@ jobs:
             $tag = "v$version-dev.$date.$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT"
             $prerelease = $true
           }
-          if ($tag.StartsWith('-')) { throw 'A release tag cannot start with a hyphen.' }
+          if ($tag.StartsWith('-') -or $tag.Length -gt 200) { throw 'Invalid release tag.' }
           git check-ref-format "refs/tags/$tag"
           if ($LASTEXITCODE) { throw 'Invalid Git release tag.' }
 
           $output = Join-Path $env:RUNNER_TEMP "companion-release-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          if (!$env:UPDATE_PUBLIC_KEY) { throw 'Set the STARDEW_UPDATE_PUBLIC_KEY repository variable.' }
-          $publicKey = Join-Path $env:RUNNER_TEMP 'update-publisher.spki'
-          [IO.File]::WriteAllBytes($publicKey, [Convert]::FromBase64String($env:UPDATE_PUBLIC_KEY))
           $channel = if ($prerelease) { 'preview' } else { 'stable' }
-          & ./packaging/windows/build-node-release.ps1 -Output $output -ReleaseTag $tag -Channel $channel -UpdatePublicKeyFile $publicKey
+          & ./packaging/windows/build-node-release.ps1 -Output $output -ReleaseTag $tag -Channel $channel
 
           $archive = Join-Path $output "StardewGameCompanion-$version-windows-x64.zip"
-          @("tag=$tag", "version=$version", "archive=$archive", "public_key=$publicKey", "channel=$channel", "prerelease=$($prerelease.ToString().ToLowerInvariant())") >> $env:GITHUB_OUTPUT
-      - name: Sign update package
+          @("tag=$tag", "version=$version", "archive=$archive", "channel=$channel", "prerelease=$($prerelease.ToString().ToLowerInvariant())") >> $env:GITHUB_OUTPUT
+      - name: Verify package with the desktop updater
         shell: pwsh
         env:
           ARCHIVE: ${{ steps.build.outputs.archive }}
-          PUBLIC_KEY_FILE: ${{ steps.build.outputs.public_key }}
-          STARDEW_UPDATE_SIGNING_KEY: ${{ secrets.STARDEW_UPDATE_SIGNING_KEY }}
-        run: ./packaging/windows/sign-update.ps1 -Archive $env:ARCHIVE -PublicKeyFile $env:PUBLIC_KEY_FILE
-      - name: Verify signed package with the desktop updater
-        shell: pwsh
-        env:
-          ARCHIVE: ${{ steps.build.outputs.archive }}
-          PUBLIC_KEY_FILE: ${{ steps.build.outputs.public_key }}
           RELEASE_TAG: ${{ steps.build.outputs.tag }}
           RELEASE_CHANNEL: ${{ steps.build.outputs.channel }}
-        run: dotnet run --project tests/desktop-updates -c Release -- --verify-release $env:ARCHIVE $env:PUBLIC_KEY_FILE $env:RELEASE_TAG $env:RELEASE_CHANNEL
+        run: dotnet run --project tests/desktop-updates -c Release -- --verify-release $env:ARCHIVE $env:RELEASE_TAG $env:RELEASE_CHANNEL
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         id: upload
         with:
@@ -107,7 +95,6 @@ jobs:
           path: |
             ${{ steps.build.outputs.archive }}
             ${{ steps.build.outputs.archive }}.sha256
-            ${{ steps.build.outputs.archive }}.sig
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -152,8 +139,22 @@ jobs:
             throw "Tag '$tag' already points to another commit. Select its commit or use a new tag."
           }
 
-          $releaseArgs = @('--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--generate-notes', '--title', $tag)
+          $releaseArgs = @('--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--generate-notes',
+              '--notes', '<!-- stardew-companion-update-catalog-v1 -->', '--title', $tag)
           if ($tagSha) { $releaseArgs += '--verify-tag' }
           if ($env:RELEASE_PRERELEASE -eq 'true') { $releaseArgs += '--prerelease' }
-          gh release create @releaseArgs -- $tag $archive "$archive.sha256" "$archive.sig"
+          gh release create @releaseArgs -- $tag $archive "$archive.sha256"
           if ($LASTEXITCODE) { throw 'GitHub Release creation failed.' }
+
+  refresh-catalog:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Refresh the public update catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run docs.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH"

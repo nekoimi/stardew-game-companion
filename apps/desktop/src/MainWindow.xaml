@@ -696,6 +696,15 @@
                         <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
                             <StackPanel Margin="8,16,8,8" MaxWidth="670">
                                 <TextBlock x:Name="InstalledReleaseText" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                <TextBlock Text="版本目录地址" />
+                                <DockPanel Margin="0,4,0,4">
+                                    <Button x:Name="ResetUpdateSourceButton" DockPanel.Dock="Right" Content="恢复默认"
+                                            Click="ResetUpdateSourceClicked" Margin="8,0,0,0" />
+                                    <TextBox x:Name="UpdateSourceUrl" MaxLength="2048" TextChanged="UpdateSourceEdited"
+                                             AutomationProperties.Name="版本目录地址" />
+                                </DockPanel>
+                                <TextBlock Text="检查更新时保存地址。更新会安装目录中列出的程序，请使用你信任的 HTTPS 地址。"
+                                           TextWrapping="Wrap" Margin="0,0,0,10" />
                                 <CheckBox x:Name="PreviewUpdates" Content="检查预览版" Checked="PreviewUpdatesChanged"
                                           Unchecked="PreviewUpdatesChanged" Margin="0,0,0,10" />
                                 <WrapPanel>

@@ -2,6 +2,7 @@ using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 using StardewAI.Companion.Updates;
 
@@ -11,10 +12,9 @@ public partial class MainWindow
 {
     private UpdateTransaction? _updates;
     private CancellationTokenSource? _updateCancellation;
-    private (Guid Id, ReleaseInfo Release, string ManifestHash)? _stagedUpdate;
+    private (Guid Id, ReleaseInfo Release, string ManifestHash, string? DownloadHost)? _stagedUpdate;
     private ReleaseInfo? _installedRelease;
     private PublishedUpdate? _publishedUpdate;
-    private readonly byte[]? _updatePublisherKey = UpdateSignature.TrustedKey();
 
     private void InitializeUpdates()
     {
@@ -22,6 +22,7 @@ public partial class MainWindow
         {
             var info = _installedRelease = UpdatePackage.ReadInfo(_root);
             ShowDataLocation();
+            UpdateSourceUrl.Text = _savedSettings.UpdateCatalogUrl ?? CompanionUpdateCatalog.DefaultUrl;
             PreviewUpdates.IsChecked = _savedSettings.CheckPreviewUpdates;
             InstalledReleaseText.Text = $"当前版本 {info?.Tag ?? System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)}";
             if (!File.Exists(Path.Combine(_root, UpdatePackage.Manifest))
@@ -31,7 +32,6 @@ public partial class MainWindow
                 return;
             }
             _updates = new UpdateTransaction(_root);
-            if (_updatePublisherKey is null) UpdateFeedback.Text = "这是本地开发构建，可通过 ZIP 验收更新。";
             if (File.Exists(_updates.ResultPath))
             {
                 UpdateFeedback.Text = UpdatePackage.ReadJson<UpdateResult>(_updates.ResultPath).Detail;
@@ -50,10 +50,36 @@ public partial class MainWindow
     private void RefreshUpdateControls()
     {
         bool ready = _updates is not null && !_closing && _updateCancellation is null;
-        CheckUpdatesButton.IsEnabled = PreviewUpdates.IsEnabled = ready && _installedRelease is not null && _updatePublisherKey is not null;
+        UpdateSourceUrl.IsEnabled = ResetUpdateSourceButton.IsEnabled = CheckUpdatesButton.IsEnabled =
+            PreviewUpdates.IsEnabled = ready && _installedRelease is not null;
         DownloadUpdateButton.IsEnabled = ready && _publishedUpdate is not null;
         SelectUpdateButton.IsEnabled = ready;
         InstallUpdateButton.IsEnabled = ready && _stagedUpdate is not null;
+    }
+
+    private void UpdateSourceEdited(object sender, TextChangedEventArgs e)
+    {
+        if (_updates is null) return;
+        ClearStagedUpdate();
+        _publishedUpdate = null;
+        UpdateNotes.Text = UpdateFeedback.Text = "";
+        RefreshUpdateControls();
+    }
+
+    private void ResetUpdateSourceClicked(object sender, RoutedEventArgs e)
+    {
+        if (_updates is null || _closing || _updateCancellation is not null) return;
+        try
+        {
+            SaveDesktopSettings(_savedSettings with { UpdateCatalogUrl = null });
+            UpdateSourceUrl.Text = CompanionUpdateCatalog.DefaultUrl;
+            UpdateFeedback.Text = "已恢复默认版本目录。";
+        }
+        catch (Exception error) when (IsUpdateFailure(error))
+        {
+            UpdateFeedback.Text = "无法保存版本目录地址。";
+            LogError("update_source_save_failed", "无法保存版本目录地址。", error);
+        }
     }
 
     private void PreviewUpdatesChanged(object sender, RoutedEventArgs e)
@@ -80,6 +106,12 @@ public partial class MainWindow
     private async void CheckUpdatesClicked(object sender, RoutedEventArgs e)
     {
         if (_installedRelease is not { } installed || _closing || _updateCancellation is not null) return;
+        if (!CompanionUpdateCatalog.TryHttpsAddress(UpdateSourceUrl.Text.Trim(), out var catalog))
+        {
+            UpdateFeedback.Text = "请输入有效的 HTTPS 版本目录地址。";
+            UpdateSourceUrl.Focus();
+            return;
+        }
         ClearStagedUpdate();
         _publishedUpdate = null;
         UpdateNotes.Text = "";
@@ -87,7 +119,10 @@ public partial class MainWindow
         string channel = preview ? "预览版" : "正式版";
         await RunUpdateOperationAsync($"正在检查{channel}…", async token =>
         {
-            var release = await GitHubCompanionReleases.Official.FindAsync(preview, token);
+            string? savedUrl = catalog.AbsoluteUri == CompanionUpdateCatalog.DefaultUrl ? null : catalog.AbsoluteUri;
+            if (_savedSettings.UpdateCatalogUrl != savedUrl)
+                SaveDesktopSettings(_savedSettings with { UpdateCatalogUrl = savedUrl });
+            var release = await CompanionUpdateCatalog.Client.FindAsync(catalog, preview, token);
             if (_closing) return;
             if (release is null)
             {
@@ -100,14 +135,14 @@ public partial class MainWindow
                 return;
             }
             _publishedUpdate = release;
-            UpdateNotes.Text = release.Notes;
+            UpdateNotes.Text = release.Notes is { } notes ? notes[..Math.Min(notes.Length, 6000)] : "";
             UpdateFeedback.Text = $"可下载{channel} {release.Tag}。";
         });
     }
 
     private async void DownloadUpdateClicked(object sender, RoutedEventArgs e)
     {
-        if (_updates is not { } updates || _publishedUpdate is not { } release || _updatePublisherKey is not { } key
+        if (_updates is not { } updates || _publishedUpdate is not { } release
             || _closing || _updateCancellation is not null) return;
         await StageUpdateAsync("正在下载更新…", (id, token) =>
         {
@@ -116,8 +151,8 @@ public partial class MainWindow
                 if (_closing || token.IsCancellationRequested) return;
                 UpdateFeedback.Text = percent.HasValue ? $"正在下载更新… {percent}%" : "正在校验下载的更新包…";
             });
-            return GitHubCompanionReleases.Official.DownloadAsync(release, updates.Stage(id), updates.Payload(id), key, progress, token);
-        });
+            return CompanionUpdateCatalog.Client.DownloadAsync(release, updates.Stage(id), updates.Payload(id), progress, token);
+        }, new Uri(release.Url).Host);
     }
 
     private async void SelectUpdateClicked(object sender, RoutedEventArgs e)
@@ -132,12 +167,11 @@ public partial class MainWindow
                 if (!File.Exists(dialog.FileName + ".sha256"))
                     throw new FileNotFoundException("请把发行附带的 .sha256 文件放在所选 ZIP 旁边。");
                 var hash = UpdatePackage.ReadChecksum(dialog.FileName + ".sha256", Path.GetFileName(dialog.FileName));
-                if (_updatePublisherKey is { } key) UpdateSignature.VerifyFile(dialog.FileName + UpdateSignature.Suffix, hash, key);
                 return UpdatePackage.Extract(dialog.FileName, hash, updates.Payload(id), token);
             }, token));
     }
 
-    private async Task StageUpdateAsync(string message, Func<Guid, CancellationToken, Task<ReleaseInfo>> stage)
+    private async Task StageUpdateAsync(string message, Func<Guid, CancellationToken, Task<ReleaseInfo>> stage, string? downloadHost = null)
     {
         ClearStagedUpdate();
         var id = Guid.NewGuid();
@@ -147,7 +181,7 @@ public partial class MainWindow
             {
                 var info = await stage(id, token);
                 if (_closing) return;
-                _stagedUpdate = (id, info, UpdatePackage.ManifestHash(_updates!.Payload(id)));
+                _stagedUpdate = (id, info, UpdatePackage.ManifestHash(_updates!.Payload(id)), downloadHost);
                 UpdateFeedback.Text = $"已校验 {info.Tag}，可以安装。";
             });
         }
@@ -201,8 +235,9 @@ public partial class MainWindow
             UpdateProcess.RequireGameExit();
             string switchNotice = _installedRelease is { } installed && installed.Channel != staged.Release.Channel
                 ? "此操作会切换发行通道，目标版本可能早于当前版本。\n\n" : "";
+            string sourceNotice = staged.DownloadHost is { } host ? $"\n\n更新包来源 {host}" : "";
             if (!new ConfirmationDialog("安装更新",
-                $"{switchNotice}从 {_installedRelease?.Tag ?? "当前版本"} 切换到 {staged.Release.Tag} 并重新打开伴侣？更新器会备份程序和用户数据。", "安装并重启").ShowFor(this))
+                $"{switchNotice}从 {_installedRelease?.Tag ?? "当前版本"} 切换到 {staged.Release.Tag} 并重新打开伴侣？更新器会备份程序和用户数据。{sourceNotice}", "安装并重启").ShowFor(this))
                 return;
             UpdateProcess.RequireGameExit();
             updates.StartHelper("install", staged.Id);

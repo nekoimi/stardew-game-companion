@@ -5,6 +5,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../apps/shared/dotnet/Updates/*.cs" Link="Updates/%(Filename)%(Extension)" />
-    <Compile Include="../../apps/desktop/src/GitHubCompanionReleases.cs" Link="GitHubCompanionReleases.cs" />
+    <Compile Include="../../apps/desktop/src/CompanionUpdateCatalog.cs" Link="CompanionUpdateCatalog.cs" />
   </ItemGroup>
 </Project>

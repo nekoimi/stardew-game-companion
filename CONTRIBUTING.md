@@ -26,11 +26,9 @@ pwsh -File packaging/windows/export-build-references.ps1 -GamePath '<SMAPI 游�
 
 将引用包放在私有存储中，在 GitHub 的「Settings → Secrets and variables → Actions」添加 Secret `STARDEW_BUILD_REFS_URL`，值为 runner 可访问的 HTTPS 下载链接，并添加 Variable `STARDEW_BUILD_REFS_SHA256`，值为导出脚本输出的哈希。更新游戏或 SMAPI 编译目标时重新导出并更新配置。
 
-首次接入更新签名时，生成一套 ECDSA P-256 密钥。将 Base64 编码的 SPKI 公钥保存为 Variable `STARDEW_UPDATE_PUBLIC_KEY`，将对应的 Base64 编码 PKCS#8 私钥保存为 Secret `STARDEW_UPDATE_SIGNING_KEY`。工作流在桌面 EXE 内置公钥，用私钥签署归档的 SHA256。保持同一套发布密钥可让已安装的版本验证后续更新。[更新器实现与验收](docs/development/portable-update-design.md)
-
 发布工作流合并到默认分支后，在「Actions → Release Windows → Run workflow」选择要构建的 Git 引用。`tag` 留空时生成 `v<VERSION>-dev.<北京时间日期>.<运行编号>.<重跑次数>`，例如 `v0.1.0-dev.20261123.42.1`，并标记为预发布；每次新运行或重跑构建都会生成不同标签。手填时使用指定标签，可以新建或复用指向同一提交的标签，已有 Release 保持原样。
 
-Release 展示名称直接使用标签，例如 `v0.1.0-dev.20261123.2.1`。下载包名为 `StardewGameCompanion-<VERSION>-windows-x64.zip`，附带 `.sha256` 和 `.sig`。包名、程序集和 Mod 版本统一读取 `VERSION`，预发布构建由所属 Release 的标签区分。
+Release 展示名称直接使用标签，例如 `v0.1.0-dev.20261123.2.1`。下载包名为 `StardewGameCompanion-<VERSION>-windows-x64.zip`，附带 `.sha256`。包名、程序集和 Mod 版本统一读取 `VERSION`，预发布构建由所属 Release 的标签区分。[更新器实现与验收](docs/development/portable-update-design.md)
 
 ## 开发与测试
 
@@ -44,7 +42,7 @@ Release 展示名称直接使用标签，例如 `v0.1.0-dev.20261123.2.1`。下�
 
 插件宿主可脱离游戏验证。准备 Go 和 .NET 10 SDK，运行 `pwsh -File tests/desktop-plugins/run.ps1`。使用 `python -m pip install -r tests/requirements.txt` 安装验收依赖，再运行 `python tests/contracts/check-plugin-contract.py` 检查清单 Schema。
 
-运行 `dotnet run --project tests/desktop-updates` 验证更新器、签名、数据导入和模拟 GitHub Release。
+运行 `dotnet run --project tests/desktop-updates` 验证更新器、SHA256 校验、数据导入和模拟 GitHub Release。
 
 实际游戏测试使用复制出的隔离存档。桌面交互和三组固定场景的复现见[隔离实机回归](https://nekoimi.github.io/stardew-game-companion/reference/acceptance)。测试用存档、截图、游戏文件和模型密钥留在本地。
 
