@@ -15,7 +15,6 @@ public sealed partial class NormalNativeActionAdapter
         switch (request.Kind)
         {
             case NativeActionKind.RefillWateringCan:
-                if (ActorGuards.IsPlayerBound(actor)) return actor.WateringCan != null ? "Watering Can" : null;
                 // An empty can cannot start a pouring animation. Refill is a
                 // separate native transaction and does not pretend to pour.
                 return null;

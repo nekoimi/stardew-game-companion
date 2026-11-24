@@ -49,14 +49,10 @@ public sealed partial class NormalNativeActionAdapter : INativeActionAdapter
         if (actor is PlayerActor choppingPlayer && request.Kind == NativeActionKind.ChopTree)
             return VerifyPlayerChop(choppingPlayer, request, target);
 
-        if (actor is PlayerActor native && request.Kind is NativeActionKind.RefillWateringCan or NativeActionKind.ClearDebris or NativeActionKind.CutGrass)
+        if (actor is PlayerActor native && request.Kind is NativeActionKind.ClearDebris or NativeActionKind.CutGrass)
         {
             var nativeLocation=actor.GameFarmer?.currentLocation;
             if (nativeLocation == null) return NativeActionStepResult.Failed("Native player binding was lost.");
-            if (request.Kind == NativeActionKind.RefillWateringCan)
-                return native.WaterLeft > native.ToolStartWater
-                    ? NativeActionStepResult.Succeeded("refilled",waterGained:native.WaterLeft-native.ToolStartWater)
-                    : NativeActionStepResult.Precondition("Native refill did not increase water.","not-refilled");
             bool remains=request.Kind == NativeActionKind.ClearDebris
                 ? nativeLocation.getObjectAtTile(target.Tile.X,target.Tile.Y) != null
                 : nativeLocation.terrainFeatures.TryGetValue(new Vector2(target.Tile.X,target.Tile.Y),out var feature) && feature is StardewValley.TerrainFeatures.Grass;

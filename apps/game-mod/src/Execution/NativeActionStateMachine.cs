@@ -433,7 +433,7 @@ public sealed class NativeActionStateMachine : ISkillExecutionMachine
             return;
         }
         var animationTool = _adapter.GetAnimationTool(_actor, _currentRequest!, _currentTarget);
-        if (ActorGuards.IsPlayerBound(_actor) && animationTool is null && _currentRequest!.Kind is NativeActionKind.ClearDebris or NativeActionKind.CutGrass or NativeActionKind.RefillWateringCan) {
+        if (ActorGuards.IsPlayerBound(_actor) && animationTool is null && _currentRequest!.Kind is NativeActionKind.ClearDebris or NativeActionKind.CutGrass) {
             FinishExecution(ExecutionState.Failed,"The requested native tool/target is unavailable; no action was performed.","NATIVE_TOOL_UNAVAILABLE"); return;
         }
         if (animationTool is not null)
