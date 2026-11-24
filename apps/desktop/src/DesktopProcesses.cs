@@ -198,6 +198,8 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
                 "model_request_started" => ("info", "开始调用模型。"),
                 "model_request_retry" => ("warn", "模型调用暂时失败，等待重试。"),
                 "tool_result" => ("info", "Agent 工具调用已返回。"),
+                "work_stage_completed" => ("info", "农场工作阶段已结算。"),
+                "turn_completed" => ("info", "Agent 回合已结算。"),
                 "turn_failed" => ("warn", "Agent 回合未完成。"),
                 "action_result" => ("info", "收到原生动作回执。"),
                 "receipt_retention_failed" => ("warn", "历史回执整理未完成，将在下次检查时重试。"),
@@ -207,13 +209,26 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
             var details = new Dictionary<string, JsonElement>();
             foreach (var property in entry.EnumerateObject())
             {
-                if (property.Name == "completedCount" && property.Value.ValueKind == JsonValueKind.Number)
+                if (property.Name is "completedCount" or "remainingCount" or "skippedCount" or "failedCount"
+                    or "nativeActions" or "targetCount" or "modelRequestsAtDispatch" or "modelRequestsDuringStage"
+                    or "modelRequests" or "elapsedMs" or "stages"
+                    && property.Value.ValueKind == JsonValueKind.Number)
+                    details[property.Name] = property.Value.Clone();
+                if (property.Name == "needsReconciliation" && property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
                     details[property.Name] = property.Value.Clone();
                 if (property.Name is "gameSessionId" or "requestId" or "commandId" or "skillId" or "status" or "tool"
-                    or "provider" or "protocol" or "code"
+                    or "provider" or "protocol" or "code" or "turnId" or "goalId" or "operation" or "stopReason"
                     && property.Value.ValueKind == JsonValueKind.String
                     && DiagnosticToken.IsMatch(property.Value.GetString()!))
                     details[property.Name] = property.Value.Clone();
+                if (property.Name == "stageId" && entry.TryGetProperty("turnId", out var turn)
+                    && turn.ValueKind == JsonValueKind.String && Guid.TryParse(turn.GetString(), out var turnId)
+                    && property.Value.ValueKind == JsonValueKind.String
+                    && property.Value.GetString()!.StartsWith(turnId.ToString() + ":", StringComparison.Ordinal)) {
+                    // Provider call IDs may be long; retain a stable bounded hash.
+                    details[property.Name] = JsonSerializer.SerializeToElement(turnId + ":" +
+                        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(property.Value.GetString()!)))[..16]);
+                }
             }
             logger.Write("runtime", level!, kind.GetString()!, message, details);
             return true;

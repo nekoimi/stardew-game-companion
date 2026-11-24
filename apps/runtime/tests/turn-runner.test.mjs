@@ -403,14 +403,14 @@ test("harvest stage limits the request and distinguishes multi-yield inventory g
   game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
     farmWork: { locationId: "Farm", observationStatus: "observed", matureCropsTruncated: false,
       matureCrops: [tile, { x: 4, y: 2 }] },
-    inventory: { capacity: 12, freeSlots: 3, slots: [] }, farming: { location: "Farm", groundItems: [] } };
+    inventory: { capacity: 12, freeSlots: 3, slots: [{ itemId: "(O)388", stack: 3 }] }, farming: { location: "Farm", groundItems: [] } };
   const calls = [];
   const context = { binding, turnId: "harvest", requestId: "harvest", goalId: "harvest", signal: new AbortController().signal,
     async native(skill, parameters) {
       calls.push({ skill, parameters });
       game.snapshot = { ...game.snapshot, capturedRevision: 2,
         farmWork: { ...game.snapshot.farmWork, matureCrops: [{ x: 4, y: 2 }] },
-        inventory: { ...game.snapshot.inventory, slots: [{ itemId: "(O)258", stack: 3 }] } };
+        inventory: { ...game.snapshot.inventory, slots: [{ itemId: "(O)258", stack: 3 }, { itemId: "(O)388", stack: 3 }] } };
       return { commandId: "harvest-1", terminalState: "succeeded", finalWorldRevision: 2,
         effects: [{ state: "harvested", tile, itemId: "(O)258", stack: 1 }] };
     }, speak() {}, changed() {} };
@@ -419,6 +419,7 @@ test("harvest stage limits the request and distinguishes multi-yield inventory g
   assert.equal(result.completedCount, 1);
   assert.equal(result.stopReason, "requested-limit-reached");
   assert.deepEqual(result.inventoryGains, [{ itemId: "(O)258", count: 3 }]);
+  assert.deepEqual(result.inventory.items, [{ itemId: "(O)258", count: 3 }, { itemId: "(O)388", count: 3 }]);
   assert.deepEqual(calls, [{ skill: "harvest-zone", parameters: { locationId: "Farm", tiles: [tile] } }]);
   game.snapshot.inventory.freeSlots = 0;
   const full = await invoke({ location_id: "Farm" });
@@ -450,7 +451,9 @@ test("pickup stage verifies auto-collection and ignores placed objects at the ne
   const result = await invoke();
   assert.deepEqual(result.collectedItems, [{ itemId: "(O)388", count: 3 }]);
   assert.equal(result.stopReason, "no-more-ground-items");
-  assert.equal((await invoke()).stopReason, "no-observed-targets");
+  const empty = await invoke();
+  assert.equal(empty.stopReason, "no-observed-targets");
+  assert.deepEqual(empty.inventory.items, [{ itemId: "(O)388", count: 3 }]);
   assert.deepEqual(calls, [{ skill: "pickup-items", parameters: { locationId: "Farm", tiles: [drop] } }]);
 });
 
@@ -585,6 +588,7 @@ test("several harvest batches need one model dispatch and one compact summary wi
       effects: parameters.tiles.map(tile => ({ tile, state: "harvested" })) };
   };
   let calls = 0, summary;
+  const metrics = [];
   const runner = new TurnRunner(game, { async *generate({ messages }) {
     calls++;
     if (calls === 1) yield done([
@@ -592,7 +596,7 @@ test("several harvest batches need one model dispatch and one compact summary wi
       { id: "harvest", name: "submit_work", arguments: { action: { harvest_crops: { location_id: "Farm" } } } },
     ]);
     else { summary = messages.at(-1).result; yield done(); }
-  } }, () => {}, "", store);
+  } }, () => {}, "", store, "", undefined, (event, details) => metrics.push({ event, details }));
   try {
     game.emit("changed");
     await runner.submit(binding, "large-harvest", "收一下成熟作物", "send");
@@ -606,7 +610,59 @@ test("several harvest batches need one model dispatch and one compact summary wi
     assert.ok(JSON.stringify(summary).length < 1500);
     assert.equal(store.recentReceipts(binding.saveId).length, 3);
     assert.equal(store.items(binding.saveId, "goals")[0].lastStage.completedCount, 65);
+    const stage = metrics.find(row => row.event === "work_stage_completed").details;
+    assert.equal(stage.nativeActions, 3);
+    assert.equal(stage.targetCount, 65);
+    assert.equal(stage.modelRequestsDuringStage, 0);
+    assert.equal(stage.requestId, "large-harvest");
+    const turn = metrics.find(row => row.event === "turn_completed").details;
+    assert.equal(turn.modelRequests, 2);
+    assert.equal(turn.stages, 1);
+    assert.ok(!JSON.stringify(metrics).includes("收一下成熟作物"));
   } finally { await runner.stop(); store.close(); }
+});
+
+test("shared C# farm inspection contract drives only the observed crop inside the requested region", async () => {
+  const sample = JSON.parse(readFileSync(new URL("../../../contracts/game-bridge/examples/batched-farm-work.json", import.meta.url)));
+  const game = new FakeGame();
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm", hasWateringCan: true, waterCanLevel: 2 },
+    farmWork: { locationId: "Farm", observationStatus: "unavailable" } };
+  const calls = [];
+  const context = { binding, turnId: "contract", requestId: "contract", goalId: "contract",
+    signal: new AbortController().signal, speak() {}, changed() {},
+    async native(skill, parameters, observation) {
+      calls.push({ skill, parameters, observation });
+      if (observation) return { terminalState: "succeeded", finalWorldRevision: 1, details: { farmWork: sample.farmWork } };
+      game.snapshot = { ...game.snapshot, farmWork: { ...sample.farmWork, cropUnwateredTiles: [], cropUnwateredCount: 0 } };
+      return { commandId: "water-contract", terminalState: "succeeded", finalWorldRevision: 1,
+        effects: [{ tile: { x: 2, y: 3 }, state: "watered" }] };
+    } };
+  const result = await new CompanionTools(game, "").invoke(context, "submit_work", { action: {
+    tend_crops: { location_id: sample.parameters.locationId, region: sample.parameters.region } } });
+  assert.equal(result.completedCount, 1);
+  assert.deepEqual(calls.map(row => row.skill), ["inspect-farm-work", "water-zone"]);
+  assert.deepEqual(calls[1].parameters.tiles, sample.farmWork.cropUnwateredTiles);
+});
+
+test("crop-care cannot dispatch its refill after an unconfirmed watering action", async () => {
+  const game = new FakeGame();
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm", waterCanLevel: 1, hasWateringCan: true },
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTruncated: false,
+      cropUnwateredTiles: [{ x: 2, y: 3 }, { x: 3, y: 3 }] } };
+  game.nativeResult = () => { throw new Error("No receipt"); };
+  let calls = 0;
+  const { runner } = fixture(game, { async *generate() {
+    calls++;
+    yield done([{ id: "care", name: "submit_work", arguments: { action: { tend_crops: { location_id: "Farm" } } } }]);
+  } });
+  try {
+    await runner.submit(binding, "uncertain-care", "浇水，缺水就补水", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(runner.status().recoveryPending, true);
+    assert.equal(game.queryCount, 1);
+    assert.equal(game.executed.length, 1);
+    assert.equal(calls, 1);
+  } finally { await runner.stop(); }
 });
 
 async function waitFor(check, attempts = 100) {

@@ -53,15 +53,19 @@ def count(items, item_id):
 
 def summarize_trace(trace):
     calls = []
+    stages = []
     messages = 0
     for row in trace:
+        if row.get("type") == "work-stage":
+            stages.append(row["payload"])
+            continue
         if row.get("type") == "tool":
             calls.append({**row["payload"], "nonterminal": False})
             continue
         if row.get("type") == "life.chat.reply":
             messages += bool(row["payload"].get("replyText"))
             continue
-    return {"toolCalls": calls, "toolCount": len(calls), "errorCount": sum(c["error"] for c in calls),
+    return {"toolCalls": calls, "toolCount": len(calls), "errorCount": sum(c["error"] for c in calls), "workStages": stages,
             "publicMessages": messages}
 
 
@@ -82,7 +86,10 @@ def evaluate(case, before, after, samples):
         "same_game_day": all(after.get(k) == before.get(k) and k in before for k in ("year", "season", "day")),
         "native_action_finished": native_finished(after),
     }
-    if case in {"walk-pickup", "walk-pickup-full"}:
+    if case == "empty-farm":
+        checks["no_crops"] = after.get("harnessFixtureCropCount") == 0
+        checks["no_dry_crops"] = after.get("harnessFixtureDryCropCount") == 0
+    elif case in {"walk-pickup", "walk-pickup-full"}:
         checks.pop("targets_preserved")
         checks["ground_drop_matches_capacity"] = after.get("acceptanceGroundDropRemaining") is (case == "walk-pickup-full")
         checks["wood_in_backpack"] = count(after.get("companionItems"), "(O)388") == (0 if case == "walk-pickup-full" else 3)
@@ -332,6 +339,13 @@ class Runner:
                 key.startswith("walking-facing:") and len(set(value)) >= 2 for key, value in frames.items()
             )
             checks["no_solid_overlap_while_moving"] = (after.get("movementSamples") or 0) > 0 and after.get("solidOverlaps") == []
+            if self.case == "empty-farm":
+                checks.pop("walking_animation_changes_in_same_direction")
+                checks.pop("no_solid_overlap_while_moving")
+                checks["no_native_actions_dispatched"] = not any(row.get("type") == "result" for row in trace)
+                checks["three_empty_stages_confirmed"] = len(actions) == 3 and all(
+                    c["result"].get("stopReason") == "no-observed-targets"
+                    and c["result"].get("completedCount") == 0 for c in actions)
             self.report["checks"] = checks
             self.report["status"] = "passed" if all(checks.values()) else "failed"
         except Exception as error:

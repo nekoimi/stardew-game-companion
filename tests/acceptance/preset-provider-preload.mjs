@@ -13,6 +13,13 @@ function plan(messages) {
   const request = before.findLast(row => row.type === "user")?.text ?? "";
   if (firstTool < 0) return observe;
   const lastCall = messages.findLast(row => row.type === "call");
+  if (request.includes("没有目标就不要动作")) {
+    const farm = { location_id: "Farm" };
+    if (lastCall?.name === "get_status") return work("tend_crops", farm);
+    if (operation(lastCall) === "tend_crops") return work("harvest_crops", farm);
+    if (operation(lastCall) === "harvest_crops") return work("collect_ground_items", farm);
+    return {};
+  }
   if (lastCall?.name !== "get_status") {
     const lastResult = messages.findLast(row => row.type === "result").result;
     const action = operation(lastCall);

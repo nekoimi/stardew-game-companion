@@ -1879,9 +1879,8 @@ public sealed partial class GameWorldObserver : IWorldObserver
         int radius,
         int maxItems = 64)
     {
-        var loc = Game1.getLocationFromName(locationName) ?? Game1.currentLocation;
-        if (loc is null)
-            return Array.Empty<GroundItemScanInfo>();
+        var loc = Game1.getLocationFromName(locationName)
+            ?? throw new InvalidOperationException($"Location '{locationName}' is not loaded.");
 
         radius = Math.Clamp(radius, 0, 256);
         var items = new List<GroundItemScanInfo>();
@@ -1962,6 +1961,7 @@ public sealed partial class GameWorldObserver : IWorldObserver
         catch (Exception ex)
         {
             _monitor.Log($"Error scanning ground items at '{locationName}': {ex.Message}", LogLevel.Warn);
+            throw;
         }
 
         return items.OrderByDescending(i => i.IsDropped || i.CanBeGrabbed)

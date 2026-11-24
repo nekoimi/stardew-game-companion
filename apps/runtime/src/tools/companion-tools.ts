@@ -164,6 +164,12 @@ function summarizeGround(ground: JsonValue | undefined): JsonValue {
   return Array.isArray(groundItems) ? { locationId, count: groundItems.length, truncated, items: groundItems.slice(0, 8) } : null;
 }
 
+function summarizeInventory(inventory: JsonObject): JsonObject {
+  if (!Array.isArray(inventory.slots)) return { status: "unavailable" };
+  const items = [...itemCounts(inventory.slots)].map(([itemId, count]) => ({ itemId, count }));
+  return { status: "observed", items: items.slice(0, 24), truncated: items.length > 24 };
+}
+
 function observedChest(snapshot: JsonObject, tile: JsonObject): JsonObject | undefined {
   const chests = object(snapshot.chests);
   // The game snapshot's chests section is scoped to Farm.
@@ -585,11 +591,13 @@ export class CompanionTools {
     let remaining: number | null = null;
     let finalRevision = 0;
     let inventoryGains: JsonObject[] = [];
+    let inventorySummary: JsonObject = { status: "unavailable" };
     let ground: JsonValue = null;
     try { while (harvested.size < limit) {
       stopReason = context.workBlock?.() ?? "";
       if (stopReason) break;
       let snapshot = await this.game.observe();
+      inventorySummary = summarizeInventory(object(snapshot.inventory));
       let farm = object(snapshot.farmWork ?? object(snapshot.world).farmWork);
       if (farm.locationId !== locationId || farm.observationStatus !== "observed" || farm.matureCropsTruncated !== false
           || (finalRevision && Number(snapshot.capturedRevision ?? -1) < finalRevision)) {
@@ -605,11 +613,13 @@ export class CompanionTools {
         stopReason = "crop-observation-unavailable";
         break;
       }
-      const all = observedTiles(farm.matureCrops).filter(tile => inRegion(tile, region));
+      const valid = observedTiles(farm.matureCrops);
+      const complete = farm.matureCropsTruncated === false && valid.length === farm.matureCrops.length;
+      const all = valid.filter(tile => inRegion(tile, region));
       const targets = all.filter(tile => !harvested.has(tileKey(tile)));
-      remaining = farm.matureCropsTruncated === false ? all.length : null;
+      remaining = complete ? all.length : null;
       if (!targets.length) {
-        stopReason = farm.matureCropsTruncated === false
+        stopReason = complete
           ? all.length ? "no-progress" : harvested.size ? "no-mature-crops" : "no-observed-targets" : "crop-observation-truncated";
         break;
       }
@@ -639,6 +649,7 @@ export class CompanionTools {
       const after = await this.observeAfterWork(context, locationId, finalRevision);
       if (after.status === "unavailable") { stopReason = "harvest-observation-unavailable"; break; }
       inventoryGains = inventoryDifference(inventory, object(after.inventory), inventoryGains);
+      inventorySummary = summarizeInventory(object(after.inventory));
       ground = after.ground;
       if (String(object(receipt.error).code).toLowerCase() === "inventory_full" || object(receipt.details).inventoryFull === true) {
         stopReason = "inventory-full";
@@ -660,7 +671,7 @@ export class CompanionTools {
     return { status: ["no-mature-crops", "requested-limit-reached"].includes(stopReason) ? "completed" : "stopped", stopReason,
       completedCount: harvested.size, skippedCount: skipped, failedCount: failed, remainingCount: remaining,
       observationComplete: remaining !== null, receiptCount: receipts.length, receiptIds: receipts.slice(-8),
-      inventoryGains, ground: summarizeGround(ground),
+      inventoryGains, inventory: inventorySummary, ground: summarizeGround(ground),
       ...(stopReason === "no-observed-targets" && !harvested.size ? { message: "当前没有观察到成熟作物。" } : {}) };
   }
 
@@ -675,6 +686,7 @@ export class CompanionTools {
     let stopReason = "";
     let observationComplete = false;
     let finalRevision = 0;
+    let inventorySummary: JsonObject = { status: "unavailable" };
     try { for (;;) {
       stopReason = context.workBlock?.() ?? "";
       if (stopReason) break;
@@ -689,6 +701,10 @@ export class CompanionTools {
         break;
       }
       observationComplete = production.groundItemsTruncated === false;
+      const before = await this.game.observe();
+      inventorySummary = summarizeInventory(object(before.inventory));
+      if (object(before.companion).locationId !== locationId) { stopReason = "actor-location-changed"; break; }
+      if (!Array.isArray(object(before.inventory).slots)) { stopReason = "inventory-observation-unavailable"; break; }
       const candidates = production.groundItems.map(object).filter(item => tileKey(item.tile) && collectible(item)
         && inRegion(object(item.tile), region)
         && (!requested || requested.has(tileKey(item.tile))));
@@ -698,9 +714,6 @@ export class CompanionTools {
       }
       const target = candidates.find(item => !attempted.has(tileKey(item.tile)));
       if (!target) { stopReason = "no-progress"; break; }
-      const before = await this.game.observe();
-      if (object(before.companion).locationId !== locationId) { stopReason = "actor-location-changed"; break; }
-      if (!Array.isArray(object(before.inventory).slots)) { stopReason = "inventory-observation-unavailable"; break; }
       stopReason = context.workBlock?.() ?? "";
       if (stopReason) break;
       attempted.add(tileKey(target.tile));
@@ -719,6 +732,7 @@ export class CompanionTools {
         break;
       }
       const candidateIds = new Set(candidates.map(item => item.itemId));
+      inventorySummary = summarizeInventory(object(after.inventory));
       for (const gain of inventoryDifference(object(before.inventory), object(after.inventory))) {
         if (typeof gain.itemId === "string" && candidateIds.has(gain.itemId)) {
           collected.set(gain.itemId, (collected.get(gain.itemId) ?? 0) + Number(gain.count));
@@ -736,6 +750,7 @@ export class CompanionTools {
     return { status: stopReason === "no-more-ground-items" ? "completed" : "stopped", stopReason,
       completedCount: [...collected.values()].reduce((sum, value) => sum + value, 0),
       collectedItems: [...collected].map(([itemId, count]) => ({ itemId, count })),
+      inventory: inventorySummary,
       failedCount: failed, observationComplete, receiptCount: receipts.length, receiptIds: receipts.slice(-8) };
   }
 

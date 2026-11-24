@@ -35,6 +35,10 @@ interface Turn {
   settled: Promise<void>;
   plugin?: PluginCommand;
   stagePerformed?: boolean;
+  modelRequests: number;
+  nativeActions: number;
+  stages: number;
+  startedAt: number;
 }
 
 export class TurnRunner {
@@ -388,7 +392,8 @@ export class TurnRunner {
     if (!this.model) return;
     if (!bedtimeOnly && !plugin) this.modelFailure = undefined;
     const turn: Turn = { id: randomUUID(), requestId, originalRequestId, appliedRequestId: requestId, goalId, binding, abort: new AbortController(), additional: [],
-      requests: [requestId], settled: Promise.resolve(), plugin };
+      requests: [requestId], settled: Promise.resolve(), plugin,
+      modelRequests: 0, nativeActions: 0, stages: 0, startedAt: Date.now() };
     this.active = turn;
     if (plugin) {
       plugin.status = "running";
@@ -681,6 +686,7 @@ export class TurnRunner {
             observations: decisionObservation(this.game.snapshot) } : undefined;
           this.diagnostic?.("model_request_started", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
             provider: this.selection?.provider ?? null, protocol: this.selection?.protocol ?? null, source });
+          turn.modelRequests++;
           for await (const event of model.generate({ instructions: this.rules, context, messages, tools: gameTools,
             signal: AbortSignal.any([signal, idle.signal]) })) {
             if (streaming && (event.type === "text" || event.type === "activity")) idleTimer.refresh();
@@ -744,6 +750,10 @@ export class TurnRunner {
           this.assertBinding(turn.binding);
           let result: JsonValue;
           let failed = false;
+          const operation = call.name === "submit_work" ? Object.keys(object(call.arguments.action))[0] : "";
+          const stage = Object.hasOwn(workflows, operation);
+          const stageStart = Date.now(), initialActions = turn.nativeActions, initialModels = turn.modelRequests;
+          let targetCount = 0;
           const workBlock = () => {
             const current = this.game.binding;
             if (this.uncertain || this.game.state.recoveryPending === true) return "recovery-pending";
@@ -765,6 +775,10 @@ export class TurnRunner {
                 }
                 if (!observation && turn.additional.length) throw new Error("收到玩家的新要求，先按新要求重新安排剩余工作。");
                 if (!observation && this.bedtimeNeedsSleep(turn.binding) && skill !== "sleep") throw new Error("已到返程时间，先按存档作息休息。");
+                if (!observation && skill !== "refill-watering-can") {
+                  targetCount += Array.isArray(params.tiles) ? params.tiles.length : Array.isArray(params.items)
+                    ? params.items.reduce<number>((sum, item) => sum + Number(object(item).count ?? 0), 0) : 1;
+                }
                 return this.executeNative(turn, skill, params, observation);
               },
               speak: spoken => this.deliver(turn, spoken, `${turn.requestId}:public:${++publicMessages}`),
@@ -783,8 +797,22 @@ export class TurnRunner {
             if (call.name === "request_player_decision") waiting = true;
           }
           catch (error) { failed = true; result = { error: error instanceof Error ? error.message : "工具执行失败。" }; }
-          const operation = call.name === "submit_work" ? Object.keys(object(call.arguments.action))[0] : "";
-          if (!failed && Object.hasOwn(workflows, operation)) {
+          if (stage) {
+            turn.stages++;
+            const summary = object(result);
+            const metrics = { stageId: `${turn.id}:${call.id}`, gameSessionId: turn.binding.gameSessionId,
+              turnId: turn.id, requestId: turn.originalRequestId, goalId: turn.goalId, operation,
+              nativeActions: turn.nativeActions - initialActions, targetCount, modelRequestsAtDispatch: initialModels,
+              modelRequestsDuringStage: turn.modelRequests - initialModels, elapsedMs: Date.now() - stageStart,
+              completedCount: summary.completedCount ?? null, remainingCount: summary.remainingCount ?? null,
+              skippedCount: summary.skippedCount ?? null, failedCount: summary.failedCount ?? null,
+              status: failed ? "failed" : summary.status ?? "unknown",
+              stopReason: this.uncertain ? "recovery-pending" : summary.stopReason ?? "tool-error",
+              needsReconciliation: !!this.uncertain || summary.needsReconciliation === true };
+            this.diagnostic?.("work_stage_completed", metrics);
+            this.trace?.("work-stage", metrics);
+          }
+          if (!failed && stage) {
             turn.stagePerformed = true;
             const goal = !plugin && this.store?.items(save, "goals").find(item => item.id === turn.goalId && item.status === "active");
             if (goal) this.store?.updateItem(save, "goals", turn.goalId, { lastStage: {
@@ -847,6 +875,11 @@ export class TurnRunner {
         this.wakeSignatures.set(save, this.wakeSignature(turn.binding, goal));
       }
       if (this.active === turn) this.active = undefined;
+      this.diagnostic?.("turn_completed", { gameSessionId: turn.binding.gameSessionId, turnId: turn.id,
+        requestId: turn.originalRequestId, goalId: turn.goalId, modelRequests: turn.modelRequests,
+        nativeActions: turn.nativeActions, stages: turn.stages, elapsedMs: Date.now() - turn.startedAt,
+        status: signal.aborted ? "interrupted" : failure ? "failed" : waiting ? "waiting-player" : "completed",
+        needsReconciliation: !!this.uncertain });
       this.changed();
     }
   }
@@ -890,6 +923,7 @@ export class TurnRunner {
     }
     if (previousFailure && previousFailure !== actorPosition) this.unreachableActions.delete(blockedKey);
     const actionId = turn.nativeAction = randomUUID();
+    if (!observation) turn.nativeActions++;
     turn.nativeSkill = skill;
     this.changed();
     try {

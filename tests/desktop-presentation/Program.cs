@@ -18,6 +18,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Length == 2 && args[0] == "--controls") return DesktopControlRegression.Run(args[1]);
+        VerifyBatchDiagnostics();
         using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "work-feedback.json")));
         var fixture = document.RootElement;
         var raw = fixture.GetProperty("receipts").EnumerateArray().ToArray();
@@ -159,6 +160,36 @@ internal static class Program
         };
         app.Run(window);
         return exit;
+    }
+
+    private static void VerifyBatchDiagnostics()
+    {
+        string root = Directory.CreateTempSubdirectory("companion-batch-logs-").FullName;
+        var logger = new FileLogger(root);
+        try
+        {
+            var processes = new DesktopProcesses(AppContext.BaseDirectory, logger);
+            var write = typeof(DesktopProcesses).GetMethod("LogRuntimeEvent", Private)!;
+            string turnId = Guid.NewGuid().ToString();
+            string entry = "STARDEW_COMPANION_LOG " + JsonSerializer.Serialize(new {
+                @event = "work_stage_completed", turnId, stageId = turnId + ":provider-call-" + new string('x', 160),
+                goalId = "farm-goal", requestId = "farm-request", operation = "tend_crops", status = "completed",
+                nativeActions = 3, targetCount = 12, modelRequestsDuringStage = 0, elapsedMs = 5000,
+                needsReconciliation = false, apiKey = "secret-must-not-persist", text = "private-message",
+            });
+            Check((bool)write.Invoke(processes, new object[] { entry })!, "Stage metric was rejected by the desktop logger.");
+            logger.StopAsync().GetAwaiter().GetResult();
+            var line = File.ReadAllLines(Directory.GetFiles(root, "runtime-*.log").Single()).Single();
+            using var parsed = JsonDocument.Parse(line);
+            var details = parsed.RootElement.GetProperty("details");
+            Check(details.GetProperty("nativeActions").GetInt32() == 3 &&
+                details.GetProperty("modelRequestsDuringStage").GetInt32() == 0 &&
+                details.GetProperty("turnId").GetString() == turnId &&
+                details.GetProperty("stageId").GetString()!.StartsWith(turnId + ":"),
+                "File logging lost the batch efficiency or correlation fields.");
+            Check(!line.Contains("secret-must-not-persist") && !line.Contains("private-message"), "Private model data reached a diagnostic log.");
+        }
+        finally { logger.StopAsync().GetAwaiter().GetResult(); Directory.Delete(root, true); }
     }
 
     private static JsonElement WithBinding(JsonElement receipt)

@@ -43,6 +43,7 @@ public sealed class TestDriverMod : Mod
     private readonly List<Vector2> _harnessFixtureTiles = new();
     private readonly HashSet<Vector2> _harnessFixtureInitiallyEmpty = new();
     private string? _harnessFixtureMode;
+    private Vector2? _harnessFixtureOrigin;
     private Vector2? _acceptanceChest;
     private Debris? _acceptanceDrop;
     private int _acceptanceMovementSamples;
@@ -3503,7 +3504,7 @@ public sealed class TestDriverMod : Mod
             ?? throw new InvalidOperationException("Production ModEntry unavailable for harness fixture.");
         AssertHarnessFixtureBoundary(modEntry);
         string mode = request.GetProperty("mode").GetString() ?? "";
-        if (mode is not ("watering" or "partial-planting" or "harvest-store" or "rest-water" or "water-refill" or "mature-trees" or "walk-pickup" or "walk-pickup-full"))
+        if (mode is not ("watering" or "partial-planting" or "harvest-store" or "rest-water" or "water-refill" or "mature-trees" or "walk-pickup" or "walk-pickup-full" or "empty-farm"))
             throw new ArgumentException("Unknown harness fixture mode.");
         if (Game1.currentSeason != "spring")
             throw new InvalidOperationException("Parsnip harness fixture requires a spring clone; it never changes the game calendar.");
@@ -3535,7 +3536,10 @@ public sealed class TestDriverMod : Mod
         var selected = new List<Vector2>();
         var reachable = new List<object>();
         int count = mode == "watering" ? 80 : mode == "partial-planting" ? 19 : mode == "water-refill" ? 12 : 6;
-        Vector2 center = farmer.Tile + new Vector2(0, 10);
+        // Scene layout stays anchored to the initial pose when the suite resets
+        // the fixture after shipping or travelling. Do not drift into the pond.
+        _harnessFixtureOrigin ??= farmer.Tile;
+        Vector2 center = _harnessFixtureOrigin.Value + new Vector2(0, 10);
         var candidates = Enumerable.Range(-16, 33).SelectMany(dx => Enumerable.Range(-6, 25)
                 .Select(dy => center + new Vector2(dx, dy)))
             .OrderBy(tile => Vector2.DistanceSquared(tile, center)).ThenBy(tile => tile.Y).ThenBy(tile => tile.X);
@@ -3584,7 +3588,7 @@ public sealed class TestDriverMod : Mod
         _harnessFixtureTiles.AddRange(selected);
         _harnessFixtureInitiallyEmpty.Clear();
         _harnessFixtureMode = mode;
-        if (mode is "water-refill" or "harvest-store" or "rest-water" or "mature-trees" or "walk-pickup" or "walk-pickup-full")
+        if (mode is "water-refill" or "harvest-store" or "rest-water" or "mature-trees" or "walk-pickup" or "walk-pickup-full" or "empty-farm")
         {
             // Natural player requests refer to the whole field. Remove unrelated
             // baseline crops only during isolated fixture setup, never during execution.
@@ -3682,6 +3686,14 @@ public sealed class TestDriverMod : Mod
                 while (farmer.Items.Count <= index) farmer.Items.Add(null);
                 if (farmer.Items[index] is not Tool) farmer.Items[index] = ItemRegistry.Create("(O)390", 999);
             }
+        }
+        if (mode == "empty-farm")
+        {
+            foreach (var pair in farm.terrainFeatures.Pairs)
+                if (pair.Value is HoeDirt dirt) dirt.crop = null;
+            farm.debris.Clear();
+            foreach (var pair in farm.objects.Pairs.ToArray())
+                if (pair.Value.CanBeGrabbed && !pair.Value.bigCraftable.Value) farm.objects.Remove(pair.Key);
         }
         var fixture = new {
             runId = _runId, label, mode, timestampUtc = DateTime.UtcNow.ToString("o"),
@@ -8028,7 +8040,7 @@ public sealed class TestDriverMod : Mod
                     }
                 }
                 else if (!screenshotValid && !(_scenario == "free-mode-control" &&
-                    _harnessFixtureMode is "water-refill" or "harvest-store" or "rest-water" or "mature-trees" or "walk-pickup" or "walk-pickup-full"))
+                    _harnessFixtureMode is "water-refill" or "harvest-store" or "rest-water" or "mature-trees" or "walk-pickup" or "walk-pickup-full" or "empty-farm"))
                 {
                     _evidence["functionalSkillPassed"] = false;
                     _evidence["gateSuccess"] = false;

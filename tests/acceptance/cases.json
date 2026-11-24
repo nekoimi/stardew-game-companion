@@ -1,4 +1,10 @@
 {
+  "empty-farm": {
+    "title": "空农田不派工",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "检查农场有没有缺水作物、成熟作物或可拾取物；没有目标就不要动作，也不要清障。"
+  },
   "water-refill": {
     "title": "浇水并补水",
     "stamina": 270,

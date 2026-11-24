@@ -1,0 +1,16 @@
+{
+  "parameters": {
+    "locationId": "Farm",
+    "region": { "x": 2, "y": 3, "width": 2, "height": 1 }
+  },
+  "farmWork": {
+    "locationId": "Farm",
+    "observationStatus": "observed",
+    "cropUnwateredCount": 1,
+    "cropUnwateredTruncated": false,
+    "cropUnwateredTiles": [{ "x": 2, "y": 3 }],
+    "matureCropCount": 1,
+    "matureCropsTruncated": false,
+    "matureCrops": [{ "x": 3, "y": 3, "cropId": "(O)24" }]
+  }
+}

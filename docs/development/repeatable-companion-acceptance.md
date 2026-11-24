@@ -4,6 +4,8 @@
 
 默认固定运行三组，起点、请求和判定均版本化保存在 `tests/acceptance/cases.json`。固定的是目标与验收，不规定模型的坐标、工具顺序或推理路径。
 
+批次工作验收可加 `-Cases water-refill,care-guidance,harvest-logistics,rest-forestry,empty-farm`。模拟模型请求阶段工作流，`work-stage` trace 记录每阶段的子动作数、成果与阶段内模型请求数；空农田必须确认三类工作均无目标、原生动作调用为零。阶段效率对比和正式 API 限制见[批次工作验收报告](agent-batched-work-acceptance.md)。
+
 | 场景 | 固定行动 | 主要验收 |
 | --- | --- | --- |
 | care-guidance | 浇水、补水；动作中追加照料后的询问 | 作物浇完，新要求在工具边界送达 |
