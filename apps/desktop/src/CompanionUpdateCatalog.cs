@@ -71,20 +71,19 @@ internal sealed class CompanionUpdateCatalog(HttpClient http)
     }
 
     internal async Task<ReleaseInfo> DownloadAsync(PublishedUpdate release, string stage, string payload,
-        IProgress<int?> progress, CancellationToken token)
+        Action<UpdateProgress> report, CancellationToken token)
     {
         Directory.CreateDirectory(stage);
         string archive = UpdatePackage.SafePath(stage, "package.zip");
-        await DownloadFileAsync(new Uri(release.Url), archive, progress, token);
-        progress.Report(null);
-        var verified = await Task.Run(() => UpdatePackage.Extract(archive, release.Sha256, payload, token), token);
+        await DownloadFileAsync(new Uri(release.Url), archive, report, token);
+        var verified = await Task.Run(() => UpdatePackage.Extract(archive, release.Sha256, payload, token, report), token);
         if (verified.Tag != release.Tag || verified.Channel != release.Channel)
             throw new InvalidDataException("下载包的发布标签或通道与更新目录不匹配。");
         File.Delete(archive);
         return verified;
     }
 
-    private async Task DownloadFileAsync(Uri uri, string destination, IProgress<int?> progress,
+    private async Task DownloadFileAsync(Uri uri, string destination, Action<UpdateProgress> report,
         CancellationToken token)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -106,7 +105,7 @@ internal sealed class CompanionUpdateCatalog(HttpClient http)
             int? percent = size > 0 ? (int)Math.Min(100, 100 * total / size.Value) : null;
             if (previousPercent == percent) continue;
             previousPercent = percent;
-            progress.Report(percent);
+            report(new("正在下载更新…", percent));
         }
         if (size.HasValue && total != size) throw new IOException("发行文件下载不完整，请重试。");
     }

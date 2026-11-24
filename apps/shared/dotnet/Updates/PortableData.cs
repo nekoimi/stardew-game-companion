@@ -91,21 +91,30 @@ internal sealed class PortableData
         }
     }
 
-    internal void Backup(string destination, bool profileLayout = false)
+    internal void Backup(string destination, bool profileLayout = false, Action<UpdateProgress>? progress = null)
     {
-        Directory.CreateDirectory(destination);
-        CopyTree(Data, UpdatePackage.SafePath(destination, "data"));
-        CopyTree(Plugins, UpdatePackage.SafePath(destination, "plugins"));
+        var files = new List<(string Source, string Destination)>();
+        var directories = new List<string> { destination };
+        CollectTree(Data, UpdatePackage.SafePath(destination, "data"), files, directories);
+        CollectTree(Plugins, UpdatePackage.SafePath(destination, "plugins"), files, directories);
         string mod = !profileLayout && External is null ? Mod : "mod";
-        CopyTree(ModData, UpdatePackage.SafePath(destination, $"{mod}/data"));
+        CollectTree(ModData, UpdatePackage.SafePath(destination, $"{mod}/data"), files, directories);
         if (File.Exists(ModConfig))
-            UpdateTransaction.CopyFile(ModConfig, UpdatePackage.SafePath(destination, $"{mod}/config.json"));
+            files.Add((ModConfig, UpdatePackage.SafePath(destination, $"{mod}/config.json")));
+        foreach (var directory in directories) Directory.CreateDirectory(directory);
+        var advance = UpdateProgress.Step(progress, "正在备份设置和用户数据…", files.Count);
+        foreach (var file in files)
+        {
+            UpdateTransaction.CopyFile(file.Source, file.Destination);
+            advance();
+        }
     }
 
-    private static void CopyTree(string source, string destination)
+    private static void CollectTree(string source, string destination, List<(string Source, string Destination)> files,
+        List<string> directories)
     {
         if (!Directory.Exists(source)) return;
-        Directory.CreateDirectory(destination);
+        directories.Add(destination);
         foreach (var path in Directory.EnumerateFileSystemEntries(source))
         {
             string name = Path.GetFileName(path);
@@ -114,8 +123,8 @@ internal sealed class PortableData
             if ((attributes & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("用户数据目录包含链接，无法建立完整副本。");
             string target = Path.Combine(destination, name);
-            if ((attributes & FileAttributes.Directory) != 0) CopyTree(path, target);
-            else UpdateTransaction.CopyFile(path, target);
+            if ((attributes & FileAttributes.Directory) != 0) CollectTree(path, target, files, directories);
+            else files.Add((path, target));
         }
     }
 

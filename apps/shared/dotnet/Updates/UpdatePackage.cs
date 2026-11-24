@@ -98,8 +98,10 @@ internal static class UpdatePackage
         return text[..64];
     }
 
-    internal static ReleaseInfo Extract(string archive, string expectedHash, string payload, CancellationToken token)
+    internal static ReleaseInfo Extract(string archive, string expectedHash, string payload, CancellationToken token,
+        Action<UpdateProgress>? progress = null)
     {
+        progress?.Invoke(new("正在校验 ZIP…"));
         using var stream = File.OpenRead(archive);
         if (stream.Length > MaxArchiveBytes || !ValidHash(expectedHash) || !HasHash(stream, expectedHash))
             throw new InvalidDataException("ZIP 的 SHA256 校验失败。");
@@ -107,6 +109,7 @@ internal static class UpdatePackage
         using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
         if (zip.Entries.Count > MaxFiles) throw new InvalidDataException("ZIP 文件数量超出限制。");
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var advance = UpdateProgress.Step(progress, "正在解压更新包…", zip.Entries.Count);
         long remaining = MaxExpandedBytes;
         foreach (var entry in zip.Entries)
         {
@@ -119,6 +122,7 @@ internal static class UpdatePackage
             {
                 if (!ValidRelativePath(path[..^1]) || entry.Length != 0)
                     throw new InvalidDataException("ZIP 目录路径无效。");
+                advance();
                 continue;
             }
             if (!AllowedFile(path) || !paths.Add(path) || entry.Length > remaining)
@@ -138,22 +142,27 @@ internal static class UpdatePackage
                 output.Write(buffer, 0, read);
             }
             if (length != entry.Length) throw new InvalidDataException("ZIP 解压长度无效。");
+            advance();
         }
-        var files = VerifyPayload(payload, token);
+        var files = VerifyPayload(payload, token, progress);
         if (paths.Count != files.Count + 1 || !paths.Contains(Manifest))
             throw new InvalidDataException("ZIP 内容与发行清单不一致。");
         return ReadInfo(payload)!;
     }
 
-    internal static Dictionary<string, ReleaseFile> VerifyPayload(string payload, CancellationToken token)
+    internal static Dictionary<string, ReleaseFile> VerifyPayload(string payload, CancellationToken token,
+        Action<UpdateProgress>? progress = null)
     {
+        progress?.Invoke(new("正在读取发行清单…"));
         var files = ReadManifest(payload, currentPackage: true);
+        var advance = UpdateProgress.Step(progress, "正在校验发行文件…", files.Count);
         foreach (var file in files.Values)
         {
             token.ThrowIfCancellationRequested();
             using var input = File.OpenRead(SafePath(payload, file.Path));
             if (!HasHash(input, file.Sha256))
                 throw new InvalidDataException($"发行文件校验失败（{file.Path}）。");
+            advance();
         }
         if (ReadInfo(payload) is not { MinimumUpdaterProtocol: <= UpdaterProtocol })
             throw new InvalidDataException("此发行包需要更高版本的更新器。");

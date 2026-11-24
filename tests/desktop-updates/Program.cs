@@ -57,6 +57,7 @@ void VerifyArchiveAndApply()
     Check(UpdatePackage.Extract(zip, hash, transaction.Payload(id), CancellationToken.None).Tag == "v0.2.0",
         "The archive must resolve to the actual release tag.");
 
+    var progress = new List<UpdateProgress>();
     Check(transaction.Apply(id, payload =>
     {
         Check(File.ReadAllText(Path.Combine(payload, UpdatePackage.Launcher)) == "new", "Check the staged launcher.");
@@ -65,7 +66,10 @@ void VerifyArchiveAndApply()
     {
         Check(File.ReadAllText(Path.Combine(root, UpdatePackage.Launcher)) == "new", "Health check must run after replacement.");
         Check(!File.Exists(Path.Combine(root, "runtime", "dist", "old.js")), "Obsolete managed files must be removed.");
-    }).Installed, "A successful health check must commit the update.");
+    }, progress.Add).Installed, "A successful health check must commit the update.");
+    Check(progress.Any(item => item.Message == "正在备份设置和用户数据…")
+        && progress.Any(item => item.Message == "正在安装新版文件…" && item.Percent == 100)
+        && progress.Any(item => item.Message == "正在验证新版运行时…"), "Installation progress must cover backup, replacement and health check.");
     Check(!transaction.HasPendingUpdate, "The journal must be cleared after commit.");
     Check(File.ReadAllText(Path.Combine(root, "data", "companion.sqlite-wal")) == "pending SQLite pages", "WAL must survive updates.");
     Check(File.ReadAllText(Path.Combine(root, "plugins", "example", "plugin.json")) == "installed plugin", "Plugin must survive.");
@@ -218,9 +222,10 @@ async Task VerifyPublishedUpdatesAsync()
     Check(stable.CanOfferTo(new(previewTag, "0.1.0", "preview", 1)), "Switching to the stable channel must be available.");
 
     var transaction = new UpdateTransaction(Path.Combine(workspace, "download-install"));
+    var progress = new List<UpdateProgress>();
     Task<ReleaseInfo> Download(PublishedUpdate release, Guid id) =>
         releases.DownloadAsync(release, transaction.Stage(id), transaction.Payload(id),
-            new Progress<int?>(), CancellationToken.None);
+            progress.Add, CancellationToken.None);
 
     var interrupted = Guid.NewGuid();
     await ExpectAsync<IOException>(() => Download(selectedStable, interrupted));
@@ -228,9 +233,14 @@ async Task VerifyPublishedUpdatesAsync()
     transaction.DiscardStage(interrupted);
     Check(!Directory.Exists(transaction.Stage(interrupted)), "Discarding a failed download must remove partial assets.");
     interruptArchive = false;
+    progress.Clear();
     var retried = await Download(selectedStable, Guid.NewGuid());
     Check(archiveRequests == 2 && retried.Tag == stableTag && retried.Channel == "stable",
         "Retry must download and validate a fresh copy of the same release.");
+    Check(progress[0] is { Message: "正在下载更新…", Percent: 100 }
+        && progress.Any(item => item is { Message: "正在解压更新包…", Percent: 100 })
+        && progress[^1] is { Message: "正在校验发行文件…", Percent: 100 },
+        "Download progress must transition through extraction and file verification.");
 
     await ExpectAsync<InvalidDataException>(() => Download(preview, Guid.NewGuid()));
 

@@ -144,15 +144,9 @@ public partial class MainWindow
     {
         if (_updates is not { } updates || _publishedUpdate is not { } release
             || _closing || _updateCancellation is not null) return;
-        await StageUpdateAsync("正在下载更新…", (id, token) =>
-        {
-            var progress = new Progress<int?>(percent =>
-            {
-                if (_closing || token.IsCancellationRequested) return;
-                UpdateFeedback.Text = percent.HasValue ? $"正在下载更新… {percent}%" : "正在校验下载的更新包…";
-            });
-            return CompanionUpdateCatalog.Client.DownloadAsync(release, updates.Stage(id), updates.Payload(id), progress, token);
-        }, new Uri(release.Url).Host);
+        await StageUpdateAsync("正在下载更新…", (id, report, token) =>
+            CompanionUpdateCatalog.Client.DownloadAsync(release, updates.Stage(id), updates.Payload(id), report, token),
+            new Uri(release.Url).Host);
     }
 
     private async void SelectUpdateClicked(object sender, RoutedEventArgs e)
@@ -162,16 +156,17 @@ public partial class MainWindow
         if (dialog.ShowDialog(this) != true) return;
         _publishedUpdate = null;
         UpdateNotes.Text = "";
-        await StageUpdateAsync("正在校验 ZIP 和发行文件…", (id, token) => Task.Run(() =>
+        await StageUpdateAsync("正在校验 ZIP…", (id, report, token) => Task.Run(() =>
             {
                 if (!File.Exists(dialog.FileName + ".sha256"))
                     throw new FileNotFoundException("请把发行附带的 .sha256 文件放在所选 ZIP 旁边。");
                 var hash = UpdatePackage.ReadChecksum(dialog.FileName + ".sha256", Path.GetFileName(dialog.FileName));
-                return UpdatePackage.Extract(dialog.FileName, hash, updates.Payload(id), token);
+                return UpdatePackage.Extract(dialog.FileName, hash, updates.Payload(id), token, report);
             }, token));
     }
 
-    private async Task StageUpdateAsync(string message, Func<Guid, CancellationToken, Task<ReleaseInfo>> stage, string? downloadHost = null)
+    private async Task StageUpdateAsync(string message,
+        Func<Guid, Action<UpdateProgress>, CancellationToken, Task<ReleaseInfo>> stage, string? downloadHost = null)
     {
         ClearStagedUpdate();
         var id = Guid.NewGuid();
@@ -179,7 +174,12 @@ public partial class MainWindow
         {
             await RunUpdateOperationAsync(message, async token =>
             {
-                var info = await stage(id, token);
+                Action<UpdateProgress> progress = state =>
+                {
+                    if (!_closing && _updateCancellation?.Token == token && !token.IsCancellationRequested)
+                        ShowUpdateProgress(state);
+                };
+                var info = await stage(id, progress, token);
                 if (_closing) return;
                 _stagedUpdate = (id, info, UpdatePackage.ManifestHash(_updates!.Payload(id)), downloadHost);
                 UpdateFeedback.Text = $"已校验 {info.Tag}，可以安装。";
@@ -202,7 +202,8 @@ public partial class MainWindow
         using var cancellation = new CancellationTokenSource();
         _updateCancellation = cancellation;
         RefreshUpdateControls();
-        UpdateFeedback.Text = message;
+        ShowUpdateProgress(new(message));
+        UpdateOperationProgress.Visibility = Visibility.Visible;
         try { await operation(cancellation.Token); }
         catch (OperationCanceledException) when (_closing) { }
         catch (OperationCanceledException)
@@ -217,8 +218,21 @@ public partial class MainWindow
         finally
         {
             _updateCancellation = null;
+            UpdateOperationProgress.Visibility = Visibility.Collapsed;
             RefreshUpdateControls();
         }
+    }
+
+    private void ShowUpdateProgress(UpdateProgress progress)
+    {
+        void Update()
+        {
+            UpdateFeedback.Text = progress.Label;
+            UpdateOperationProgress.IsIndeterminate = progress.Percent is null;
+            UpdateOperationProgress.Value = progress.Percent ?? 0;
+        }
+        if (Dispatcher.CheckAccess()) Update();
+        else Dispatcher.Invoke(Update);
     }
 
     private async void InstallUpdateClicked(object sender, RoutedEventArgs e)

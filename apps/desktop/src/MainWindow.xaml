@@ -716,6 +716,9 @@
                                 </WrapPanel>
                                 <TextBlock x:Name="UpdateFeedback" Style="{StaticResource InlineFeedback}" TextWrapping="Wrap"
                                            AutomationProperties.LiveSetting="Polite" Margin="0,8,0,0" />
+                                <ProgressBar x:Name="UpdateOperationProgress" Height="10" Margin="0,6,0,0"
+                                             Visibility="Collapsed" Foreground="#315D43" Background="#E7DDC9"
+                                             AutomationProperties.Name="当前更新步骤的进度" />
                                 <TextBlock x:Name="UpdateNotes" TextWrapping="Wrap" Margin="0,8,0,0" />
                                 <Separator Margin="0,16,0,10" />
                                 <TextBlock Text="数据目录" FontWeight="SemiBold" />

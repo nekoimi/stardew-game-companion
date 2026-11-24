@@ -1,0 +1,16 @@
+<Window x:Class="StardewAI.Companion.Updater.UpdateProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="正在更新星露谷游戏伴侣" Width="420" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen" Background="#FFFAEF" Foreground="#352C1E"
+        FontFamily="Microsoft YaHei UI" FontSize="14">
+    <StackPanel Margin="24">
+        <TextBlock Text="星露谷游戏伴侣" FontSize="19" FontWeight="SemiBold" />
+        <TextBlock x:Name="Status" Text="正在等待伴侣退出…" TextWrapping="Wrap"
+                   AutomationProperties.LiveSetting="Polite" Margin="0,12,0,0" />
+        <ProgressBar x:Name="StageProgress" Height="12" Margin="0,12,0,0" IsIndeterminate="True"
+                     Foreground="#315D43" Background="#E7DDC9" AutomationProperties.Name="当前更新步骤的进度" />
+        <Button x:Name="CloseButton" Content="关闭" Visibility="Collapsed" Click="CloseClicked"
+                HorizontalAlignment="Right" Padding="18,4" Margin="0,14,0,0" />
+    </StackPanel>
+</Window>

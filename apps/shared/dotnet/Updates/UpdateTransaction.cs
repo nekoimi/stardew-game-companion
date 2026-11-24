@@ -104,14 +104,15 @@ internal sealed class UpdateTransaction
             FileAccess.ReadWrite, FileShare.None);
     }
 
-    internal UpdateResult Apply(Guid id, Action<string> checkLauncher, Action verifyLaunch)
+    internal UpdateResult Apply(Guid id, Action<string> checkLauncher, Action verifyLaunch,
+        Action<UpdateProgress>? progress = null)
     {
         if (HasPendingUpdate) throw new InvalidOperationException("请先恢复上一次更新。");
         var stage = Stage(id);
         var payload = Payload(id);
         var backup = UpdatePackage.SafePath(stage, "program-backup");
         var oldFiles = UpdatePackage.ReadManifest(_root, currentPackage: false);
-        var newFiles = UpdatePackage.VerifyPayload(payload, CancellationToken.None);
+        var newFiles = UpdatePackage.VerifyPayload(payload, CancellationToken.None, progress);
         var info = UpdatePackage.ReadInfo(payload)!;
         var data = PortableData.Open(_root);
         if (data.External is not null && info.DataProfileVersion != 1)
@@ -119,10 +120,13 @@ internal sealed class UpdateTransaction
         using var dataLease = data.AcquireExternalLease();
         using var sessionLease = data.AcquireSessionLease();
         using var pluginLease = data.AcquirePluginLease();
+        progress?.Invoke(new("正在检查新版启动器…"));
         checkLauncher(payload);
         var next = new List<string>();
         var previous = new List<string>();
-        foreach (var path in Ordered(oldFiles.Keys.Concat(newFiles.Keys).Append(UpdatePackage.Manifest)))
+        var paths = Ordered(oldFiles.Keys.Concat(newFiles.Keys).Append(UpdatePackage.Manifest));
+        var advance = UpdateProgress.Step(progress, "正在检查并备份程序文件…", paths.Length);
+        foreach (var path in paths)
         {
             var target = UpdatePackage.SafePath(_root, path);
             bool exists = File.Exists(target);
@@ -134,22 +138,35 @@ internal sealed class UpdateTransaction
                     throw new IOException($"新版文件与未纳入发行清单的本地文件同名（{path}）。");
                 if (delivered && string.Equals(old?.Sha256, replacement!.Sha256, StringComparison.OrdinalIgnoreCase)
                     && UpdatePackage.FileHasHash(target, replacement.Sha256))
+                {
+                    advance();
                     continue;
+                }
                 CopyFile(target, UpdatePackage.SafePath(backup, path));
                 previous.Add(path);
             }
             if (delivered || path == UpdatePackage.Manifest) next.Add(path);
+            advance();
         }
-        data.Backup(UpdatePackage.SafePath(stage, "data-backup"));
+        data.Backup(UpdatePackage.SafePath(stage, "data-backup"), progress: progress);
         var pending = new PendingUpdate(id, [.. previous], [.. next]);
         ValidateJournalPaths(pending.OldFiles);
         WriteJson(_journal, pending);
         try
         {
+            var obsolete = previous.Except(next, StringComparer.OrdinalIgnoreCase).ToArray();
+            advance = UpdateProgress.Step(progress, "正在安装新版文件…", next.Count + obsolete.Length);
             foreach (var path in next)
+            {
                 ReplaceFile(UpdatePackage.SafePath(payload, path), UpdatePackage.SafePath(_root, path), stage);
-            foreach (var path in previous.Except(next, StringComparer.OrdinalIgnoreCase))
+                advance();
+            }
+            foreach (var path in obsolete)
+            {
                 File.Delete(UpdatePackage.SafePath(_root, path));
+                advance();
+            }
+            progress?.Invoke(new("正在验证新版运行时…"));
             verifyLaunch();
             var result = new UpdateResult(true, $"已更新到 {info.Tag}。");
             WriteJson(ResultPath, result);
@@ -161,14 +178,15 @@ internal sealed class UpdateTransaction
         }
         catch (Exception error)
         {
-            Recover($"新版安装失败，已恢复更新前的程序文件。{error.Message}");
+            Recover($"新版安装失败，已恢复更新前的程序文件。{error.Message}", progress);
             throw;
         }
     }
 
-    internal void Recover(string? detail = null)
+    internal void Recover(string? detail = null, Action<UpdateProgress>? progress = null)
     {
         if (!HasPendingUpdate) return;
+        progress?.Invoke(new("正在检查更新备份…"));
         var pending = UpdatePackage.ReadJson<PendingUpdate>(_journal);
         ValidateJournalPaths(pending.OldFiles);
         ValidateJournalPaths(pending.NewFiles);
@@ -177,10 +195,18 @@ internal sealed class UpdateTransaction
         foreach (var path in pending.OldFiles)
             if (!File.Exists(UpdatePackage.SafePath(backup, path)))
                 throw new IOException("更新备份不完整，无法恢复旧版。");
+        var added = pending.NewFiles.Except(pending.OldFiles, StringComparer.OrdinalIgnoreCase).ToArray();
+        var advance = UpdateProgress.Step(progress, "正在恢复更新前的程序文件…", pending.OldFiles.Length + added.Length);
         foreach (var path in pending.OldFiles)
+        {
             ReplaceFile(UpdatePackage.SafePath(backup, path), UpdatePackage.SafePath(_root, path), stage);
-        foreach (var path in pending.NewFiles.Except(pending.OldFiles, StringComparer.OrdinalIgnoreCase))
+            advance();
+        }
+        foreach (var path in added)
+        {
             File.Delete(UpdatePackage.SafePath(_root, path));
+            advance();
+        }
         WriteJson(ResultPath, new UpdateResult(false, detail ?? "更新未完成，已恢复更新前的程序文件。"));
         File.Delete(_journal);
     }
