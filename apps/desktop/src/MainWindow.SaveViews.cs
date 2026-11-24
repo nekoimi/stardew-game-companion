@@ -67,21 +67,22 @@ public partial class MainWindow
 
     private void RefreshSaveViewControls()
     {
-        bool connected = _gameSessionId is not null && !_closing;
+        bool hasSave = _gameSessionId is not null && !_closing;
+        bool connected = hasSave && !_statusStreamDisconnected;
         bool hasGoals = GoalPicker.HasItems;
         WorkGoalColumn.Width = hasGoals ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
         WorkGoals.Visibility = hasGoals ? Visibility.Visible : Visibility.Collapsed;
-        GoToChatButton.Visibility = connected && !hasGoals ? Visibility.Visible : Visibility.Collapsed;
+        GoToChatButton.Visibility = hasSave && !hasGoals ? Visibility.Visible : Visibility.Collapsed;
         GoToChatButton.IsEnabled = connected && _partnerReady;
         WithdrawGoalButton.IsEnabled = connected && !_withdrawingGoal && !_interrupting && !_recoveryPending && GoalPicker.SelectedItem is DesktopGoal;
         HistoryRefreshButton.IsEnabled = connected && !_readingHistory;
         HistoryOlderButton.IsEnabled = HistoryRefreshButton.IsEnabled && _historyBefore.HasValue;
         ReadProfileButton.IsEnabled = connected && !_savingPreferences;
-        ReadProfileButton.Visibility = ProfileFields.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        ReadProfileButton.Visibility = ProfileFields.Visibility = hasSave ? Visibility.Visible : Visibility.Collapsed;
         ProfileFields.IsEnabled = ReadProfileButton.IsEnabled && _profileRevision.HasValue;
         RefreshMemoryControls(connected);
         RefreshInboxControls(connected);
-        RefreshUsageButton.IsEnabled = _partnerServiceReady && !_closing && !_loadingUsage;
+        RefreshUsageButton.IsEnabled = _partnerServiceReady && !_closing && !_loadingUsage && !_statusStreamDisconnected;
     }
 
     private async void SaveViewSelected(object sender, SelectionChangedEventArgs e)

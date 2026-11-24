@@ -61,15 +61,22 @@ internal sealed class DesktopRuntimeApi : IDisposable
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var reader = new StreamReader(stream);
                 string? id = null;
+                var data = new List<string>();
                 while (await reader.ReadLineAsync(cancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(12), cancellationToken) is { } line)
                 {
+                    if (line.Length == 0)
+                    {
+                        if (data.Count == 0) { id = null; continue; }
+                        using var json = JsonDocument.Parse(string.Join("\n", data));
+                        if (!stillCurrent()) return;
+                        publish(json.RootElement.Clone());
+                        cursor = id ?? cursor;
+                        id = null;
+                        data.Clear();
+                        continue;
+                    }
                     if (line.StartsWith("id: ", StringComparison.Ordinal)) id = line[4..];
-                    if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
-                    using var json = JsonDocument.Parse(line.AsMemory(6));
-                    if (!stillCurrent()) return;
-                    publish(json.RootElement.Clone());
-                    cursor = id ?? cursor;
-                    id = null;
+                    if (line.StartsWith("data: ", StringComparison.Ordinal)) data.Add(line[6..]);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
@@ -77,7 +84,8 @@ internal sealed class DesktopRuntimeApi : IDisposable
             {
                 logger.Write("desktop", "warn", "event_stream_disconnected", "本地状态连接断开。", new { errorType = ex.GetType().Name });
             }
-            using var disconnected = JsonDocument.Parse("""{"type":"status","payload":{"ready":false}}""");
+            // A desktop SSE interruption is not evidence that the game/save exited.
+            using var disconnected = JsonDocument.Parse("""{"type":"desktop.connection","payload":{"status":"reconnecting"}}""");
             if (cancellationToken.IsCancellationRequested || !stillCurrent()) return;
             publish(disconnected.RootElement.Clone());
             try { await Task.Delay(1000, cancellationToken); }

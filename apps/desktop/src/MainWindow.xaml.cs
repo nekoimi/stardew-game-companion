@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private bool _interrupting;
     private bool _recoveryPending;
     private bool _reconnecting;
+    private bool _statusStreamDisconnected;
     private bool _closing;
     private string? _decisionSignature;
     private string? _submittingRequestId;
@@ -270,7 +271,7 @@ public partial class MainWindow : Window
 
     private async Task<bool> SendAsync(bool interrupt, string? selection = null, string? decisionId = null)
     {
-        if (_submittingRequestId is not null || _session is not { } session || _gameSessionId is not { } game) return false;
+        if (_statusStreamDisconnected || _submittingRequestId is not null || _session is not { } session || _gameSessionId is not { } game) return false;
         var text = selection ?? Input.Text.Trim();
         if (string.IsNullOrWhiteSpace(text)) return false;
         int view = _saveViewGeneration;
@@ -317,7 +318,7 @@ public partial class MainWindow : Window
 
     private async Task ControlAsync(string action)
     {
-        if (_session is not { } session || _gameSessionId is not { } game) return;
+        if (_statusStreamDisconnected || _session is not { } session || _gameSessionId is not { } game) return;
         int view = _saveViewGeneration;
         WorkFeedback.Text = "";
         try { await session.PostAsync("/v2/control", new { gameSessionId = game, saveId = _saveId, action }); }
@@ -336,6 +337,16 @@ public partial class MainWindow : Window
         _plugins?.ApplyRuntimeEvent(type, payload);
         switch (type)
         {
+            case "desktop.connection" when Text(payload, "status") == "reconnecting":
+                _statusStreamDisconnected = true;
+                ConnectionText.Text = "桌面连接中断 · 正在自动重连";
+                AgentStateText.Text = "状态待更新";
+                ActivityText.Text = "游戏可能仍在执行；需要停止时可在游戏中按 F9 接管。";
+                _chatActivity = "正在恢复桌面状态连接，已保留当前进展和未发送的内容。";
+                PartnerStatus.Text = "桌面状态连接恢复中";
+                RenderWork(activityOnly: true);
+                RefreshControls();
+                break;
             case "status": ApplyStatus(payload); break;
             case "submitted":
                 var requestId = Text(payload, "requestId");
@@ -379,6 +390,7 @@ public partial class MainWindow : Window
 
     private void ApplyStatus(JsonElement payload)
     {
+        _statusStreamDisconnected = false;
         bool hadService = _partnerServiceReady;
         ApplyPartnerStatus(payload);
         var previous = _gameSessionId;
@@ -386,7 +398,7 @@ public partial class MainWindow : Window
         _saveId = _gameSessionId is null ? null : Text(payload, "saveId");
         bool saveChanged = previous != _gameSessionId;
         bool usageChanged = saveChanged || hadService != _partnerServiceReady;
-        if (usageChanged)
+        if (saveChanged)
         {
             ResetSaveViews();
             ApplyDecisions(default);
@@ -539,8 +551,8 @@ public partial class MainWindow : Window
     private void RefreshRecentFeedback()
     {
         RecentRecoverButton.Visibility = _recoveryPending ? Visibility.Visible : Visibility.Collapsed;
-        RecentRecoverButton.IsEnabled = _gameSessionId is not null && !_interrupting && !_closing;
-        RecentObserveButton.IsEnabled = _gameSessionId is not null && !_observingRecent && !_closing;
+        RecentRecoverButton.IsEnabled = _gameSessionId is not null && !_interrupting && !_closing && !_statusStreamDisconnected;
+        RecentObserveButton.IsEnabled = _gameSessionId is not null && !_observingRecent && !_closing && !_statusStreamDisconnected;
         if (_feedbackAt is null) return;
         ActionFeedbackCaption.Text = _feedbackDate.Length > 0 && _gameDate.Length > 0 && _feedbackDate != _gameDate
             ? "上次进展 · 来自之前的游戏日期，请以当前观察为准"
@@ -578,7 +590,7 @@ public partial class MainWindow : Window
             if (view == _saveViewGeneration)
             {
                 _observingRecent = false;
-                RecentObserveButton.IsEnabled = !_closing;
+                RecentObserveButton.IsEnabled = !_closing && !_statusStreamDisconnected;
             }
         }
     }
@@ -598,32 +610,34 @@ public partial class MainWindow : Window
         SettingsFields.IsEnabled = LaunchHeader.IsEnabled;
         ApiModelFields.IsEnabled = !_testingModel && !_closing && !_reconnecting;
         ApplyModelButton.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
-        ApplyModelButton.IsEnabled = _partnerServiceReady && !_interrupting && !_modelBusy;
+        ApplyModelButton.IsEnabled = _partnerServiceReady && !_interrupting && !_modelBusy && !_statusStreamDisconnected;
         TodayOverview.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         ComposerPanel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         AuthorityButton.Visibility = connected && _playerMode ? Visibility.Visible : Visibility.Collapsed;
         RefreshComposer();
-        PauseButton.IsEnabled = connected && !_paused && !_interrupting;
-        ResumeButton.IsEnabled = connected && !_recoveryPending && (_paused || _interrupting);
-        CancelButton.IsEnabled = connected && !_recoveryPending;
+        PauseButton.IsEnabled = connected && !_paused && !_interrupting && !_statusStreamDisconnected;
+        ResumeButton.IsEnabled = connected && !_recoveryPending && (_paused || _interrupting) && !_statusStreamDisconnected;
+        CancelButton.IsEnabled = connected && !_recoveryPending && !_statusStreamDisconnected;
         RecoverButton.Visibility = _recoveryPending ? Visibility.Visible : Visibility.Collapsed;
-        RecoverButton.IsEnabled = connected && _recoveryPending;
-        AuthorityButton.IsEnabled = connected && (_owner == "agent" || (_partnerReady && !_interrupting));
+        RecoverButton.IsEnabled = connected && _recoveryPending && !_statusStreamDisconnected;
+        AuthorityButton.IsEnabled = connected && (_owner == "agent" || (_partnerReady && !_interrupting)) && !_statusStreamDisconnected;
         AuthorityButton.Content = _owner == "agent" ? "玩家接管（F9）" : "交给 AI";
         RefreshSaveViewControls();
+        RefreshRecentFeedback();
     }
 
     private void RefreshComposer()
     {
         bool connected = _gameSessionId is not null && !_closing;
-        bool canChat = connected && _partnerReady;
+        bool canChat = connected && _partnerReady && !_statusStreamDisconnected;
         bool canInterrupt = !_playerMode || _owner == "agent";
-        Input.IsEnabled = DecisionInput.IsEnabled = canChat;
+        Input.IsEnabled = DecisionInput.IsEnabled = connected && (_partnerReady || _statusStreamDisconnected);
         SendButton.IsEnabled = DecisionReplyButton.IsEnabled = DecisionChoices.IsEnabled = canChat && _submittingRequestId is null;
         InterruptButton.Visibility = canInterrupt ? Visibility.Visible : Visibility.Collapsed;
         InterruptButton.IsEnabled = SendButton.IsEnabled && canInterrupt && !_paused && !_interrupting;
         SendShortcutHint.Visibility = canChat ? Visibility.Visible : Visibility.Collapsed;
-        ChatStatus.Text = !connected ? (_session is not null ? ActivityText.Text : "")
+        ChatStatus.Text = _statusStreamDisconnected ? _chatActivity
+            : !connected ? (_session is not null ? ActivityText.Text : "")
             : _submittingRequestId is not null ? "正在提交消息…"
             : _chatActivity.Length > 0 ? _chatActivity
             : _pendingChatRequests.Count > 0 ? "已提交，等待 Agent 处理。" : "";

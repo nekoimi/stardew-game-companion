@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using StardewAI.Companion.Desktop;
+using StardewAI.Companion.Logging;
 
 internal static class Program
 {
@@ -51,6 +52,7 @@ internal static class Program
                     clockPauseOwner = "model-thinking", connection = new { ready = true, clientName = "模拟模型" },
                     work, decisions = Array.Empty<object>(), closedDecisions = Array.Empty<object>(), milestones = Array.Empty<object>() };
                 Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(status));
+                await DesktopEventStreamChecks.RunAsync((FileLogger)typeof(MainWindow).GetField("_logger", Private)!.GetValue(window)!);
                 var entries = (ObservableCollection<TimelineEntry>)typeof(MainWindow).GetField("_entries", Private)!.GetValue(window)!;
                 foreach (var receipt in raw.Take(7)) Invoke(window, "ApplyResult", WithBinding(receipt));
                 Check(entries.Count == 0, "Routine actions and recoverable errors flooded chat.");
@@ -86,6 +88,24 @@ internal static class Program
                 Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(phaseStatus));
                 Check(Control<Button>(window, "RecentRecoverButton").Visibility == Visibility.Visible, "Missing receipt has no recovery shortcut.");
                 Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(status));
+                var draft = Control<TextBox>(window, "Input");
+                draft.Text = "还没发出的要求";
+                var generation = typeof(MainWindow).GetField("_saveViewGeneration", Private)!.GetValue(window);
+                var selectedGoal = picker.SelectedItem;
+                int chatCount = entries.Count;
+                var disconnected = JsonSerializer.SerializeToElement(new { type = "desktop.connection", payload = new { status = "reconnecting" } });
+                Invoke(window, "ApplyEvent", disconnected);
+                Check(Control<TextBlock>(window, "ConnectionText").Text.Contains("桌面连接中断")
+                    && !Control<TextBlock>(window, "ActivityText").Text.Contains("选择单人存档"), "SSE drop was misreported as a game disconnect.");
+                Check(draft.Text == "还没发出的要求" && draft.IsEnabled && !Control<Button>(window, "SendButton").IsEnabled
+                    && !Control<Button>(window, "AuthorityButton").IsEnabled, "Reconnect erased the draft or permitted actions from stale state.");
+                Check(Equals(generation, typeof(MainWindow).GetField("_saveViewGeneration", Private)!.GetValue(window))
+                    && ReferenceEquals(selectedGoal, picker.SelectedItem) && entries.Count == chatCount,
+                    "SSE interruption reset save views, selection or conversation.");
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(status));
+                Check(draft.Text == "还没发出的要求" && Control<Button>(window, "SendButton").IsEnabled
+                    && Equals(generation, typeof(MainWindow).GetField("_saveViewGeneration", Private)!.GetValue(window)),
+                    "Same-session reconnect reset the draft or failed to restore controls.");
                 var oldReceipt = JsonSerializer.SerializeToElement(new { saveId = "farm", gameSessionId = "game", commandId = "old-date-result",
                     skillId = "water-zone", terminalState = "succeeded", gameDate = "1:spring:17", recordedAt = "2020-01-01T00:00:00Z" });
                 Invoke(window, "ApplyResult", oldReceipt);
@@ -107,7 +127,10 @@ internal static class Program
                     window.UpdateLayout();
                     Capture(window, Path.Combine(args[0], "today.png"));
                 }
-                Console.WriteLine("Desktop work feedback passed chat noise, attention, deduplication, grouping, goal isolation, legacy and unknown-outcome checks.");
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(new { ready = false, connection = new { ready = false } }));
+                Check(draft.Text.Length == 0 && Control<TextBlock>(window, "ConnectionText").Text == "等待游戏重新连接",
+                    "A confirmed game disconnect was not distinguished from a desktop connection drop.");
+                Console.WriteLine("Desktop feedback and SSE reconnect passed: drafts, views, controls, complete-frame cursor and actual game disconnect.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); exit = 1; }
             finally

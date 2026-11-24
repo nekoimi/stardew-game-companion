@@ -13,6 +13,7 @@ import { CompanionStore } from "../storage/companion-store.js";
 import type { JsonObject, ModelSelection } from "../../application/model.js";
 import { checkModelConnection } from "../model/connection-check.js";
 import { PluginCommandError } from "../../application/plugin-command.js";
+import { DesktopEventStream } from "./event-stream.js";
 
 export async function startDesktopService(
   runDirectory: string, secret: string, stopFile: string, ownerPid: number, modelTestOnly = false,
@@ -24,7 +25,7 @@ export async function startDesktopService(
   const store = modelTestOnly ? undefined : new CompanionStore(join(runDirectory, "..", "..", "data", "companion.sqlite"),
     () => { diagnostic("receipt_retention_failed"); });
   const provider = new PiModelAdapter();
-  const streams = new Set<ServerResponse>();
+  const streams = new Set<DesktopEventStream>();
   const events: { id: number; data: string }[] = [];
   const submissions = new Set<string>();
   const acceptanceTrace = process.env.STARDEW_AGENT_ACCEPTANCE_TRACE;
@@ -59,7 +60,7 @@ export async function startDesktopService(
     const frame = { id: ++sequence, data };
     events.push(frame);
     if (events.length > 256) events.shift();
-    for (const stream of streams) if (!stream.write(sse(frame))) stream.destroy();
+    for (const stream of streams) stream.send(frame);
   };
   const core = await readFile(join(runDirectory, "docs", "agent-ts-instructions.md"), "utf8");
   const runner = new TurnRunner(game, undefined, publish,
@@ -189,12 +190,12 @@ export async function startDesktopService(
     clearInterval(heartbeat);
     const stopping = runner.stop();
     game.stop();
-    for (const stream of streams) stream.end();
+    for (const stream of streams) stream.close();
     server.close();
     void stopping.finally(() => store?.close());
   };
   const heartbeat = setInterval(async () => {
-    for (const stream of streams) if (!stream.write(": heartbeat\n\n")) stream.destroy();
+    for (const stream of streams) stream.heartbeat();
     try { process.kill(ownerPid, 0); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ESRCH") return shutDown();
     }
@@ -223,12 +224,12 @@ export async function startDesktopService(
         if (url === "/v2/events") {
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store" });
           const cursor = Number(req.headers["last-event-id"] ?? 0);
-          if (Number.isSafeInteger(cursor) && cursor >= (events[0]?.id ?? 1) - 1) {
-            for (const frame of events) if (frame.id > cursor) res.write(sse(frame));
-          }
-          res.write(sse({ id: sequence, data: JSON.stringify({ type: "status", payload: runner.status() }) }));
-          streams.add(res);
-          res.on("close", () => streams.delete(res));
+          const replay = Number.isSafeInteger(cursor) && cursor >= (events[0]?.id ?? 1) - 1
+            ? events.filter(frame => frame.id > cursor) : [];
+          replay.push({ id: sequence, data: JSON.stringify({ type: "status", payload: runner.status() }) });
+          const stream = new DesktopEventStream(res, undefined, replay);
+          streams.add(stream);
+          res.on("close", () => streams.delete(stream));
           return;
         }
         if (url.startsWith("/v2/commands/")) {
@@ -391,8 +392,6 @@ export async function startDesktopService(
     return record;
   }
 }
-
-function sse(event: { id: number; data: string }): string { return `id: ${event.id}\ndata: ${event.data}\n\n`; }
 
 function pluginIdentifier(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_.-]{1,120}$/.test(value);
