@@ -193,6 +193,23 @@ export class CompanionTools {
             throw new Error("请先核对成熟且未装树液采集器的树，幼树和价值较高的树默认保留。");
           }
         }
+        if (operation === "water_tiles") {
+          native.includeEmptyTiles = native.includeEmptyTiles === true;
+        }
+        if (operation === "water_tiles" && native.includeEmptyTiles !== true) {
+          const snapshot = await this.game.observe();
+          const farm = object(snapshot.farmWork ?? object(snapshot.world).farmWork);
+          if (farm.observationStatus !== "observed" || farm.locationId !== native.locationId
+              || !Array.isArray(farm.cropUnwateredTiles)) {
+            throw new Error("当前没有该农场的缺水作物观察，请先查看农场状态。");
+          }
+          const observed = farm.cropUnwateredTiles.map(value => object(value));
+          const requested = Array.isArray(native.tiles) ? native.tiles : [];
+          native.tiles = requested.filter(value => observed.some(tile =>
+            tile.x === object(value).x && tile.y === object(value).y));
+          if (!native.tiles.length) return { terminalState: "no-observed-targets", observedTargets: 0,
+            message: "没有观察到指定坐标上存在缺水作物，未执行浇水。" };
+        }
         const receipt = await context.native(skill, native);
         if (!skillsWithMaterialObservations.has(skill)) return receipt;
         return { ...receipt, afterWork: await this.observeAfterWork(context, native.locationId, receipt.finalWorldRevision) };

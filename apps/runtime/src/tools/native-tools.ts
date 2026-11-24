@@ -23,7 +23,7 @@ const withLocation = (properties: Record<string, Schema>, required = Object.keys
 
 export const actions: Record<string, [string, Schema]> = {
   navigate_to: ["navigate-to", withLocation({ tile }, ["location_id", "tile"])],
-  water_tiles: ["water-zone", fields(tileFields, ["tiles"])],
+  water_tiles: ["water-zone", fields({ ...tileFields, include_empty_tiles: bool }, ["tiles"])],
   water_auto: ["water-zone", withLocation({ max_tiles: integer(1, 100), target_tiles: tiles }, [])],
   refill_watering_can: ["refill-watering-can", withLocation({ tiles }, [])],
   harvest_auto: ["harvest-zone", withLocation({ max_tiles: integer(1, 100), target_tiles: tiles }, [])],
@@ -69,7 +69,8 @@ export const actions: Record<string, [string, Schema]> = {
   native_answer: ["native-answer", fields({ choice_index: integer(0, 255) })],
 };
 
-Object.assign(actions.water_auto[1], { description: "Use observed dry crops, optionally a subset. Refill separately if water is insufficient." });
+Object.assign(actions.water_tiles[1], { description: "Water observed crop tiles. Set include_empty_tiles=true only when the player explicitly asks to water empty tilled soil." });
+Object.assign(actions.water_auto[1], { description: "Use observed dry crop tiles only, optionally a subset. Refill separately if water is insufficient." });
 Object.assign(actions.harvest_auto[1], { description: "Use observed mature crops. Pick up loose drops separately." });
 Object.assign(actions.chop_tree[1], { description: "Prefer observed mature wild trees. Preserve saplings and fruit trees." });
 Object.assign(actions.pickup_items[1], { description: "Collect existing loose drops or directly collectible ground items." });

@@ -37,7 +37,8 @@ test("work feedback preserves native evidence and bound goals without per-action
   const store = new CompanionStore(":memory:");
   store.updateProfile(binding.saveId, { onboarded: true, careFrequency: "chatty" }, 0);
   const game = new FakeGame();
-  game.snapshot = { ...game.snapshot, world: { year: 1, season: "spring", dayOfMonth: 18, timeOfDay: 900 } };
+  game.snapshot = { ...game.snapshot, farmWork: { locationId: "Farm", observationStatus: "observed",
+    cropUnwateredTiles: [{ x: 40, y: 35 }] }, world: { year: 1, season: "spring", dayOfMonth: 18, timeOfDay: 900 } };
   let index = 0;
   game.nativeResult = (id, skill) => ({ ...receipts[index++], commandId: id, skillId: skill });
   const events = [];
@@ -100,6 +101,8 @@ test("observation and recovery query actual state without executing or handing c
 test("messages received during an action apply to following work, not the in-flight action's attribution", async () => {
   const game = new FakeGame();
   const store = new CompanionStore(":memory:");
+  game.snapshot = { ...game.snapshot, farmWork: { locationId: "Farm", observationStatus: "observed",
+    cropUnwateredTiles: [{ x: 1, y: 1 }] } };
   let release, step = 0;
   game.nativeResult = async (commandId, skillId) => {
     if (skillId === "water-zone") await new Promise(resolve => { release = resolve; });
@@ -153,6 +156,33 @@ test("routine requests carry a compact observation while detailed queries return
     assert.equal(context.observations.chests, undefined);
     assert.equal(context.observations.farming, undefined);
     assert.deepEqual(seen[1].last.result, chests);
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("automatic watering accepts observed crops only and rejects invented empty-soil targets", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  game.snapshot = { companion: { locationId: "Farm" }, farmWork: { locationId: "Farm", observationStatus: "observed",
+    cropUnwateredTiles: [{ x: 2, y: 3 }] }, world: { farmWork: { locationId: "Farm", observationStatus: "observed",
+    cropUnwateredTiles: [{ x: 2, y: 3 }] } } };
+  const water = { id: "water", name: "submit_work", arguments: { action: {
+    water_tiles: { tiles: [{ x: 2, y: 3 }, { x: 8, y: 9 }] },
+  } } };
+  const calls = [];
+  game.nativeResult = (commandId, skillId, parameters) => {
+    calls.push({ skillId, parameters });
+    return { commandId, skillId, terminalState: "succeeded", completedCount: parameters.tiles.length };
+  };
+  const runner = new TurnRunner(game, { async *generate({ messages }) {
+    if (messages.at(-1).role === "user") yield done([water]);
+    else yield done();
+  } }, () => undefined, "", store);
+  try {
+    await runner.submit(binding, "water-request", "浇水", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].parameters.tiles, [{ x: 2, y: 3 }]);
+    assert.equal(calls[0].parameters.includeEmptyTiles, false);
   } finally { await runner.stop(); store.close(); }
 });
 
@@ -563,7 +593,8 @@ test("autonomous wake ignores goal-summary edits and continues other work after 
   const store = new CompanionStore(":memory:");
   const game = new FakeGame();
   game.snapshot = { companion: { locationId: "Farm", tileX: 10, tileY: 10 },
-    world: { year: 1, season: "spring", dayOfMonth: 1, timeOfDay: 900 }, capturedRevision: 7 };
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [{ x: 10, y: 11 }] },
+    world: { year: 1, season: "spring", dayOfMonth: 1, timeOfDay: 900 } };
   const save = binding.saveId;
   store.append(save, "farm-request:player", "player", { text: "收集农场掉落物" });
   store.updateItem(save, "goals", "farm-goal", { text: "收集农场掉落物", requestId: "farm-request",

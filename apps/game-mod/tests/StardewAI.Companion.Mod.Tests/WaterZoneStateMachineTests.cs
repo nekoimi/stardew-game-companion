@@ -45,7 +45,7 @@ public class WaterZoneStateMachineTests
     [Theory]
     [InlineData(false, 1)]
     [InlineData(true, 2)]
-    public void CropOnlySelectionDoesNotSpendWaterOnEmptySoil(bool includeEmpty, int expectedWatered)
+    public void ExplicitEmptySoilFlagControlsWhetherEmptySoilIsWatered(bool includeEmpty, int expectedWatered)
     {
         var (machine, actor, observer, _) = CreateHarness();
         var crop = new TileCoordinate(10, 12);
