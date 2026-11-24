@@ -692,6 +692,33 @@
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
+                    <TabItem Header="关于与更新" Style="{StaticResource SectionTab}">
+                        <ScrollViewer Style="{StaticResource PageScrollViewer}" VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="8,16,8,8" MaxWidth="670">
+                                <TextBlock x:Name="InstalledReleaseText" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                <CheckBox x:Name="PreviewUpdates" Content="检查预览版" Checked="PreviewUpdatesChanged"
+                                          Unchecked="PreviewUpdatesChanged" Margin="0,0,0,10" />
+                                <WrapPanel>
+                                    <Button x:Name="CheckUpdatesButton" Content="检查更新" Click="CheckUpdatesClicked" />
+                                    <Button x:Name="DownloadUpdateButton" Content="下载更新" Click="DownloadUpdateClicked" IsEnabled="False" />
+                                    <Button x:Name="SelectUpdateButton" Content="选择更新 ZIP…" Click="SelectUpdateClicked" />
+                                    <Button x:Name="InstallUpdateButton" Content="安装并重启" Click="InstallUpdateClicked"
+                                            Style="{StaticResource PrimaryButton}" IsEnabled="False" />
+                                </WrapPanel>
+                                <TextBlock x:Name="UpdateFeedback" Style="{StaticResource InlineFeedback}" TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite" Margin="0,8,0,0" />
+                                <TextBlock x:Name="UpdateNotes" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                <Separator Margin="0,16,0,10" />
+                                <TextBlock Text="数据目录" FontWeight="SemiBold" />
+                                <TextBlock x:Name="DataLocationText" TextWrapping="Wrap" Margin="0,8,0,8" />
+                                <WrapPanel>
+                                    <Button Content="迁移当前数据…" Click="MoveDataClicked" />
+                                    <Button Content="连接已有数据目录…" Click="LinkDataClicked" />
+                                    <Button Content="从旧绿色包导入…" Click="ImportDataClicked" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
                 </TabControl>
             </TabItem>
             <TabItem x:Name="UsagePage" Header="用量" Tag="&#xE9D9;" Style="{StaticResource RoomPage}">

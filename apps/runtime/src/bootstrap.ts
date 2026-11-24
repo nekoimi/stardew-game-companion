@@ -29,5 +29,6 @@ if (process.argv[2] === "--check") {
   const runDirectory = process.argv[3];
   if (!runDirectory) throw new Error("Missing Mod directory");
   await startDesktopService(runDirectory, process.env.STARDEW_DESKTOP_TOKEN ?? "",
-    process.env.STARDEW_BRIDGE_STOP_FILE ?? "", Number(process.argv[4]), process.env.STARDEW_MODEL_TEST_ONLY === "1");
+    process.env.STARDEW_BRIDGE_STOP_FILE ?? "", Number(process.argv[4]), process.env.STARDEW_MODEL_TEST_ONLY === "1",
+    process.env.STARDEW_COMPANION_DATA_DIR);
 }

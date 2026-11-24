@@ -46,9 +46,16 @@ public partial class MainWindow : Window
     private string _observedFeedbackId = "";
     private DateTimeOffset? _recentObservedAt;
 
-    public MainWindow()
+    public MainWindow() : this(healthCheck: false) { }
+
+    internal MainWindow(bool healthCheck)
     {
         InitializeComponent();
+        if (healthCheck)
+        {
+            _logger = null!;
+            return;
+        }
         _logger = new FileLogger(DesktopInstallation.LogDirectory(_root),
             configuredDirectory: Environment.GetEnvironmentVariable("STARDEW_COMPANION_LOG_DIR"));
         LogDirectoryText.Text = _logger.DirectoryPath;
@@ -72,6 +79,7 @@ public partial class MainWindow : Window
         RefreshControls();
         InitializeTray();
         InitializePlugins();
+        InitializeUpdates();
     }
 
     private DesktopSettings LaunchSettings() => _savedSettings with

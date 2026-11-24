@@ -1,3 +1,4 @@
+using System.Text.Json;
 using StardewAI.Companion.Mod.Menus;
 using StardewModdingAPI;
 using StardewValley;
@@ -7,6 +8,24 @@ namespace StardewAI.Companion.Mod;
 public sealed partial class ModEntry
 {
     private string _savedMode = "companion";
+    private static readonly JsonSerializerOptions ConfigJson = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
+
+    private ModConfig ReadModConfig() => _desktopConfigPath is { } path
+        ? (File.Exists(path) ? JsonSerializer.Deserialize<ModConfig>(File.ReadAllText(path), ConfigJson) ?? new() : new())
+        : Helper.ReadConfig<ModConfig>();
+
+    private void WriteModConfig(ModConfig config)
+    {
+        if (_desktopConfigPath is not { } path)
+        {
+            Helper.WriteConfig(config);
+            return;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        string pending = path + ".tmp";
+        File.WriteAllText(pending, JsonSerializer.Serialize(config, ConfigJson));
+        File.Move(pending, path, overwrite: true);
+    }
 
     private void OpenGameSettings()
     {
@@ -37,9 +56,9 @@ public sealed partial class ModEntry
         try
         {
             // Keep the running actor binding unchanged until the next process.
-            var saved = Helper.ReadConfig<ModConfig>();
+            var saved = ReadModConfig();
             saved.Mode = _savedMode == "player" ? "companion" : "player";
-            Helper.WriteConfig(saved);
+            WriteModConfig(saved);
             _savedMode = saved.Mode;
             OpenGameSettings();
         }

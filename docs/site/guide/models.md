@@ -24,6 +24,6 @@ API Key 由 Windows 凭据管理器保存，保存后显示掩码。留空表示
 
 读档后，可在空闲时点击「应用模型」切换连接；当前存档的角色、对话、手记与目标继续保留。
 
-模型会接收聊天、相关游戏观察、工具结果和手记。伙伴资料保存在绿色包的 `data/companion.sqlite`，桌面设置保存在 `data/desktop-settings.json`。
+模型会接收聊天、相关游戏观察、工具结果和手记。当前数据位置的 `data/companion.sqlite` 保存伙伴资料，`data/desktop-settings.json` 保存桌面设置。
 
 完整字段说明见[模型配置](/reference/desktop-guide#模型配置)。

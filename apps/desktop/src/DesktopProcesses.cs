@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using StardewAI.Companion.Logging;
+using StardewAI.Companion.Updates;
 
 namespace StardewAI.Companion.Desktop;
 
@@ -40,6 +41,17 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
         gameStart.ArgumentList.Add(Path.Combine(root, "Mods"));
         gameStart.Environment["STARDEW_DESKTOP_MODE"] = "1";
         gameStart.Environment["STARDEW_COMPANION_LOG_DIR"] = logger.DirectoryPath;
+        var profile = PortableData.Open(root);
+        if (profile.External is not null)
+        {
+            gameStart.Environment["STARDEW_COMPANION_MOD_DATA_DIR"] = profile.ModData;
+            gameStart.Environment["STARDEW_COMPANION_MOD_CONFIG"] = profile.ModConfig;
+        }
+        else
+        {
+            gameStart.Environment.Remove("STARDEW_COMPANION_MOD_DATA_DIR");
+            gameStart.Environment.Remove("STARDEW_COMPANION_MOD_CONFIG");
+        }
         foreach (var name in new[] { "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL" })
             gameStart.Environment.Remove(name);
         _game = new Process { StartInfo = gameStart, EnableRaisingEvents = true };
@@ -76,6 +88,7 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
             runtimeStart.ArgumentList.Add(argument);
         runtimeStart.Environment["STARDEW_DESKTOP_TOKEN"] = credential;
         runtimeStart.Environment["STARDEW_BRIDGE_STOP_FILE"] = _stopFile;
+        runtimeStart.Environment["STARDEW_COMPANION_DATA_DIR"] = PortableData.Open(root).Data;
         foreach (var name in new[] { "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL" })
             runtimeStart.Environment.Remove(name);
         if (modelTestOnly) runtimeStart.Environment["STARDEW_MODEL_TEST_ONLY"] = "1";
@@ -213,12 +226,7 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
         _game = null;
     }
 
-    internal static bool AnyGameRunning() => new[] { "StardewModdingAPI", "Stardew Valley" }.Any(name =>
-    {
-        var matches = Process.GetProcessesByName(name);
-        foreach (var process in matches) process.Dispose();
-        return matches.Length != 0;
-    });
+    internal static bool AnyGameRunning() => UpdateProcess.AnyGameRunning();
 
     private static bool IsRunning(Process? process)
     {

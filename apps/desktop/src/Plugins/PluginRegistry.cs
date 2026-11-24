@@ -16,12 +16,13 @@ internal sealed class PluginRegistry
     private readonly string _updatePath;
     private volatile Dictionary<string, InstalledPlugin> _entries;
 
-    internal PluginRegistry(string root)
+    internal PluginRegistry(string root, string? dataDirectory = null, string? packageDirectory = null)
     {
-        _packages = Path.Combine(root, "plugins");
-        _data = Path.Combine(root, "data", "plugins");
-        _registryPath = Path.Combine(root, "data", "plugin-registry.json");
-        _snapshotRoot = Path.Combine(root, "data", "plugin-backups");
+        string data = dataDirectory ?? Path.Combine(root, "data");
+        _packages = packageDirectory ?? Path.Combine(root, "plugins");
+        _data = Path.Combine(data, "plugins");
+        _registryPath = Path.Combine(data, "plugin-registry.json");
+        _snapshotRoot = Path.Combine(data, "plugin-backups");
         _updatePath = Path.Combine(_snapshotRoot, "transaction.json");
         _entries = File.Exists(_registryPath)
             ? JsonSerializer.Deserialize<Dictionary<string, InstalledPlugin>>(File.ReadAllText(_registryPath), PluginPackages.Json)

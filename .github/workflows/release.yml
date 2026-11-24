@@ -62,6 +62,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           STARDEW_GAME_PATH: ${{ steps.references.outputs.path }}
+          UPDATE_PUBLIC_KEY: ${{ vars.STARDEW_UPDATE_PUBLIC_KEY }}
         run: |
           $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
           $tag = ([string]$env:RELEASE_TAG).Trim()
@@ -76,10 +77,29 @@ jobs:
           if ($LASTEXITCODE) { throw 'Invalid Git release tag.' }
 
           $output = Join-Path $env:RUNNER_TEMP "companion-release-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          & ./packaging/windows/build-node-release.ps1 -Output $output
+          if (!$env:UPDATE_PUBLIC_KEY) { throw 'Set the STARDEW_UPDATE_PUBLIC_KEY repository variable.' }
+          $publicKey = Join-Path $env:RUNNER_TEMP 'update-publisher.spki'
+          [IO.File]::WriteAllBytes($publicKey, [Convert]::FromBase64String($env:UPDATE_PUBLIC_KEY))
+          $channel = if ($prerelease) { 'preview' } else { 'stable' }
+          & ./packaging/windows/build-node-release.ps1 -Output $output -ReleaseTag $tag -Channel $channel -UpdatePublicKeyFile $publicKey
 
           $archive = Join-Path $output "StardewGameCompanion-$version-windows-x64.zip"
-          @("tag=$tag", "version=$version", "archive=$archive", "prerelease=$($prerelease.ToString().ToLowerInvariant())") >> $env:GITHUB_OUTPUT
+          @("tag=$tag", "version=$version", "archive=$archive", "public_key=$publicKey", "channel=$channel", "prerelease=$($prerelease.ToString().ToLowerInvariant())") >> $env:GITHUB_OUTPUT
+      - name: Sign update package
+        shell: pwsh
+        env:
+          ARCHIVE: ${{ steps.build.outputs.archive }}
+          PUBLIC_KEY_FILE: ${{ steps.build.outputs.public_key }}
+          STARDEW_UPDATE_SIGNING_KEY: ${{ secrets.STARDEW_UPDATE_SIGNING_KEY }}
+        run: ./packaging/windows/sign-update.ps1 -Archive $env:ARCHIVE -PublicKeyFile $env:PUBLIC_KEY_FILE
+      - name: Verify signed package with the desktop updater
+        shell: pwsh
+        env:
+          ARCHIVE: ${{ steps.build.outputs.archive }}
+          PUBLIC_KEY_FILE: ${{ steps.build.outputs.public_key }}
+          RELEASE_TAG: ${{ steps.build.outputs.tag }}
+          RELEASE_CHANNEL: ${{ steps.build.outputs.channel }}
+        run: dotnet run --project tests/desktop-updates -c Release -- --verify-release $env:ARCHIVE $env:PUBLIC_KEY_FILE $env:RELEASE_TAG $env:RELEASE_CHANNEL
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         id: upload
         with:
@@ -87,6 +107,7 @@ jobs:
           path: |
             ${{ steps.build.outputs.archive }}
             ${{ steps.build.outputs.archive }}.sha256
+            ${{ steps.build.outputs.archive }}.sig
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -134,5 +155,5 @@ jobs:
           $releaseArgs = @('--repo', $env:GITHUB_REPOSITORY, '--target', $env:GITHUB_SHA, '--generate-notes', '--title', $tag)
           if ($tagSha) { $releaseArgs += '--verify-tag' }
           if ($env:RELEASE_PRERELEASE -eq 'true') { $releaseArgs += '--prerelease' }
-          gh release create @releaseArgs -- $tag $archive "$archive.sha256"
+          gh release create @releaseArgs -- $tag $archive "$archive.sha256" "$archive.sig"
           if ($LASTEXITCODE) { throw 'GitHub Release creation failed.' }

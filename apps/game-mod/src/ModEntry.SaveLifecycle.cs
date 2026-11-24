@@ -147,7 +147,7 @@ public sealed partial class ModEntry
         _playerControlApproved = false;
         NativePlayerIntentHook.Bind((PlayerActor)_actor,_authority);
         _thinking = new DecisionPauseController(TimeSpan.FromSeconds(_config.ThinkingPauseMaxSeconds), Monitor.Log);
-        _coordinator = NativeExecutionFactory.Create(Helper, Monitor, _actor, _observer, _navigator);
+        _coordinator = NativeExecutionFactory.Create(Helper, Monitor, _actor, _observer, _navigator, _modData);
         _coordinator.PlayerAuthority = _authority;
         _coordinator.ProgramHoldProvider = () =>
             _thinking?.CurrentHold is { Active: true } hold
@@ -215,7 +215,7 @@ public sealed partial class ModEntry
         _preset = PresetGoalAutostart.Load(
             Environment.GetEnvironmentVariable("STARDEW_AI_PRESET_GOAL_FILE"),
             saveId,
-            Path.Combine(Helper.DirectoryPath, "data", "preset-goal-state.json"),
+            Path.Combine(_modData, "preset-goal-state.json"),
             Monitor.Log);
         if (_preset.Enabled)
         {
@@ -241,7 +241,7 @@ public sealed partial class ModEntry
         {
             // 1. Per-save state partition: scope repository strictly by active save folder
             string saveId = Constants.SaveFolderName ?? "default-save";
-            string storageDir = Path.Combine(Helper.DirectoryPath, "data", saveId);
+            string storageDir = Path.Combine(_modData, saveId);
             _stateRepository = new JsonActorStateRepository(storageDir);
             var checkpoint = Helper.Data.ReadSaveData<CompanionSaveCheckpoint>("companion-checkpoint-v1");
             if (checkpoint?.SaveId != saveId) checkpoint = null;
@@ -427,7 +427,7 @@ public sealed partial class ModEntry
             _avatar = new CompanionAvatar(_actor, msg => Monitor.Log(msg, LogLevel.Info),
                 () => _lifeMenuUiState.HasProfileState ? _lifeMenuUiState.CompanionName : null);
             _navigator = new SameMapNavigator(_observer);
-            _coordinator = NativeExecutionFactory.Create(Helper, Monitor, _actor, _observer, _navigator, _avatar);
+            _coordinator = NativeExecutionFactory.Create(Helper, Monitor, _actor, _observer, _navigator, _modData, _avatar);
             _coordinator.Rest.Bedtime = CompanionBedtime.Normalize(activeState.PreferredBedtime);
             if (activeState.SleepDay == Game1.Date.TotalDays && activeState.SleepStartedAt is { } sleepTime)
                 _coordinator.Rest.RestoreSleep(sleepTime, activeState.SleepIsDaytime);
@@ -493,7 +493,7 @@ public sealed partial class ModEntry
                 Helper.Data.WriteSaveData("player-control-checkpoint-v1",new CompanionSaveCheckpoint {
                     SaveId=nativeSaveId,NativePlayerId=Game1.player.UniqueMultiplayerID,
                     Conversation=CompanionConversationStore.Retain(_lifeMenuUiState.Conversation),
-                    RuntimePartitions=CompanionSaveCheckpoint.CaptureRuntime(Helper.DirectoryPath,nativeSaveId),
+                    RuntimePartitions=CompanionSaveCheckpoint.CaptureRuntime(Helper.DirectoryPath,nativeSaveId,_modData),
                     Actor=null, // Native SaveGame exclusively owns position, inventory and resources.
                 });
             return;
@@ -519,7 +519,7 @@ public sealed partial class ModEntry
                     SaveId = saveId,
                     Conversation = CompanionConversationStore.Retain(_lifeMenuUiState.Conversation),
                     Actor = _stateRepository?.LoadOrInitializeDefaults("companion-1"),
-                    RuntimePartitions = CompanionSaveCheckpoint.CaptureRuntime(Helper.DirectoryPath, saveId),
+                    RuntimePartitions = CompanionSaveCheckpoint.CaptureRuntime(Helper.DirectoryPath, saveId, _modData),
                 });
             }
         }

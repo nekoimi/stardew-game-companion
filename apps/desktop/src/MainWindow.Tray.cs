@@ -78,7 +78,13 @@ public partial class MainWindow
             return;
         }
 
+        await ExitDesktopAsync();
+    }
+
+    private async Task ExitDesktopAsync(Func<Task>? beforeClose = null, string failureTitle = "")
+    {
         _closing = true;
+        _updateCancellation?.Cancel();
         if (_session is { } session)
         {
             RefreshControls();
@@ -93,6 +99,15 @@ public partial class MainWindow
         }
         _logger.Write("desktop", "info", "desktop_shutdown", "伴侣桌面已退出。");
         await _logger.StopAsync();
+        try
+        {
+            if (beforeClose is null) ClearStagedUpdate();
+            else await beforeClose();
+        }
+        catch (Exception error) when (IsUpdateFailure(error))
+        {
+            new ConfirmationDialog(failureTitle, error.Message, "关闭").ShowFor(this);
+        }
         _exitReady = true;
         Close();
     }

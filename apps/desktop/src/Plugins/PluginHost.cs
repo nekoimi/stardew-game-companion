@@ -31,16 +31,16 @@ internal sealed class PluginHost : IAsyncDisposable
     private PluginServer? _server;
 
     internal PluginHost(string root, FileLogger logger, Func<string, object, Task<PluginCallResult>>? runtime = null,
-        HttpMessageHandler? catalogTransport = null)
+        HttpMessageHandler? catalogTransport = null, string? dataDirectory = null, string? packageDirectory = null)
     {
         _logger = logger;
         _runtime = runtime ?? ((_, _) => Task.FromResult(PluginCallResult.Unavailable()));
-        var data = Path.Combine(root, "data");
+        var data = dataDirectory ?? Path.Combine(root, "data");
         _catalogSettings = Path.Combine(data, "plugin-catalog.json");
         Directory.CreateDirectory(data);
         try { _lease = File.Open(Path.Combine(data, "plugin-host.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
         catch (IOException ex) { throw new InvalidOperationException("此绿色包的插件中心已在运行。", ex); }
-        try { _registry = new PluginRegistry(root); }
+        try { _registry = new PluginRegistry(root, data, packageDirectory); }
         catch { _lease.Dispose(); throw; }
         _catalogClient = new(catalogTransport ?? new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
     }

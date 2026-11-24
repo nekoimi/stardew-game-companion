@@ -13,14 +13,14 @@ internal sealed class GameTransportSession : IDisposable
     public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
     public WebSocketTransportServer Server { get; }
 
-    public GameTransportSession(string modDirectory, string saveId, ITransportHandler handler,
+    public GameTransportSession(string dataDirectory, string saveId, ITransportHandler handler,
         DiscoveryService? discovery, IMonitor monitor)
     {
         _saveId = saveId;
         _discovery = discovery;
         Server = new WebSocketTransportServer(port: 0, sessionToken: _token, handler: handler,
             saveId: saveId, gameSessionId: Id, smapiLogger: monitor.Log,
-            completedArchiveDirectory: Path.Combine(modDirectory, "data", "transport-receipts", Id));
+            completedArchiveDirectory: Path.Combine(dataDirectory, "transport-receipts", Id));
     }
 
     public void Publish() => _discovery?.Publish(_saveId, Id, Server.Port, _token, Server.ProtocolVersion);

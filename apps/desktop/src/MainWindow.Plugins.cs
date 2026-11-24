@@ -21,7 +21,8 @@ public partial class MainWindow
     {
         try
         {
-            var host = new PluginHost(_root, _logger, ForwardPluginCallAsync);
+            var data = Updates.PortableData.Open(_root);
+            var host = new PluginHost(_root, _logger, ForwardPluginCallAsync, dataDirectory: data.Data, packageDirectory: data.Plugins);
             _plugins = host;
             host.Changed += () => Dispatcher.InvokeAsync(() =>
             {

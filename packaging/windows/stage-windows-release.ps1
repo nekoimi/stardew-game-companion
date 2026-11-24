@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory)][string]$Output,
     [Parameter(Mandatory)][string]$DesktopSource,
     [Parameter(Mandatory)][string]$ModSource,
+    [Parameter(Mandatory)][string]$UpdaterSource,
+    [Parameter(Mandatory)][hashtable]$ReleaseInfo,
     [string]$Cache
 )
 
@@ -21,6 +23,10 @@ foreach ($name in 'manifest.json', 'StardewAI.Companion.Mod.dll', 'StardewAI.Com
     Copy-Item -LiteralPath (Join-Path $ModSource $name) -Destination $mod
 }
 Copy-Item -LiteralPath (Join-Path $DesktopSource '星露谷游戏伴侣.exe') -Destination $root
+$tools = (New-Item -ItemType Directory -Path (Join-Path $root 'tools')).FullName
+Copy-Item -LiteralPath (Join-Path $UpdaterSource 'StardewGameCompanion.Updater.exe') -Destination $tools
+ConvertTo-Json -InputObject $ReleaseInfo |
+    Set-Content -LiteralPath (Join-Path $root 'release-info.json') -Encoding utf8NoBOM
 foreach ($name in 'DotNet-LICENSE.txt', 'DotNet-ThirdPartyNotices.txt') {
     Copy-Item -LiteralPath (Join-Path $DesktopSource $name) -Destination $docs
 }

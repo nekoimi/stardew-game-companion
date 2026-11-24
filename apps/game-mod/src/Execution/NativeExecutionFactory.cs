@@ -11,7 +11,7 @@ internal static class NativeExecutionFactory
 {
     public static CompanionMechanicsCoordinator Create(
         IModHelper helper, IMonitor monitor, IFarmerActor actor, IWorldObserver observer,
-        SameMapNavigator navigator, CompanionAvatar? avatar = null)
+        SameMapNavigator navigator, string dataDirectory, CompanionAvatar? avatar = null)
     {
         var coordinator = new CompanionMechanicsCoordinator(actor, observer, navigator,
             new NormalWateringCanAdapter(observer, monitor), avatar, monitor.Log,
@@ -23,7 +23,7 @@ internal static class NativeExecutionFactory
             mapGraph: avatar is null ? null : new WorldMapGraph(null, monitor.Log),
             purchaseAdapter: new NormalPurchaseAdapter(observer, monitor),
             nativeActionAdapter: new NormalNativeActionAdapter(observer, monitor));
-        coordinator.ConfigureExtensions(Path.Combine(helper.DirectoryPath, "data", "abilities", "packages"),
+        coordinator.ConfigureExtensions(Path.Combine(dataDirectory, "abilities", "packages"),
             helper.ModRegistry, helper.DirectoryPath);
         return coordinator;
     }

@@ -31,6 +31,8 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
     private IActorStateRepository? _stateRepository;
     private IFarmerActor? _actor;
     private ModConfig _config = new();
+    private string _modData = "";
+    private string? _desktopConfigPath;
     private PlayerControlAuthority? _authority;
     private bool _playerControlApproved;
     private DecisionPauseController? _thinking;
@@ -80,11 +82,14 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         InitializeGameLog(helper.DirectoryPath);
         LogDesktopGameEvent("mod_initialized", "游戏 Mod 已初始化。");
 
-        _config = Helper.ReadConfig<ModConfig>();
+        _desktopConfigPath = _desktopMode ? Environment.GetEnvironmentVariable("STARDEW_COMPANION_MOD_CONFIG") : null;
+        _modData = (_desktopMode ? Environment.GetEnvironmentVariable("STARDEW_COMPANION_MOD_DATA_DIR") : null)
+            ?? Path.Combine(helper.DirectoryPath, "data");
+        _config = ReadModConfig();
         _savedMode = _config.Mode;
         if (!_desktopMode && !PlayerModeEnabled) CompanionMenuClock.Install();
         _discoveryService = new DiscoveryService(helper.DirectoryPath, Monitor);
-        _conversationStore = new CompanionConversationStore(Path.Combine(helper.DirectoryPath, "data", "conversations"));
+        _conversationStore = new CompanionConversationStore(Path.Combine(_modData, "conversations"));
         _lifeMenuUiState.ConversationChanged += PersistConversation;
 
         helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;

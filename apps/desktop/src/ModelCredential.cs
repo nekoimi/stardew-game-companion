@@ -2,13 +2,14 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using StardewAI.Companion.Updates;
 
 namespace StardewAI.Companion.Desktop;
 
 internal static class ModelCredential
 {
     private static string Target(string root, ApiModelSettings selection) =>
-        "StardewGameCompanion/" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root.ToUpperInvariant()))) + "/" +
+        "StardewGameCompanion/" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(PortableData.Open(root).CredentialRoot.ToUpperInvariant()))) + "/" +
         (selection.IsCustom
             ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(selection.CredentialScope)))
             : selection.Provider);

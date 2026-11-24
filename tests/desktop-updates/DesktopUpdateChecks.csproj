@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../apps/shared/dotnet/Updates/*.cs" Link="Updates/%(Filename)%(Extension)" />
+    <Compile Include="../../apps/desktop/src/GitHubCompanionReleases.cs" Link="GitHubCompanionReleases.cs" />
+  </ItemGroup>
+</Project>

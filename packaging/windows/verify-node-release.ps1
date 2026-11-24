@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $entries = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::OrdinalIgnoreCase)
 $zip = $null
-$allowed = '^(星露谷游戏伴侣\.exe|release-manifest\.json|docs/(LICENSE|NOTICE|CHANGELOG\.md|desktop-portable\.md|DotNet-(LICENSE|ThirdPartyNotices)\.txt)|runtime/(node\.exe|models\.json|package(-lock)?\.json|licenses/(node/LICENSE|npm\.json)|(dist|node_modules)/.+)|Mods/StardewAI\.Companion\.Mod/(manifest\.json|StardewAI\.Companion\.Mod\.(dll|deps\.json)|docs/(agent-ts-instructions\.md|agent-guidance/[a-z-]+\.md)))$'
+$allowed = '^(星露谷游戏伴侣\.exe|release-(manifest|info)\.json|tools/StardewGameCompanion\.Updater\.exe|docs/(LICENSE|NOTICE|CHANGELOG\.md|desktop-portable\.md|DotNet-(LICENSE|ThirdPartyNotices)\.txt)|runtime/(node\.exe|models\.json|package(-lock)?\.json|licenses/(node/LICENSE|npm\.json)|(dist|node_modules)/.+)|Mods/StardewAI\.Companion\.Mod/(manifest\.json|StardewAI\.Companion\.Mod\.(dll|deps\.json)|docs/(agent-ts-instructions\.md|agent-guidance/[a-z-]+\.md)))$'
 
 function Add-ReleaseEntry([string]$Name, $Entry) {
     if ($Name -match '(^/|\\|:|(^|/)\.\.?(/|$)|//)' -or
@@ -42,7 +42,8 @@ try {
         }
         $source = 'extracted release'
     }
-    foreach ($required in @('星露谷游戏伴侣.exe', 'release-manifest.json', 'docs/LICENSE', 'docs/NOTICE',
+    foreach ($required in @('星露谷游戏伴侣.exe', 'release-manifest.json', 'release-info.json',
+        'tools/StardewGameCompanion.Updater.exe', 'docs/LICENSE', 'docs/NOTICE',
         'docs/DotNet-LICENSE.txt', 'docs/DotNet-ThirdPartyNotices.txt', 'docs/desktop-portable.md', 'docs/CHANGELOG.md', 'runtime/node.exe',
         'runtime/dist/bootstrap.js', 'runtime/models.json', 'runtime/licenses/node/LICENSE',
         'runtime/licenses/npm.json', 'runtime/package-lock.json', 'Mods/StardewAI.Companion.Mod/manifest.json',

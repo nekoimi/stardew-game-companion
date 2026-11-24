@@ -17,12 +17,13 @@ import { DesktopEventStream } from "./event-stream.js";
 
 export async function startDesktopService(
   runDirectory: string, secret: string, stopFile: string, ownerPid: number, modelTestOnly = false,
+  dataDirectory = join(runDirectory, "..", "..", "data"),
 ): Promise<void> {
   if (!secret || !stopFile || !Number.isSafeInteger(ownerPid) || ownerPid < 1) throw new Error("Invalid desktop launch parameters");
   const diagnostic = (event: string, details: JsonObject = {}) =>
     process.stderr.write("STARDEW_COMPANION_LOG " + JSON.stringify({ event, ...details }) + "\n");
   const game = new GameConnection(runDirectory);
-  const store = modelTestOnly ? undefined : new CompanionStore(join(runDirectory, "..", "..", "data", "companion.sqlite"),
+  const store = modelTestOnly ? undefined : new CompanionStore(join(dataDirectory, "companion.sqlite"),
     () => { diagnostic("receipt_retention_failed"); });
   const provider = new PiModelAdapter();
   const streams = new Set<DesktopEventStream>();

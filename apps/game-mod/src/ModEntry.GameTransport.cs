@@ -10,7 +10,7 @@ public sealed partial class ModEntry
 {
     private GameTransportSession BindGameTransport(string saveId, CompanionMechanicsCoordinator coordinator)
     {
-        var session = new GameTransportSession(Helper.DirectoryPath, saveId, coordinator, _discoveryService, Monitor);
+        var session = new GameTransportSession(_modData, saveId, coordinator, _discoveryService, Monitor);
         var server = session.Server;
         _transportSession = session;
         _transportServer = server;

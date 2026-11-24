@@ -18,8 +18,11 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="../../shared/dotnet/FileLogger.cs" Link="Logging/FileLogger.cs" />
+    <Compile Include="../../shared/dotnet/Updates/*.cs" Link="Updates/%(Filename)%(Extension)" />
     <Using Remove="System.Drawing;System.Windows.Forms" />
     <Resource Include="Assets/*.png;Assets/companion.ico" />
+    <EmbeddedResource Include="$(UpdatePublicKeyFile)" LogicalName="UpdatePublisherKey"
+                      Condition="'$(UpdatePublicKeyFile)' != ''" />
     <None Include="$(MSBuildToolsPath)/../../LICENSE.txt" Link="DotNet-LICENSE.txt"
           CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"
           Condition="Exists('$(MSBuildToolsPath)/../../LICENSE.txt')" />

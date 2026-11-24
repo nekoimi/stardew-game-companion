@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
+using StardewAI.Companion.Updates;
 
 namespace StardewAI.Companion.Desktop;
 
@@ -23,12 +24,13 @@ internal sealed record ApiModelSettings(string Provider = "deepseek", string Mod
 }
 internal sealed record DesktopSettings(string GameDirectory = "", string ActorMode = "player",
     ApiModelSettings? ApiModel = null, ApiModelSettings? CustomModel = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ApiModelSettings? CompatibleResponses = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ApiModelSettings? CompatibleResponses = null,
+    bool CheckPreviewUpdates = false);
 
 internal static class DesktopInstallation
 {
-    internal static string SettingsFile(string root) => Path.Combine(root, "data", "desktop-settings.json");
-    internal static string LogDirectory(string root) => Path.Combine(root, "data", "logs");
+    internal static string SettingsFile(string root) => Path.Combine(PortableData.Open(root).Data, "desktop-settings.json");
+    internal static string LogDirectory(string root) => Path.Combine(PortableData.Open(root).Data, "logs");
 
     internal static DesktopSettings LoadSettings(string root)
     {
@@ -50,7 +52,7 @@ internal static class DesktopInstallation
 
     internal static void ConfigureGame(string root, DesktopSettings settings)
     {
-        var configPath = Path.Combine(ModDirectory(root), "config.json");
+        var configPath = PortableData.Open(root).ModConfig;
         var config = File.Exists(configPath) ? JsonNode.Parse(File.ReadAllText(configPath))?.AsObject() : new JsonObject();
         if (config is null) throw new InvalidDataException("伙伴设置文件无效。");
         config["Mode"] = settings.ActorMode;
@@ -69,7 +71,7 @@ internal static class DesktopInstallation
 
     internal static FileStream AcquirePackageLease(string root)
     {
-        var directory = Path.Combine(root, "data");
+        var directory = PortableData.Open(root).Data;
         Directory.CreateDirectory(directory);
         try { return File.Open(Path.Combine(directory, "desktop.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
         catch (IOException ex) { throw new InvalidOperationException("所选绿色包已在运行，请退出后重试。", ex); }

@@ -17,12 +17,12 @@ public sealed class CompanionSaveCheckpoint
         "companion-memory.json", "companion-care.json", "companion-milestones.json",
     };
 
-    public static Dictionary<string, string?> CaptureRuntime(string modDirectory, string saveId)
+    public static Dictionary<string, string?> CaptureRuntime(string modDirectory, string saveId, string? dataDirectory = null)
     {
         var result = new Dictionary<string, string?>();
         foreach (string name in RuntimeFiles)
         {
-            string path = Path.Combine(modDirectory, "data", name);
+            string path = Path.Combine(dataDirectory ?? Path.Combine(modDirectory, "data"), name);
             if (!File.Exists(path)) { result[name] = null; continue; }
             using var document = JsonDocument.Parse(File.ReadAllText(path));
             result[name] = document.RootElement.TryGetProperty(saveId, out var record) ? record.GetRawText() : null;
