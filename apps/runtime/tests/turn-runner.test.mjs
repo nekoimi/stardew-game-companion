@@ -527,6 +527,103 @@ test("a persisted goal resumes only after authority is handed back", async () =>
   } finally { await runner.stop(); store.close(); }
 });
 
+test("a rate-limited autonomous turn retries the model without repeating a settled action", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  store.updateItem(binding.saveId, "goals", "farm-goal", { text: "打理农场", requestId: "farm-request",
+    status: "active", continuation: "continue" });
+  game.nativeResult = (commandId, skillId) => ({ commandId, skillId, terminalState: "succeeded" });
+  const requests = [];
+  const events = [];
+  const runner = new TurnRunner(game, { async *generate({ messages }) {
+    requests.push(structuredClone(messages));
+    if (requests.length === 1) yield done([action]);
+    else if (requests.length === 2) yield { type: "error", code: "rate-limited", message: "频率受限。" };
+    else yield done();
+  } }, (type, payload) => events.push({ type, payload }), "", store);
+  try {
+    game.emit("changed");
+    t.mock.timers.tick(750);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(runner.status().agentPhase, "model-retry");
+    assert.deepEqual(runner.status().modelIssue, { code: "rate-limited", message: "频率受限。", attempt: 1, maxAttempts: 3 });
+    assert.equal(runner.status().thinking, false);
+    game.state.paused = true;
+    game.emit("changed");
+    t.mock.timers.tick(5000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, 2);
+    game.state.paused = false;
+    game.emit("changed");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, 3);
+    assert.deepEqual(requests[2], requests[1]);
+    assert.equal(game.executed.length, 1);
+    assert.equal(runner.status().modelIssue, undefined);
+    assert.ok(events.some(event => event.type === "life.chat.reply" && event.payload.status === "completed"));
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("network retries stop after three attempts and persistent model errors block automatic requests", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  store.updateItem(binding.saveId, "goals", "farm-goal", { text: "打理农场", status: "active", continuation: "continue" });
+  let code = "network";
+  let calls = 0;
+  const events = [];
+  const runner = new TurnRunner(game, { async *generate() {
+    calls++;
+    yield { type: "error", code, message: "模型服务请求失败。" };
+  } }, (type, payload) => events.push({ type, payload }), "", store);
+  try {
+    game.emit("changed");
+    for (const elapsed of [750, 2000, 5000, 10_000]) {
+      t.mock.timers.tick(elapsed);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(calls, 4);
+    assert.equal(runner.status().agentPhase, "model-error");
+    assert.match(runner.status().modelIssue.message, /自动重试未成功/);
+    game.snapshot.world = { year: 1, season: "spring", dayOfMonth: 2, timeOfDay: 900 };
+    game.emit("changed");
+    t.mock.timers.tick(30_000);
+    assert.equal(calls, 4);
+    assert.equal(store.items(binding.saveId, "goals")[0].status, "active");
+    code = "quota-exhausted";
+    await runner.submit(binding, "manual-retry", "继续当前工作", "send");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 5);
+    assert.equal(runner.status().agentPhase, "model-error");
+    assert.equal(runner.status().modelIssue.code, "quota-exhausted");
+    assert.ok(events.some(event => event.type === "life.chat.reply" && event.payload.errorCode === "quota-exhausted"));
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("taking over during model backoff cancels the pending retry", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const game = new FakeGame();
+  let calls = 0;
+  const { runner } = fixture(game, { async *generate() {
+    calls++;
+    yield { type: "error", code: "network", message: "连接中断。" };
+  } });
+  try {
+    await runner.submit(binding, "request", "照料作物", "send");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(runner.status().agentPhase, "model-retry");
+    await runner.control(binding, "takeover");
+    game.state.controlOwner = "human";
+    game.emit("changed");
+    t.mock.timers.tick(30_000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1);
+    assert.equal(runner.status().agentPhase, "player-control");
+    assert.equal(runner.status().modelIssue, undefined);
+  } finally { await runner.stop(); }
+});
+
 test("the saved player bedtime triggers native sleep, then replans the same waiting goal from a fresh morning observation", async () => {
   const store = new CompanionStore(":memory:");
   const game = new FakeGame();

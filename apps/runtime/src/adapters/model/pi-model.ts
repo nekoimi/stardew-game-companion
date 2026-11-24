@@ -18,8 +18,10 @@ function classifyFailure(text: string | undefined, cancelled: boolean): ModelErr
   if (/\b(401|403)\b|unauthorized|api.key|authentication|permission.denied/i.test(detail)) {
     return new ModelError("authentication", "模型鉴权失败，请核对 API Key 和模型权限。");
   }
-  if (/\b429\b|rate.limit|quota/i.test(detail)) return new ModelError("rate-limited", "模型请求受限，请稍后重试或检查额度。");
-  if (/\b402\b|insufficient.balance/i.test(detail)) return new ModelError("rate-limited", "模型服务余额或额度不足。");
+  if (/\b402\b|insufficient[_ -](?:balance|quota|credits)|billing[_ -]hard[_ -]limit|credit[_ -]balance[_ -]too[_ -]low/i.test(detail)) {
+    return new ModelError("quota-exhausted", "模型服务余额或额度不足，请检查服务商账户。");
+  }
+  if (/\b429\b|rate.limit|too many requests|quota/i.test(detail)) return new ModelError("rate-limited", "模型服务请求频率受限。");
   if (/\b404\b|model.not.found|unknown.model/i.test(detail)) return new ModelError("model-unavailable", "模型不可用，请核对模型名称。");
   if (/stream.*(?:unsupported|not.support|invalid)|(?:unsupported|not.support).*stream/i.test(detail)) {
     return new ModelError("unsupported", "接口拒绝当前流式设置，请调整流式开关后重试。");

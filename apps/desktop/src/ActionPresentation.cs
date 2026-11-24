@@ -78,6 +78,8 @@ internal static class ActionPresentation
     public static string Phase(string phase, string skill = "") => phase switch
     {
         "thinking" => "正在思考与安排下一步",
+        "model-retry" => "模型服务暂时不可用，等待自动重试",
+        "model-error" => "模型调用失败，请查看原因",
         "planning-route" => "正在寻找可通行的路线",
         "validating" => "正在检查执行条件",
         "executing" => Activity(skill),

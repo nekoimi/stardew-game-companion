@@ -443,6 +443,15 @@ public partial class MainWindow : Window
         var skill = Text(payload, "activeSkillId");
         var phase = Text(payload, "agentPhase");
         var execution = phase.Length > 0 ? ActionPresentation.Phase(phase, skill) : ActionPresentation.Activity(skill.Length > 0 ? skill : action);
+        var modelDetail = "";
+        if (phase is "model-retry" or "model-error" && payload.TryGetProperty("modelIssue", out var issue))
+        {
+            modelDetail = Text(issue, "message");
+            if (phase == "model-retry" && issue.ValueKind == JsonValueKind.Object
+                && issue.TryGetProperty("attempt", out var attempt) && issue.TryGetProperty("maxAttempts", out var limit)
+                && attempt.ValueKind == JsonValueKind.Number && limit.ValueKind == JsonValueKind.Number)
+                modelDetail += $" 等待第 {attempt.GetInt32()}/{limit.GetInt32()} 次重试。";
+        }
         var thinking = payload.TryGetProperty("modelStreaming", out var streaming) && streaming.ValueKind == JsonValueKind.False
             ? "等待模型响应" : "伴侣正在规划或回复";
         if (clockPauseOwner == "model-thinking") thinking += " · 游戏时钟已暂停";
@@ -450,6 +459,7 @@ public partial class MainWindow : Window
         _chatActivity = _recoveryPending ? "请先核对旧动作。"
             : _interrupting ? "正在等待旧动作停止并核对结果。"
             : _activeCommandId.Length > 0 ? execution
+            : modelDetail.Length > 0 ? modelDetail
             : clockPauseOwner == "program-protection" ? "保护暂停 · 游戏时钟已暂停"
             : isThinking ? thinking
             : _paused ? "工作已暂停。"
@@ -459,6 +469,8 @@ public partial class MainWindow : Window
             : _paused ? ("已暂停", "可在「今天」继续当前工作。")
             : _interrupting ? ("交接中", "正在确认旧动作终态。")
             : _activeCommandId.Length > 0 ? (phase is "planning-route" ? "正在寻路" : phase is "verifying" or "reconciling" or "waiting-receipt" ? "正在核对" : "正在执行", execution)
+            : phase == "model-retry" ? ("等待重试", modelDetail.Length > 0 ? modelDetail : execution)
+            : phase == "model-error" ? ("模型调用失败", modelDetail.Length > 0 ? modelDetail : execution)
             : clockPauseOwner == "program-protection" ? ("已暂停", "保护暂停 · 游戏时钟已暂停")
             : isThinking ? ("正在思考", thinking)
             : !_partnerReady ? ("等待伙伴", "请在「设置」检查伙伴连接。")

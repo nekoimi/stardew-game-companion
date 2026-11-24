@@ -36,7 +36,7 @@ export type ModelMessage =
 
 export type ModelUsage = Partial<Record<"input" | "output" | "cacheRead" | "cacheWrite", number>>;
 export type ModelErrorCode = "authentication" | "model-unavailable" | "rate-limited" | "network"
-  | "invalid-tool-response" | "cancelled" | "unsupported" | "provider";
+  | "quota-exhausted" | "invalid-tool-response" | "cancelled" | "unsupported" | "provider";
 
 export type ModelEvent =
   | { type: "text"; delta: string }

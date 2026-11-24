@@ -41,7 +41,8 @@ test("DeepSeek adapter streams tool arguments, classifies failures, and preserve
     assert.deepEqual(result.calls[0].arguments, {});
     assert.equal(result.usage.input, 12);
     assert.equal((await invoke("accept-no-usage")).usage, undefined);
-    for (const [key, code] of [["accept-401", "authentication"], ["accept-429", "rate-limited"], ["accept-404", "model-unavailable"], ["accept-drop", "network"]]) {
+    for (const [key, code] of [["accept-401", "authentication"], ["accept-429", "rate-limited"],
+      ["accept-quota", "quota-exhausted"], ["accept-404", "model-unavailable"], ["accept-drop", "network"]]) {
       const result = await invoke(key);
       assert.equal(result.type, "error");
       assert.equal(result.code, code);

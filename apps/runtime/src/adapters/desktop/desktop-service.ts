@@ -44,7 +44,8 @@ export async function startDesktopService(
         code: object(payload.error).code ?? null });
     }
     if (type === "life.chat.reply" && payload.status === "failed" && payload.error) {
-      diagnostic("turn_failed", { gameSessionId: payload.gameSessionId ?? null, requestId: payload.requestId ?? null });
+      diagnostic("turn_failed", { gameSessionId: payload.gameSessionId ?? null, requestId: payload.requestId ?? null,
+        code: payload.errorCode ?? null });
     }
     const data = JSON.stringify({ type, payload });
     if (type === "status") {

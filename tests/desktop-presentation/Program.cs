@@ -87,6 +87,20 @@ internal static class Program
                 phaseStatus["recoveryPending"] = JsonSerializer.SerializeToElement(true);
                 Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(phaseStatus));
                 Check(Control<Button>(window, "RecentRecoverButton").Visibility == Visibility.Visible, "Missing receipt has no recovery shortcut.");
+                phaseStatus.Remove("recoveryPending");
+                phaseStatus.Remove("activeCommandId");
+                phaseStatus["thinking"] = JsonSerializer.SerializeToElement(false);
+                phaseStatus["agentPhase"] = JsonSerializer.SerializeToElement("model-retry");
+                phaseStatus["modelIssue"] = JsonSerializer.SerializeToElement(new { code = "rate-limited", message = "模型服务请求频率受限。", attempt = 2, maxAttempts = 3 });
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(phaseStatus));
+                Check(Control<TextBlock>(window, "AgentStateText").Text == "等待重试"
+                    && Control<TextBlock>(window, "ActivityText").Text.Contains("第 2/3 次"), "Model backoff is missing from the desktop status.");
+                phaseStatus["modelBusy"] = JsonSerializer.SerializeToElement(false);
+                phaseStatus["agentPhase"] = JsonSerializer.SerializeToElement("model-error");
+                phaseStatus["modelIssue"] = JsonSerializer.SerializeToElement(new { code = "quota-exhausted", message = "模型服务余额或额度不足。" });
+                Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(phaseStatus));
+                Check(Control<TextBlock>(window, "AgentStateText").Text == "模型调用失败"
+                    && Control<TextBlock>(window, "ActivityText").Text.Contains("余额或额度不足"), "A permanent model error was presented as idle.");
                 Invoke(window, "ApplyStatus", JsonSerializer.SerializeToElement(status));
                 var draft = Control<TextBox>(window, "Input");
                 draft.Text = "还没发出的要求";

@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { once } from "node:events";
+import timers from "node:timers/promises";
 import type { GameConnection } from "../adapters/game/game-connection.js";
 import { isTerminalState } from "../adapters/game/action-receipt.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
@@ -11,6 +13,10 @@ import type { PluginCommand, PluginRequest } from "./plugin-command.js";
 import { actionEvidence } from "./work-feedback.js";
 
 type Complete = Extract<ModelEvent, { type: "done" }>;
+type ModelFailure = Extract<ModelEvent, { type: "error" }>;
+const networkRetryDelays = [2000, 5000, 10_000];
+const rateLimitRetryDelays = [5000, 15_000, 30_000];
+
 interface Turn {
   id: string;
   requestId: string;
@@ -22,6 +28,7 @@ interface Turn {
   nativeAction?: string;
   nativeSkill?: string;
   phase?: string;
+  modelRetry?: ModelFailure & { attempt: number; maxAttempts: number };
   additional: { requestId: string; text: string }[];
   requests: string[];
   settled: Promise<void>;
@@ -43,6 +50,7 @@ export class TurnRunner {
   private bedtimeAttempt?: string;
   private bedtimeRecovery?: string;
   private observedOwner = false;
+  private modelFailure?: { binding: GameBinding; error: ModelFailure };
   private readonly closedPluginInstances = new Set<string>();
 
   constructor(private readonly game: GameConnection, private model: ModelContext | undefined,
@@ -84,6 +92,9 @@ export class TurnRunner {
     if (this.active || this.transition) throw new Error("请等当前回合结束再切换模型。");
     this.model = model;
     this.selection = selection;
+    const binding = this.game.binding;
+    if (binding && this.modelErrorFor(binding)) this.wakeSignatures.delete(binding.saveId);
+    this.modelFailure = undefined;
     this.changed();
   }
 
@@ -93,6 +104,9 @@ export class TurnRunner {
     const decisions = save ? this.store?.items(save, "decisions") ?? [] : [];
     const date = gameDate(this.game.snapshot);
     const timeOfDay = object(this.game.snapshot?.world).timeOfDay;
+    const phase = this.phase();
+    const retry = this.active?.modelRetry;
+    const issue = retry ?? this.modelErrorFor(binding);
     return { ...binding, ready: !!binding, actorMode: this.game.actorMode,
       ...(binding && date ? { gameDate: date } : {}),
       ...(binding && typeof timeOfDay === "number" ? { timeOfDay } : {}),
@@ -101,9 +115,11 @@ export class TurnRunner {
       paused: this.game.state.paused === true, interrupting: this.transition || this.game.state.interrupting === true,
       recoveryPending: !!this.uncertain || this.game.state.recoveryPending === true,
       activeCommandId: this.active?.nativeAction ?? "", activity: this.game.state.activity ?? "idle",
-      activeSkillId: this.active?.nativeSkill ?? "", agentPhase: this.phase(),
+      activeSkillId: this.active?.nativeSkill ?? "", agentPhase: phase,
+      ...(issue ? { modelIssue: { code: issue.code, message: issue.message,
+        ...(retry ? { attempt: retry.attempt, maxAttempts: retry.maxAttempts } : {}) } } : {}),
       progress: this.game.state.progress ?? "", clockPauseOwner: this.game.state.clockPauseOwner ?? null,
-      thinking: !!this.active && !this.active.nativeAction && !this.active.abort.signal.aborted,
+      thinking: !!this.active && !this.active.nativeAction && !this.active.modelRetry && !this.active.abort.signal.aborted,
       modelStreaming: this.selection?.stream !== false,
       modelBusy: !!this.active || this.transition,
       connection: { ready: !!this.model && !!binding && !this.uncertain && this.game.state.recoveryPending !== true,
@@ -139,6 +155,7 @@ export class TurnRunner {
     if (this.transition || this.game.state.interrupting === true) return "stopping";
     if (this.game.actorMode === "player" && this.game.state.controlOwner !== "agent") return "player-control";
     if (this.game.state.paused === true) return "paused";
+    if (this.active?.modelRetry) return "model-retry";
     if (this.active?.phase === "reconciling") return "reconciling";
     if (this.active?.nativeAction) {
       return this.game.state.activeCommandId === this.active.nativeAction
@@ -146,7 +163,14 @@ export class TurnRunner {
     }
     if (this.active) return "thinking";
     if (this.game.binding && this.store?.items(this.game.binding.saveId, "decisions").some(row => row.status === "pending")) return "needs-player";
+    if (this.modelErrorFor(this.game.binding)) return "model-error";
     return "idle";
+  }
+
+  private modelErrorFor(binding?: GameBinding): ModelFailure | undefined {
+    const failure = this.modelFailure;
+    if (binding && failure?.binding.saveId === binding.saveId && failure.binding.gameSessionId === binding.gameSessionId)
+      return failure.error;
   }
 
   changed(): void {
@@ -357,6 +381,7 @@ export class TurnRunner {
   private startTurn(binding: GameBinding, requestId: string, goalId: string, text: string, autonomous = false,
                     originalRequestId = requestId, bedtimeOnly = false, plugin?: PluginCommand): void {
     if (!this.model) return;
+    if (!bedtimeOnly && !plugin) this.modelFailure = undefined;
     const turn: Turn = { id: randomUUID(), requestId, originalRequestId, appliedRequestId: requestId, goalId, binding, abort: new AbortController(), additional: [],
       requests: [requestId], settled: Promise.resolve(), plugin };
     this.active = turn;
@@ -385,6 +410,7 @@ export class TurnRunner {
       this.startTurn(binding, `bedtime-${randomUUID()}`, "", "", true, undefined, true);
       return;
     }
+    if (this.modelErrorFor(binding)) return;
     const native = object(object(this.game.snapshot?.world).native);
     if (native.endOfNight === true) return;
     const actor = object(this.game.snapshot?.companion);
@@ -577,6 +603,8 @@ export class TurnRunner {
     let waiting = false;
     let repeatedBatch = "";
     let repeatCount = 0;
+    let retries = 0;
+    let modelFailure: ModelFailure | undefined;
     const plugin = turn.plugin;
     const startingDate = gameDate(this.game.snapshot);
     const pluginNeedsConfirmation = (message: string) => {
@@ -608,6 +636,7 @@ export class TurnRunner {
     };
     try {
       while (!signal.aborted) {
+        turn.modelRetry = undefined;
         if (plugin && (this.pluginRestRequired(turn.binding) || startingDate !== gameDate(this.game.snapshot))) {
           pluginNeedsConfirmation("插件指令需要在休息或过夜后接续，是否继续剩余工作？");
           break;
@@ -624,8 +653,10 @@ export class TurnRunner {
         if (sleep) messages.push({ role: "user", text: `按存档作息执行了原生就寝，回执：${JSON.stringify(sleep)}。请根据新的游戏观察规划后续。` });
         acknowledgeAdditional();
         lease("begin");
+        if (retries) this.changed();
         const renewal = setInterval(() => lease("renew"), 3000);
         let output: Complete | undefined;
+        let requestFailure: ModelFailure | undefined;
         const idle = new AbortController();
         const streaming = this.selection?.stream !== false;
         const idleTimer = setTimeout(() => idle.abort(), modelResponseTimeout(streaming));
@@ -642,15 +673,36 @@ export class TurnRunner {
             signal: AbortSignal.any([signal, idle.signal]) })) {
             if (streaming && (event.type === "text" || event.type === "activity")) idleTimer.refresh();
             if (signal.aborted) break;
-            if (idle.signal.aborted) throw new Error(streaming ? "模型长时间未响应。" : "等待模型完整响应超时。");
+            if (idle.signal.aborted) break;
             if (event.type === "text") this.publish("progress", { ...turn.binding, requestId: turn.requestId,
               turnId: turn.id, delta: event.delta });
-            if (event.type === "error") throw new Error(event.message);
+            if (event.type === "error") { requestFailure = event; break; }
             if (event.type === "done") output = event;
           }
         } finally { clearTimeout(idleTimer); clearInterval(renewal); lease("end"); }
         if (signal.aborted) break;
-        if (!output || output.reason === "length") throw new Error("模型未完成本轮回复。");
+        if (idle.signal.aborted) requestFailure = { type: "error", code: "network",
+          message: streaming ? "模型长时间未响应。" : "等待模型完整响应超时。" };
+        else if (!requestFailure && !output) requestFailure = { type: "error", code: "network", message: "模型响应在完成前中断。" };
+        else if (output?.reason === "length") requestFailure = { type: "error", code: "invalid-tool-response", message: "模型回复达到长度上限。" };
+        if (requestFailure) {
+          const delays = requestFailure.code === "rate-limited" ? rateLimitRetryDelays
+            : requestFailure.code === "network" ? networkRetryDelays : [];
+          if (retries >= delays.length) {
+            failure = requestFailure.message + (retries && delays.length ? " 自动重试未成功。" : "");
+            modelFailure = { ...requestFailure, message: failure };
+            break;
+          }
+          turn.modelRetry = { ...requestFailure, attempt: retries + 1, maxAttempts: delays.length };
+          this.diagnostic?.("model_request_retry", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
+            code: requestFailure.code, attempt: turn.modelRetry.attempt });
+          this.changed();
+          await timers.setTimeout(delays[retries++], undefined, { signal });
+          while (this.game.state.paused === true) await once(this.game, "changed", { signal });
+          continue;
+        }
+        retries = 0;
+        if (!output) throw new Error("模型未完成本轮回复。");
         const response = output;
         if (this.selection && this.game.binding?.gameSessionId === turn.binding.gameSessionId) this.store?.recordUsage(save, `${turn.id}:${++callCount}`,
           this.selection.provider, this.selection.model, response.usage);
@@ -729,6 +781,8 @@ export class TurnRunner {
       }
       const current = this.game.binding;
       if (current?.gameSessionId === turn.binding.gameSessionId) {
+        if (!signal.aborted && modelFailure && !plugin && current.saveId === save)
+          this.modelFailure = { binding: turn.binding, error: modelFailure };
         if (!this.store && !failure && answer) {
           this.messages.push(...messages.slice(this.messages.length).filter(message => message.role === "user"),
             { role: "assistant", text: answer, calls: [] });
@@ -743,6 +797,7 @@ export class TurnRunner {
           const reply = { ...turn.binding, requestId, turnId: turn.id,
             status: failure ? "failed" : "completed", replyText: primary ? answer || null : null,
             error: primary ? failure || null : null,
+            ...(primary && !signal.aborted && modelFailure ? { errorCode: modelFailure.code } : {}),
             ...(this.trace && this.selection ? { provider: this.selection.provider, model: this.selection.model,
               protocol: this.selection.protocol ?? null, stream: this.selection.stream !== false } : {}),
             profileRevision: this.store?.profile(save).profileRevision ?? 0, memoryRevision: this.store?.memory(save).memoryRevision ?? 0 };

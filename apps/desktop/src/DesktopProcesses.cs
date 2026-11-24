@@ -196,6 +196,7 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
                 "model_test_passed" => ("info", "模型与工具调用测试通过。"),
                 "model_request_failed" => ("warn", "模型配置或连接测试失败。"),
                 "model_request_started" => ("info", "开始调用模型。"),
+                "model_request_retry" => ("warn", "模型调用暂时失败，等待重试。"),
                 "tool_result" => ("info", "Agent 工具调用已返回。"),
                 "turn_failed" => ("warn", "Agent 回合未完成。"),
                 "action_result" => ("info", "收到原生动作回执。"),

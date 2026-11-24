@@ -7,6 +7,10 @@ export async function createMockDeepSeek(plan) {
     const body = JSON.parse(Buffer.concat(await Array.fromAsync(req)).toString());
     const key = req.headers.authorization;
     calls.push(body);
+    if (key === "Bearer accept-quota") {
+      res.writeHead(429, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: { code: "insufficient_quota", message: "fixture response must stay private" } }));
+    }
     if (key === "Bearer accept-401" || key === "Bearer accept-429" || key === "Bearer accept-404") {
       const status = Number(key.slice(-3));
       res.writeHead(status, { "Content-Type": "application/json" });
