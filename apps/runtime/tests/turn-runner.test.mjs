@@ -559,6 +559,66 @@ test("a persisted goal resumes only after authority is handed back", async () =>
   } finally { await runner.stop(); store.close(); }
 });
 
+test("autonomous wake ignores goal-summary edits and continues other work after an unreachable target", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  game.snapshot = { companion: { locationId: "Farm", tileX: 10, tileY: 10 },
+    world: { year: 1, season: "spring", dayOfMonth: 1, timeOfDay: 900 }, capturedRevision: 7 };
+  const save = binding.saveId;
+  store.append(save, "farm-request:player", "player", { text: "收集农场掉落物" });
+  store.updateItem(save, "goals", "farm-goal", { text: "收集农场掉落物", requestId: "farm-request",
+    status: "active", continuation: "continue", summary: "准备拾取" });
+  const pickup = { id: "pickup", name: "submit_work", arguments: { action: {
+    pickup_items: { tiles: [{ x: 35, y: 57 }] },
+  } } };
+  const water = { id: "water", name: "submit_work", arguments: { action: {
+    water_tiles: { tiles: [{ x: 10, y: 11 }] },
+  } } };
+  const modelTurns = [];
+  let pickupCalls = 0;
+  let waterCalls = 0;
+  let retryBlocked = false;
+  let blockedReplies = 0;
+  game.nativeResult = (commandId, skillId) => {
+    if (skillId === "pickup-items") {
+      pickupCalls++;
+      return { commandId, skillId, terminalState: "rejected", completedCount: 0,
+        error: { code: "unreachable", message: "unreachable" } };
+    }
+    assert.equal(skillId, "water-zone");
+    waterCalls++;
+    return { commandId, skillId, terminalState: "succeeded", completedCount: 1 };
+  };
+  const runner = new TurnRunner(game, { async *generate({ messages }) {
+    modelTurns.push(messages);
+    const last = messages.at(-1);
+    if (last.role === "user") yield done([pickup]);
+    else if (last.name === "submit_work" && last.failed) {
+      retryBlocked = String(last.result.error).includes("避免重复派发");
+      blockedReplies++;
+      yield done();
+    } else if (last.callId === "pickup") {
+      store.updateItem(save, "goals", "farm-goal", { summary: "掉落物仍不可达，改做其他可达工作" });
+      yield done([pickup, water]);
+    } else yield done();
+  } }, () => undefined, "", store);
+  try {
+    game.emit("changed");
+    await waitFor(() => modelTurns.length === 5 && !runner.status().modelBusy);
+    await setTimeout(850);
+    assert.equal(pickupCalls, 1, "The same rejected target must not be sent to the game twice without new observations.");
+    assert.equal(modelTurns.length, 5, "Only the actual successful action may trigger the next autonomous turn.");
+    assert.equal(blockedReplies, 1, "The model must be told why the repeated target is deferred.");
+    assert.equal(retryBlocked, true, "The model must receive the reason the repeated dispatch was blocked.");
+    assert.equal(waterCalls, 1, "Other useful work must execute once without causing a retry loop.");
+    assert.equal(store.items(save, "goals")[0].summary, "掉落物仍不可达，改做其他可达工作");
+    game.snapshot.companion.tileX = 11;
+    await runner.submit(binding, "player-retry", "角色移动后重新检查掉落物", "send");
+    await waitFor(() => modelTurns.length >= 7 && !runner.status().modelBusy);
+    assert.equal(pickupCalls, 2, "A changed actor position must permit a fresh attempt.");
+  } finally { await runner.stop(); store.close(); }
+});
+
 test("a rate-limited autonomous turn retries the model without repeating a settled action", async t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const store = new CompanionStore(":memory:");

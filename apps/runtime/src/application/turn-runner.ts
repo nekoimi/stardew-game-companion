@@ -47,6 +47,7 @@ export class TurnRunner {
   private wakeTimer?: NodeJS.Timeout;
   private stopping = false;
   private readonly wakeSignatures = new Map<string, string>();
+  private readonly unreachableActions = new Map<string, string>();
   private bedtimeAttempt?: string;
   private bedtimeRecovery?: string;
   private observedOwner = false;
@@ -434,7 +435,7 @@ export class TurnRunner {
     if (goal && !this.runnableGoal(goal)) return;
     const lastPerformed = this.store.recentReceipts(save).findLast(row => row.terminalState === "succeeded"
       || row.terminalState === "partially-succeeded");
-    const revision = goal ? JSON.stringify([goal.id, goal.text, goal.continuation, goal.wakeTime, goal.updatedDay,
+    const revision = goal ? JSON.stringify([goal.id, goal.continuation, goal.wakeTime, goal.updatedDay,
       lastPerformed?.commandId]) : date;
     const signature = `${binding.gameSessionId}:${date}:${revision}`;
     if (this.wakeSignatures.get(save) === signature) return;
@@ -844,6 +845,15 @@ export class TurnRunner {
       || (this.game.actorMode === "player" && this.game.state.controlOwner !== "agent")))) {
       throw new Error("当前控制权或暂停状态不允许执行动作。");
     }
+    const retryKey = observation ? "" : JSON.stringify([skill, canonicalJson(parameters)]);
+    const actor = object(this.game.snapshot?.companion);
+    const actorPosition = JSON.stringify([actor.locationId, actor.tileX, actor.tileY]);
+    const blockedKey = JSON.stringify([turn.binding.saveId, turn.binding.gameSessionId, retryKey]);
+    const previousFailure = this.unreachableActions.get(blockedKey);
+    if (!observation && previousFailure === actorPosition) {
+      throw new Error("游戏刚确认这个目标当前不可达，已避免重复派发。先检查是否有路线变化，或改做其他可达工作。");
+    }
+    if (previousFailure && previousFailure !== actorPosition) this.unreachableActions.delete(blockedKey);
     const actionId = turn.nativeAction = randomUUID();
     turn.nativeSkill = skill;
     this.changed();
@@ -873,8 +883,26 @@ export class TurnRunner {
         throw new Error("游戏动作的终态待核对。");
       }
       this.assertBinding(turn.binding);
-      if (!observation) this.settleReceipt(turn.binding, actionId, receipt);
+      if (!observation) {
+        if (object(receipt.error).code === "unreachable") {
+          const currentActor = object(this.game.snapshot?.companion);
+          this.unreachableActions.set(blockedKey, JSON.stringify([currentActor.locationId, currentActor.tileX, currentActor.tileY]));
+          while (this.unreachableActions.size > 256)
+            this.unreachableActions.delete(this.unreachableActions.keys().next().value!);
+        } else if (receipt.terminalState === "succeeded" || Number(receipt.completedCount) > 0) {
+          this.unreachableActions.delete(blockedKey);
+        }
+        this.settleReceipt(turn.binding, actionId, receipt);
+      }
       return receipt;
     } finally { turn.nativeAction = undefined; turn.nativeSkill = undefined; turn.phase = undefined; this.changed(); }
   }
+}
+
+function canonicalJson(value: JsonValue): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
