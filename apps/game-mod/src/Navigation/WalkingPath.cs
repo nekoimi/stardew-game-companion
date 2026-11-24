@@ -29,11 +29,11 @@ internal static class WalkingPath
         bool Open(TileCoordinate tile) => tile == actor.Tile || (avoid?.Contains(tile) != true
             && !observer.IsPlayerOnTile(location, tile) && observer.IsTilePassable(location, tile));
         if (!Open(step.Tile)) return false;
+        if (step.From is not { } from) return true;
+        if (actor.Tile == from && !observer.CanWalkBetween(location, from, step.Tile)) return false;
         if (!step.IsDiagonal) return true;
 
-        // Game movement checks the live bounding box every tick. Check the
-        // sides as well because a blocked diagonal can otherwise slide sideways.
-        var (horizontal, vertical) = DiagonalSides(step.From!.Value, step.Tile);
+        var (horizontal, vertical) = DiagonalSides(from, step.Tile);
         return Open(horizontal) && Open(vertical)
             && !observer.IsWarpOrDoorTile(location, horizontal)
             && !observer.IsWarpOrDoorTile(location, vertical);

@@ -76,8 +76,10 @@ public class NavigationStateMachineTests
         Assert.Equal(1, farmer.HaltCount);
     }
 
-    [Fact]
-    public void ObstructionInsideStraightRunStopsMovementBeforeItAndReplans()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ObstructionInsideStraightRunStopsMovementBeforeItAndReplans(bool betweenPassableTiles)
     {
         var actor = new StubFarmerActor();
         actor.SetLocation("Farm", new(0, 1));
@@ -93,13 +95,16 @@ public class NavigationStateMachineTests
             machine.Update(null, tick++);
         Assert.Equal(ExecutionState.Navigating, machine.CurrentState);
 
-        observer.PlayerTile = new(3, 1);
+        var blockedSegment = (From: new TileCoordinate(2, 1), To: new TileCoordinate(3, 1));
+        if (betweenPassableTiles) observer.BlockedWalkingSegments.Add(blockedSegment);
+        else observer.PlayerTile = blockedSegment.To;
         while (machine.CurrentState == ExecutionState.Navigating && tick < 100)
             machine.Update(null, tick++);
         Assert.Equal(ExecutionState.Preparing, machine.CurrentState);
         Assert.Equal(new TileCoordinate(2, 1), actor.Tile);
 
         observer.PlayerTile = null;
+        observer.BlockedWalkingSegments.Remove(blockedSegment);
         for (; machine.IsExecuting && tick < 250; tick++) machine.Update(null, tick);
         Assert.Equal(ExecutionState.Succeeded, machine.CurrentState);
         Assert.Equal(target, actor.Tile);

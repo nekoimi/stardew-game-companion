@@ -6,10 +6,11 @@ namespace StardewAI.Companion.Mod.Navigation;
 
 public sealed record RouteSearchResult(ReachableRoute? Route, RouteFailure? Failure);
 
-public sealed record ReachableRoute(IReadOnlyList<MapEdge> Edges, int WalkingCost, TileCoordinate TargetTile)
-{
-    public int WalkingTiles => (int)Math.Ceiling((double)WalkingCost / WalkingPath.CardinalCost);
-}
+public sealed record ReachableRoute(
+    IReadOnlyList<MapEdge> Edges,
+    int WalkingTiles,
+    int WalkingCost,
+    TileCoordinate TargetTile);
 
 /// <summary>Structured cross-map route failure: a stable reason code, a human-readable
 /// message and machine-readable details (blocked side, exit/landing coordinates,
@@ -71,7 +72,7 @@ public sealed class ReachableRoutePlanner
             yield break;
         }
         var origin = Key(location, start);
-        var costs = new Dictionary<Entrance, int> { [origin] = 0 };
+        var distances = new Dictionary<Entrance, (int Cost, int Tiles)> { [origin] = (0, 0) };
         var previous = new Dictionary<Entrance, (Entrance From, MapEdge Edge)>();
         var queue = new PriorityQueue<(Entrance State, string Name), int>();
         queue.Enqueue((origin, location), 0);
@@ -86,7 +87,8 @@ public sealed class ReachableRoutePlanner
         while (queue.TryDequeue(out var node, out int cost) && explored++ < MaxExploredEntrances)
         {
             yield return null;
-            if (cost != costs[node.State]) continue;
+            var reached = distances[node.State];
+            if (cost != reached.Cost) continue;
             if (best is not null && cost >= best.WalkingCost) break;
             if (string.Equals(node.Name, targetLocation, StringComparison.OrdinalIgnoreCase))
             {
@@ -106,7 +108,8 @@ public sealed class ReachableRoutePlanner
                             state = back.From;
                         }
                         edges.Reverse();
-                        best = new ReachableRoute(edges, total, final.Steps[^1].Tile);
+                        best = new ReachableRoute(edges, reached.Tiles + CountWalkingTiles(final, node.State.Tile),
+                            total, final.Steps[^1].Tile);
                         // A directly reachable same-map destination needs no tour
                         // of unrelated exits. Blocked direct paths still try detours.
                         if (edges.Count == 0)
@@ -152,8 +155,8 @@ public sealed class ReachableRoutePlanner
                 }
                 int nextCost = cost + walk.WalkingCost + WalkingPath.CardinalCost;
                 var next = Key(edge.TargetLocation, arrival);
-                if (costs.TryGetValue(next, out int old) && old <= nextCost) continue;
-                costs[next] = nextCost;
+                if (distances.TryGetValue(next, out var old) && old.Cost <= nextCost) continue;
+                distances[next] = (nextCost, reached.Tiles + CountWalkingTiles(walk, node.State.Tile) + 1);
                 previous[next] = (node.State, edge);
                 queue.Enqueue((next, edge.TargetLocation), nextCost);
             }
@@ -172,6 +175,9 @@ public sealed class ReachableRoutePlanner
         search.Result = new RouteSearchResult(best, best is not null ? null : ClassifyFailure(location, start, targetLocation, queue.Count > 0,
             unavailable, exitFailures, arrivalFailures, firstLockReason, target, destinationFailures, blocking));
     }
+
+    private static int CountWalkingTiles(PathResult path, TileCoordinate start) =>
+        path.Steps.Count == 1 && path.Steps[0].Tile == start ? 0 : path.Steps.Count;
 
     private RouteFailure ClassifyFailure(string location, TileCoordinate start, string targetLocation,
         bool searchLimitExceeded, string? unavailable,

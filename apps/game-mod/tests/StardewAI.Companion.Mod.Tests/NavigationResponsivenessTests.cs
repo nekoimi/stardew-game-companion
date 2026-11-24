@@ -152,7 +152,8 @@ public class NavigationResponsivenessTests
         Assert.NotNull(route);
         Assert.Empty(route!.Edges);
         Assert.Equal(new TileCoordinate(60, 60), route.TargetTile);
-        Assert.Equal(85, route.WalkingTiles);
+        Assert.Equal(60, route.WalkingTiles);
+        Assert.True(route.WalkingCost > route.WalkingTiles * WalkingPath.CardinalCost);
         Assert.InRange(observer.TilePassabilityChecks, 1, 600);
     }
 
