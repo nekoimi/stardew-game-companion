@@ -1954,7 +1954,8 @@ public sealed partial class GameWorldObserver : IWorldObserver
                         Name: debris.item?.DisplayName ?? "Dropped item",
                         Stack: debris.item?.Stack ?? group.Count(), IsDropped: true,
                         IsWeed: false, CanBeGrabbed: true, ClearTool: null,
-                        Quality: debris.item?.Quality));
+                        Quality: debris.item?.Quality,
+                        ReservedForFarmer: debris.player.Value?.UniqueMultiplayerID));
                 }
             }
         }

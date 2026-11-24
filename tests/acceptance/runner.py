@@ -313,7 +313,8 @@ class Runner:
                 delivered = any(row.get("type") == "player-update" and row["payload"].get("text") == spec["duringAction"]
                                 and row["payload"].get("turnId") == terminal.get("turnId") for row in trace)
                 checks["player_message_delivered_at_tool_boundary"] = guidance_sent and delivered
-            operations = {"tend_crops", "water_auto", "water_zone", "water_tiles", "refill_watering_can", "harvest_auto", "harvest_crop", "chop_tree",
+            operations = {"tend_crops", "harvest_crops", "collect_ground_items", "store_items", "ship_inventory",
+                          "water_auto", "water_zone", "water_tiles", "refill_watering_can", "harvest_auto", "harvest_crop", "chop_tree",
                           "pickup_items", "deposit_to_chest", "withdraw_from_chest", "ship_items", "rest", "navigate_to"}
             actions = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
                        and operations.intersection((c.get("input") or {}).get("action") or {})]

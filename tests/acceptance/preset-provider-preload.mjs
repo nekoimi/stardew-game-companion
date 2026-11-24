@@ -19,12 +19,13 @@ function plan(messages) {
     if (action === "tend_crops" && lastResult.stopReason !== "player-update") return {};
     // Walking can collect every drop before the explicit pickup reaches it.
     // Read the actual backpack before deciding whether there is work left.
+    if (["harvest_crops", "collect_ground_items"].includes(action)) return observe;
     if (action === "pickup_items" && lastResult.error?.code === "no-item") return observe;
     if (["failed", "cancelled", "rejected"].includes(lastResult.terminalState) || typeof lastResult.error === "string") return {};
-    if (["deposit_to_chest", "ship_items"].includes(action)) return {};
+    if (["store_items", "ship_inventory"].includes(action)) return {};
     if (action === "withdraw_from_chest") {
       const items = lastCall.args.action.withdraw_from_chest.items;
-      return work("ship_items", { items });
+      return work("ship_inventory", { location_id: "Farm", items });
     }
     return observe;
   }
@@ -55,16 +56,19 @@ function plan(messages) {
     }
     const trees = (farming?.choppableTrees ?? []).filter(tree => tree.kind === "tree" && tree.growthStage >= 5 && !tree.tapped);
     if (trees.length && !previous.includes("chop_tree")) return work("chop_tree", { ...farm, tiles: trees.slice(0, 2).map(tree => tree.tile) });
-  } else if (request.includes("成熟的作物") && farmWork?.matureCrops?.length && !previous.includes("harvest_auto")) {
-    return work("harvest_auto", farm);
+  } else if (request.includes("成熟的作物") && farmWork?.matureCrops?.length && !previous.includes("harvest_crops")) {
+    return work("harvest_crops", farm);
   }
   const drops = new Map((farming?.groundItems ?? []).filter(item => item.isDropped && ["(O)388", "(O)24"].includes(item.itemId))
     .map(item => [`${item.tile.x}:${item.tile.y}`, item.tile]));
-  if (drops.size && !previous.includes("pickup_items")) return work("pickup_items", { ...farm, tiles: [...drops.values()] });
-  if (box && !previous.includes("deposit_to_chest")) {
+  if (drops.size && !previous.includes("collect_ground_items")) return work("collect_ground_items", { ...farm, target_tiles: [...drops.values()] });
+  if (box && !previous.includes("store_items")) {
     const wanted = request.includes("休息到 80") ? ["(O)388"] : ["(O)388", "(O)24"];
-    const itemIds = wanted.filter(id => inventory?.slots?.some(slot => slot.itemId === id && slot.stack > 0));
-    if (itemIds.length) return work("deposit_to_chest", { ...farm, chest_tile: box.tile, item_ids: itemIds });
+    const items = wanted.flatMap(id => {
+      const count = inventory?.slots?.reduce((sum, slot) => sum + (slot.itemId === id ? slot.stack : 0), 0) ?? 0;
+      return count > 0 ? [{ item_id: id, count }] : [];
+    });
+    if (items.length) return work("store_items", { ...farm, chest_tile: box.tile, items });
   }
   return {};
 }

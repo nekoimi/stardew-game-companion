@@ -24,6 +24,14 @@ const withLocation = (properties: Record<string, Schema>, required = Object.keys
 export const workflows: Record<string, Schema> = {
   tend_crops: { ...fields({ ...location, region }, ["location_id"]),
     description: "Care for observed dry crops in the location or an observed region. Refill as needed and verify the remaining work." },
+  harvest_crops: { ...withLocation({ region, limit: integer(1, 4096) }, ["location_id"]),
+    description: "Harvest observed mature crops in batches in the current location or the specified region. Limit counts crop tiles." },
+  collect_ground_items: { ...withLocation({ region, target_tiles: tiles }, ["location_id"]),
+    description: "Pick up existing collectible ground items in the current location. Use observed target tiles or a region to narrow the work." },
+  store_items: { ...withLocation({ chest_tile: tile, items }, ["location_id", "chest_tile", "items"]),
+    description: "Transfer the specified quantities from the actor's backpack to an observed chest on Farm. Keep all unspecified quantities." },
+  ship_inventory: { ...withLocation({ items, keep: items }, ["location_id", "items"]),
+    description: "Ship explicitly requested quantities from the actor's backpack, retaining the stated minimum counts." },
 };
 
 export const actions: Record<string, [string, Schema]> = {

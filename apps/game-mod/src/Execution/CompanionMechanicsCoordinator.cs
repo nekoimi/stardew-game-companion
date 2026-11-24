@@ -2052,7 +2052,8 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                     .Select(t => new TileCoord(t.X, t.Y))
                     .ToList();
 
-                var groundItems = _observer.ScanGroundItems(locationName, _actor.Tile, 16, MaxReportedGroundItems + 1);
+                var groundItems = _observer.ScanGroundItems(locationName, _actor.Tile, 16, MaxReportedGroundItems + 1)
+                    .Where(g => g.ReservedForFarmer is null || g.ReservedForFarmer == _actor.GameFarmer?.UniqueMultiplayerID).ToList();
                 bool groundTruncated = groundItems.Count > MaxReportedGroundItems;
                 var reportedGround = (groundTruncated ? groundItems.Take(MaxReportedGroundItems) : groundItems)
                     .Select(g => new GroundItemSnapshot(

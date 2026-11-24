@@ -396,6 +396,132 @@ function fixture(game, model) {
   return { runner, events };
 }
 
+test("harvest stage limits the request and distinguishes multi-yield inventory gains from crop tiles", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  const tile = { x: 3, y: 2 };
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
+    farmWork: { locationId: "Farm", observationStatus: "observed", matureCropsTruncated: false,
+      matureCrops: [tile, { x: 4, y: 2 }] },
+    inventory: { capacity: 12, freeSlots: 3, slots: [] }, farming: { location: "Farm", groundItems: [] } };
+  const calls = [];
+  const context = { binding, turnId: "harvest", requestId: "harvest", goalId: "harvest", signal: new AbortController().signal,
+    async native(skill, parameters) {
+      calls.push({ skill, parameters });
+      game.snapshot = { ...game.snapshot, capturedRevision: 2,
+        farmWork: { ...game.snapshot.farmWork, matureCrops: [{ x: 4, y: 2 }] },
+        inventory: { ...game.snapshot.inventory, slots: [{ itemId: "(O)258", stack: 3 }] } };
+      return { commandId: "harvest-1", terminalState: "succeeded", finalWorldRevision: 2,
+        effects: [{ state: "harvested", tile, itemId: "(O)258", stack: 1 }] };
+    }, speak() {}, changed() {} };
+  const invoke = (args) => tools.invoke(context, "submit_work", { action: { harvest_crops: args } });
+  const result = await invoke({ location_id: "Farm", limit: 1 });
+  assert.equal(result.completedCount, 1);
+  assert.equal(result.stopReason, "requested-limit-reached");
+  assert.deepEqual(result.inventoryGains, [{ itemId: "(O)258", count: 3 }]);
+  assert.deepEqual(calls, [{ skill: "harvest-zone", parameters: { locationId: "Farm", tiles: [tile] } }]);
+  game.snapshot.inventory.freeSlots = 0;
+  const full = await invoke({ location_id: "Farm" });
+  assert.equal(full.stopReason, "inventory-full");
+  assert.equal(full.remainingCount, 1);
+  assert.equal(calls.length, 1);
+});
+
+test("pickup stage verifies auto-collection and ignores placed objects at the next observation", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  const drop = { x: 8, y: 4 };
+  const obstacle = { tile: { x: 9, y: 4 }, itemId: "(BC)130", isDropped: false, canBeGrabbed: false };
+  let groundItems = [{ tile: drop, itemId: "(O)388", isDropped: true }, obstacle];
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
+    inventory: { capacity: 12, freeSlots: 3, slots: [] }, farming: { location: "Farm", groundItems } };
+  const calls = [];
+  const context = { binding, turnId: "pickup", requestId: "pickup", goalId: "pickup", signal: new AbortController().signal,
+    async native(skill, parameters, observation) {
+      if (observation) return { terminalState: "succeeded", finalWorldRevision: game.snapshot.capturedRevision,
+        details: { production: { locationId: "Farm", groundItems, groundItemsTruncated: false } } };
+      calls.push({ skill, parameters });
+      groundItems = [obstacle];
+      game.snapshot = { ...game.snapshot, capturedRevision: 2, farming: { location: "Farm", groundItems },
+        inventory: { ...game.snapshot.inventory, slots: [{ itemId: "(O)388", stack: 3 }] } };
+      return { commandId: "pickup-1", terminalState: "rejected", finalWorldRevision: 2, error: { code: "no-item" } };
+    }, speak() {}, changed() {} };
+  const invoke = () => tools.invoke(context, "submit_work", { action: { collect_ground_items: { location_id: "Farm" } } });
+  const result = await invoke();
+  assert.deepEqual(result.collectedItems, [{ itemId: "(O)388", count: 3 }]);
+  assert.equal(result.stopReason, "no-more-ground-items");
+  assert.equal((await invoke()).stopReason, "no-observed-targets");
+  assert.deepEqual(calls, [{ skill: "pickup-items", parameters: { locationId: "Farm", tiles: [drop] } }]);
+});
+
+test("inventory stage verifies both chest and backpack changes and ships only counts above the reserve", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  const chest = { x: 5, y: 4 };
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
+    inventory: { slots: [{ itemId: "(O)24", stack: 8 }, { itemId: "(O)388", stack: 3 }] },
+    chests: { items: [{ tile: chest, contentsObserved: true, contents: [] }] } };
+  const calls = [];
+  const context = { binding, turnId: "transfer", requestId: "transfer", goalId: "transfer", signal: new AbortController().signal,
+    async native(skill, parameters) {
+      calls.push({ skill, parameters });
+      const [{ itemId, count }] = parameters.items;
+      const slots = game.snapshot.inventory.slots.map(slot => slot.itemId === itemId ? { ...slot, stack: slot.stack - count } : slot);
+      game.snapshot = { ...game.snapshot, capturedRevision: game.snapshot.capturedRevision + 1, inventory: { slots },
+        chests: skill === "deposit-chest" ? { items: [{ tile: chest, contentsObserved: true, contents: [{ itemId, stack: count }] }] }
+          : game.snapshot.chests };
+      return { commandId: skill, terminalState: "succeeded", finalWorldRevision: game.snapshot.capturedRevision,
+        effects: [skill === "deposit-chest" ? { state: "deposited", itemId, stack: count } : { state: "shipped", itemId, count }] };
+    }, speak() {}, changed() {} };
+  const invoke = action => tools.invoke(context, "submit_work", { action });
+  const store = await invoke({ store_items: { location_id: "Farm", chest_tile: chest, items: [{ item_id: "(O)388", count: 3 }] } });
+  assert.equal(store.status, "completed");
+  assert.equal(store.completedCount, 3);
+  const ship = await invoke({ ship_inventory: { location_id: "Farm", items: [{ item_id: "(O)24", count: 8 }],
+    keep: [{ item_id: "(O)24", count: 2 }] } });
+  assert.equal(ship.completedCount, 6);
+  assert.equal(ship.remainingCount, 2);
+  assert.equal(ship.stopReason, "requested-quantity-unavailable");
+  assert.equal(game.snapshot.inventory.slots[0].stack, 2);
+  assert.deepEqual(calls.map(call => call.skill), ["deposit-chest", "ship-items"]);
+});
+
+test("inventory stage stops when the native receipt and inventory disagree", async () => {
+  const game = new FakeGame();
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
+    inventory: { slots: [{ itemId: "(O)24", stack: 5 }] } };
+  let calls = 0;
+  const tools = new CompanionTools(game, "");
+  const result = await tools.invoke({ binding, turnId: "mismatch", requestId: "mismatch", goalId: "mismatch",
+    signal: new AbortController().signal, speak() {}, changed() {},
+    async native() { calls++; return { commandId: "ship", terminalState: "succeeded", finalWorldRevision: 1,
+      effects: [{ state: "shipped", itemId: "(O)24", count: 2 }] }; },
+  }, "submit_work", { action: { ship_inventory: { location_id: "Farm", items: [{ item_id: "(O)24", count: 2 }] } } });
+  assert.equal(result.stopReason, "transfer-observation-mismatch");
+  assert.equal(result.completedCount, 0);
+  assert.equal(result.remainingCount, 2);
+  assert.equal(calls, 1);
+});
+
+test("harvest stage retains confirmed tiles when a later observation fails", async () => {
+  const game = new FakeGame();
+  const tile = { x: 2, y: 3 };
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
+    farmWork: { locationId: "Farm", observationStatus: "observed", matureCrops: [tile], matureCropsTruncated: false },
+    inventory: { capacity: 12, freeSlots: 2, slots: [] } };
+  let dispatched = 0;
+  game.observe = async () => { if (dispatched) throw new Error("Disconnected"); return game.snapshot; };
+  const result = await new CompanionTools(game, "").invoke({ binding, turnId: "harvest", requestId: "harvest",
+    goalId: "harvest", signal: new AbortController().signal, speak() {}, changed() {},
+    async native() { dispatched++; return { commandId: "harvest", terminalState: "succeeded", finalWorldRevision: 2,
+      effects: [{ state: "harvested", tile }] }; },
+  }, "submit_work", { action: { harvest_crops: { location_id: "Farm" } } });
+  assert.equal(result.completedCount, 1);
+  assert.equal(result.remainingCount, null);
+  assert.equal(result.stopReason, "harvest-observation-unavailable");
+  assert.equal(dispatched, 1);
+});
+
 async function waitFor(check, attempts = 100) {
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (check()) return;

@@ -46,7 +46,8 @@ public sealed partial class GameWorldObserver
         var ground = ScanGroundItems(locationName, center, Math.Max(width,height),257);
         // ScanGroundItems sorts collectibles first. Obstacles belong to farming/map
         // observations, not the remaining pickup work after harvesting.
-        var collectibles = ground.Where(g => g.IsDropped || g.CanBeGrabbed).ToList();
+        var collectibles = ground.Where(g => (g.IsDropped || g.CanBeGrabbed)
+            && (g.ReservedForFarmer is null || g.ReservedForFarmer == actor.GameFarmer?.UniqueMultiplayerID)).ToList();
         var waterCenter = actor.LocationName == locationName ? actor.Tile : center;
         var water = FindWaterRefillTiles(locationName, waterCenter, Math.Max(width,height),33);
         var foods = actor.GameFarmer?.Items.OfType<StardewValley.Object>()

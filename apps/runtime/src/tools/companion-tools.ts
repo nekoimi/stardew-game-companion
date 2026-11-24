@@ -123,6 +123,42 @@ function inRegion(tile: JsonObject, value: JsonValue | undefined): boolean {
     && Number(tile.y) >= Number(region.y) && Number(tile.y) < Number(region.y) + Number(region.height);
 }
 
+function itemCounts(values: JsonValue | undefined): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (!Array.isArray(values)) return counts;
+  for (const value of values) {
+    const { itemId, stack, isTool } = object(value);
+    if (typeof itemId === "string" && typeof stack === "number" && stack > 0 && isTool !== true) {
+      counts.set(itemId, (counts.get(itemId) ?? 0) + stack);
+    }
+  }
+  return counts;
+}
+
+function inventoryDifference(before: JsonObject, after: JsonObject, totals: JsonObject[] = []): JsonObject[] {
+  if (!Array.isArray(before.slots) || !Array.isArray(after.slots)) return totals;
+  const previous = itemCounts(before.slots);
+  const gains = new Map(totals.map(item => [String(item.itemId), Number(item.count)]));
+  for (const [itemId, count] of itemCounts(after.slots)) {
+    const increase = count - (previous.get(itemId) ?? 0);
+    if (increase > 0) gains.set(itemId, (gains.get(itemId) ?? 0) + increase);
+  }
+  return [...gains].map(([itemId, count]) => ({ itemId, count }));
+}
+
+function summarizeGround(ground: JsonValue | undefined): JsonValue {
+  const { locationId, groundItems, truncated } = object(ground);
+  return Array.isArray(groundItems) ? { locationId, count: groundItems.length, truncated, items: groundItems.slice(0, 8) } : null;
+}
+
+function observedChest(snapshot: JsonObject, tile: JsonObject): JsonObject | undefined {
+  const chests = object(snapshot.chests);
+  // The game snapshot's chests section is scoped to Farm.
+  if (object(snapshot.companion).locationId !== "Farm" || !Array.isArray(chests.items)) return undefined;
+  return chests.items.map(object).find(chest =>
+    tileKey(chest.tile) === tileKey(tile) && chest.contentsObserved === true && Array.isArray(chest.contents));
+}
+
 export function modelObservation(snapshot: JsonObject | undefined): JsonObject {
   if (!snapshot) return {};
   const farming = object(snapshot.farming);
@@ -187,6 +223,11 @@ export class CompanionTools {
       case "submit_work": {
         const [operation, params] = choose(args.action);
         if (operation === "tend_crops") return this.tendCrops(context, params);
+        if (operation === "harvest_crops") return this.harvestCrops(context, params);
+        if (operation === "collect_ground_items") return this.collectGroundItems(context, params);
+        if (operation === "store_items" || operation === "ship_inventory") {
+          return this.transferInventory(context, params, operation === "store_items");
+        }
         const [skill] = actions[operation];
         const native: JsonObject = { locationId, ...nativeParameters(params) };
         if (operation === "water_auto" || operation === "harvest_auto" ||
@@ -514,6 +555,268 @@ export class CompanionTools {
     const blocked = context.workBlock?.();
     if (blocked) return { stopReason: blocked };
     return context.native("refill-watering-can", { locationId, tiles: tiles.slice(0, 16) });
+  }
+
+  private async harvestCrops(context: ToolContext, params: JsonObject): Promise<JsonObject> {
+    const locationId = String(params.location_id);
+    const region = params.region;
+    const limit = Number(params.limit ?? 4096);
+    const harvested = new Set<string>();
+    const receipts: string[] = [];
+    let skipped = 0;
+    let failed = 0;
+    let stopReason = "";
+    let remaining: number | null = null;
+    let finalRevision = 0;
+    let inventoryGains: JsonObject[] = [];
+    let ground: JsonValue = null;
+    try { while (harvested.size < limit) {
+      stopReason = context.workBlock?.() ?? "";
+      if (stopReason) break;
+      let snapshot = await this.game.observe();
+      let farm = object(snapshot.farmWork ?? object(snapshot.world).farmWork);
+      if (farm.locationId !== locationId || farm.observationStatus !== "observed" || farm.matureCropsTruncated !== false
+          || (finalRevision && Number(snapshot.capturedRevision ?? -1) < finalRevision)) {
+        const inspection = await context.native("inspect-farm-work", { locationId, ...(region ? { region } : {}) }, true);
+        if (inspection.terminalState !== "succeeded" || Number(inspection.finalWorldRevision) < finalRevision) {
+          stopReason = "crop-observation-unavailable";
+          break;
+        }
+        farm = object(object(inspection.details).farmWork);
+        snapshot = await this.game.observe();
+      }
+      if (farm.locationId !== locationId || farm.observationStatus !== "observed" || !Array.isArray(farm.matureCrops)) {
+        stopReason = "crop-observation-unavailable";
+        break;
+      }
+      const all = observedTiles(farm.matureCrops).filter(tile => inRegion(tile, region));
+      const targets = all.filter(tile => !harvested.has(tileKey(tile)));
+      remaining = farm.matureCropsTruncated === false ? all.length : null;
+      if (!targets.length) {
+        stopReason = farm.matureCropsTruncated === false
+          ? all.length ? "no-progress" : harvested.size ? "no-mature-crops" : "no-observed-targets" : "crop-observation-truncated";
+        break;
+      }
+      if (Number(snapshot.capturedRevision ?? -1) < finalRevision) { stopReason = "crop-observation-unavailable"; break; }
+      if (object(snapshot.companion).locationId !== locationId) { stopReason = "actor-location-changed"; break; }
+      const inventory = object(snapshot.inventory);
+      if (!Array.isArray(inventory.slots) || Number(inventory.capacity) <= 0) { stopReason = "inventory-observation-unavailable"; break; }
+      if (!Number(inventory.freeSlots)) { stopReason = "inventory-full"; break; }
+      const batch = targets.slice(0, Math.min(24, limit - harvested.size));
+      stopReason = context.workBlock?.() ?? "";
+      if (stopReason) break;
+      const receipt = await context.native("harvest-zone", { locationId, tiles: batch });
+      if (typeof receipt.commandId === "string") receipts.push(receipt.commandId);
+      finalRevision = Number(receipt.finalWorldRevision ?? finalRevision);
+      const effects = Array.isArray(receipt.effects) ? receipt.effects.map(object) : [];
+      const dispatched = new Set(batch.map(tileKey));
+      const completed = effects.filter(effect => effect.state === "harvested" && dispatched.has(tileKey(effect.tile)));
+      for (const effect of completed) harvested.add(tileKey(effect.tile));
+      skipped += Number(receipt.skippedCount ?? 0);
+      failed += Number(receipt.failedCount ?? 0);
+      remaining = null;
+      const blocked = context.workBlock?.();
+      if (blocked || receipt.terminalState === "cancelled" || receipt.playerActionRequired === true) {
+        stopReason = blocked ?? "interrupted";
+        break;
+      }
+      const after = await this.observeAfterWork(context, locationId, finalRevision);
+      if (after.status === "unavailable") { stopReason = "harvest-observation-unavailable"; break; }
+      inventoryGains = inventoryDifference(inventory, object(after.inventory), inventoryGains);
+      ground = after.ground;
+      if (String(object(receipt.error).code).toLowerCase() === "inventory_full" || object(receipt.details).inventoryFull === true) {
+        stopReason = "inventory-full";
+        break;
+      }
+      if (receipt.terminalState === "failed" || receipt.terminalState === "rejected" || failed > 0) {
+        stopReason = String(object(receipt.error).code ?? "harvest-failed");
+        break;
+      }
+      if (!completed.length) {
+        stopReason = "no-progress";
+        break;
+      }
+    } } catch {
+      stopReason = context.workBlock?.() ?? "harvest-observation-or-action-unavailable";
+      remaining = null;
+    }
+    if (!stopReason) stopReason = "requested-limit-reached";
+    return { status: ["no-mature-crops", "requested-limit-reached"].includes(stopReason) ? "completed" : "stopped", stopReason,
+      completedCount: harvested.size, skippedCount: skipped, failedCount: failed, remainingCount: remaining,
+      observationComplete: remaining !== null, receiptCount: receipts.length, receiptIds: receipts.slice(-8),
+      inventoryGains, ground: summarizeGround(ground),
+      ...(stopReason === "no-observed-targets" && !harvested.size ? { message: "当前没有观察到成熟作物。" } : {}) };
+  }
+
+  private async collectGroundItems(context: ToolContext, params: JsonObject): Promise<JsonObject> {
+    const locationId = String(params.location_id);
+    const region = params.region;
+    const requested = Array.isArray(params.target_tiles) ? new Set(params.target_tiles.map(tileKey)) : undefined;
+    const collected = new Map<string, number>();
+    const attempted = new Set<string>();
+    const receipts: string[] = [];
+    let failed = 0;
+    let stopReason = "";
+    let observationComplete = false;
+    let finalRevision = 0;
+    try { for (;;) {
+      stopReason = context.workBlock?.() ?? "";
+      if (stopReason) break;
+      const inspection = await context.native("inspect-production", { locationId }, true);
+      if (inspection.terminalState !== "succeeded" || Number(inspection.finalWorldRevision) < finalRevision) {
+        stopReason = "ground-observation-unavailable";
+        break;
+      }
+      const production = object(object(inspection.details).production);
+      if (production.locationId !== locationId || !Array.isArray(production.groundItems)) {
+        stopReason = "ground-observation-unavailable";
+        break;
+      }
+      observationComplete = production.groundItemsTruncated === false;
+      const candidates = production.groundItems.map(object).filter(item => tileKey(item.tile) && collectible(item)
+        && inRegion(object(item.tile), region)
+        && (!requested || requested.has(tileKey(item.tile))));
+      if (!candidates.length) {
+        stopReason = observationComplete ? collected.size ? "no-more-ground-items" : "no-observed-targets" : "ground-observation-truncated";
+        break;
+      }
+      const target = candidates.find(item => !attempted.has(tileKey(item.tile)));
+      if (!target) { stopReason = "no-progress"; break; }
+      const before = await this.game.observe();
+      if (object(before.companion).locationId !== locationId) { stopReason = "actor-location-changed"; break; }
+      if (!Array.isArray(object(before.inventory).slots)) { stopReason = "inventory-observation-unavailable"; break; }
+      stopReason = context.workBlock?.() ?? "";
+      if (stopReason) break;
+      attempted.add(tileKey(target.tile));
+      const receipt = await context.native("pickup-items", { locationId, tiles: [target.tile] });
+      if (typeof receipt.commandId === "string") receipts.push(receipt.commandId);
+      finalRevision = Number(receipt.finalWorldRevision ?? finalRevision);
+      const code = String(object(receipt.error).code ?? "");
+      const blocked = context.workBlock?.();
+      if (blocked || receipt.terminalState === "cancelled" || receipt.playerActionRequired === true) {
+        stopReason = blocked ?? "interrupted";
+        break;
+      }
+      const after = await this.observeAfterWork(context, locationId, finalRevision);
+      if (after.status === "unavailable" || !Array.isArray(object(after.inventory).slots)) {
+        stopReason = "pickup-observation-unavailable";
+        break;
+      }
+      const candidateIds = new Set(candidates.map(item => item.itemId));
+      for (const gain of inventoryDifference(object(before.inventory), object(after.inventory))) {
+        if (typeof gain.itemId === "string" && candidateIds.has(gain.itemId)) {
+          collected.set(gain.itemId, (collected.get(gain.itemId) ?? 0) + Number(gain.count));
+        }
+      }
+      if (["failed", "rejected"].includes(String(receipt.terminalState)) && code !== "no-item") {
+        failed++;
+        stopReason = code || "pickup-failed";
+        break;
+      }
+    } } catch {
+      stopReason = context.workBlock?.() ?? "pickup-observation-or-action-unavailable";
+      observationComplete = false;
+    }
+    return { status: stopReason === "no-more-ground-items" ? "completed" : "stopped", stopReason,
+      completedCount: [...collected.values()].reduce((sum, value) => sum + value, 0),
+      collectedItems: [...collected].map(([itemId, count]) => ({ itemId, count })),
+      failedCount: failed, observationComplete, receiptCount: receipts.length, receiptIds: receipts.slice(-8) };
+  }
+
+  private async transferInventory(context: ToolContext, params: JsonObject, storeItems: boolean): Promise<JsonObject> {
+    const locationId = String(params.location_id);
+    const chestTile = object(params.chest_tile);
+    const requested = new Map<string, number>();
+    for (const item of (params.items as JsonValue[]).map(object)) {
+      const itemId = String(item.item_id);
+      if (requested.has(itemId)) throw new Error("请合并同一种物品的数量。");
+      requested.set(itemId, Number(item.count));
+    }
+    const keep = new Map<string, number>();
+    for (const value of Array.isArray(params.keep) ? params.keep : []) {
+      const item = object(value);
+      const itemId = String(item.item_id);
+      keep.set(itemId, Math.max(keep.get(itemId) ?? 0, Number(item.count)));
+    }
+    const receiptIds: string[] = [];
+    const moved = new Map<string, number>();
+    const totalRequested = [...requested.values()].reduce((sum, count) => sum + count, 0);
+    let stopReason = "";
+    let finalRevision = 0;
+    try { while (!stopReason) {
+      stopReason = context.workBlock?.() ?? "";
+      if (stopReason) break;
+      const before = await this.game.observe();
+      const backpack = object(before.inventory).slots;
+      if (!Array.isArray(backpack) || Number(before.capturedRevision ?? -1) < finalRevision) {
+        stopReason = "inventory-observation-unavailable";
+        break;
+      }
+      if (object(before.companion).locationId !== locationId) { stopReason = "actor-location-changed"; break; }
+      const chest = storeItems ? observedChest(before, chestTile) : undefined;
+      if (storeItems && !chest) { stopReason = "chest-observation-unavailable"; break; }
+      const available = itemCounts(backpack);
+      const items = [...requested].flatMap(([itemId, count]) => {
+        const remaining = count - (moved.get(itemId) ?? 0);
+        const movable = (available.get(itemId) ?? 0) - (keep.get(itemId) ?? 0);
+        const take = Math.min(remaining, movable, 999);
+        return take > 0 ? [{ itemId, count: take }] : [];
+      });
+      if (!items.length) {
+        stopReason = moved.size === 0 ? "no-observed-targets" : "requested-quantity-unavailable";
+        break;
+      }
+      stopReason = context.workBlock?.() ?? "";
+      if (stopReason) break;
+      const receipt = await context.native(storeItems ? "deposit-chest" : "ship-items",
+        { locationId, ...(storeItems ? { chestTile } : {}), items });
+      if (typeof receipt.commandId === "string") receiptIds.push(receipt.commandId);
+      finalRevision = Number(receipt.finalWorldRevision ?? finalRevision);
+      const blocked = context.workBlock?.();
+      if (blocked === "game-changed" || blocked === "recovery-pending" || context.signal.aborted) {
+        stopReason = blocked ?? "interrupted";
+        break;
+      }
+      const after = await this.game.observe();
+      const afterInventory = object(after.inventory).slots;
+      const afterChest = storeItems ? observedChest(after, chestTile) : undefined;
+      if (!Array.isArray(afterInventory) || (storeItems && !afterChest) || Number(after.capturedRevision ?? -1) < finalRevision) {
+        stopReason = "transfer-observation-unavailable";
+        break;
+      }
+      const settled = itemCounts(afterInventory);
+      const previousStock = itemCounts(chest?.contents);
+      const currentStock = itemCounts(afterChest?.contents);
+      const effects = Array.isArray(receipt.effects) ? receipt.effects.map(object) : [];
+      let verified = 0;
+      for (const { itemId, count } of items) {
+        const nativeCount = effects.filter(effect => effect.state === (storeItems ? "deposited" : "shipped") && effect.itemId === itemId)
+          .reduce((sum, effect) => sum + Number((storeItems ? effect.stack : effect.count) ?? 0), 0);
+        const removed = (available.get(itemId) ?? 0) - (settled.get(itemId) ?? 0);
+        const destinationGain = storeItems ? (currentStock.get(itemId) ?? 0) - (previousStock.get(itemId) ?? 0) : nativeCount;
+        const confirmed = Math.min(count, nativeCount, removed, destinationGain);
+        if (confirmed > 0) {
+          moved.set(itemId, (moved.get(itemId) ?? 0) + confirmed);
+          verified += confirmed;
+        }
+        if (nativeCount !== confirmed || removed !== nativeCount || destinationGain !== nativeCount) {
+          stopReason = "transfer-observation-mismatch";
+        }
+      }
+      if (blocked || receipt.terminalState === "cancelled" || receipt.playerActionRequired === true) {
+        stopReason = blocked ?? "interrupted";
+      } else if (!stopReason && (receipt.terminalState !== "succeeded" || !verified)) {
+        stopReason = String(object(receipt.error).code ?? "transfer-no-progress");
+      } else if (!stopReason && [...moved.values()].reduce((sum, count) => sum + count, 0) === totalRequested) {
+        stopReason = "requested-items-transferred";
+      }
+    } } catch {
+      stopReason = context.workBlock?.() ?? "transfer-observation-or-action-unavailable";
+    }
+    const completedCount = [...moved.values()].reduce((sum, count) => sum + count, 0);
+    return { status: stopReason === "requested-items-transferred" ? "completed" : "stopped", stopReason, completedCount,
+      transferredItems: [...moved].map(([itemId, count]) => ({ itemId, count })),
+      remainingCount: totalRequested - completedCount, receiptCount: receiptIds.length, receiptIds: receiptIds.slice(-8) };
   }
 
   private async observeAfterWork(context: ToolContext, location: JsonValue, finalRevision: JsonValue | undefined): Promise<JsonObject> {

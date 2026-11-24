@@ -527,7 +527,9 @@ public sealed partial class NormalNativeActionAdapter : INativeActionAdapter
             var collectedItems = new List<NativeCollectedItem>();
             foreach (var debris in loc.debris.ToList())
             {
-                if (debris is null || !NativeAnimalHarvestInventoryScope.IsOrdinaryDebris(debris)) continue;
+                if (debris is null || !NativeAnimalHarvestInventoryScope.IsOrdinaryDebris(debris)
+                    || (debris.player.Value is { } receiver && receiver.UniqueMultiplayerID != actor.GameFarmer.UniqueMultiplayerID))
+                    continue;
                 for (int i = debris.Chunks.Count - 1; i >= 0; i--)
                 {
                     var chunk = debris.Chunks[i];
