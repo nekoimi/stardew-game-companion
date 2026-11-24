@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { test } from "node:test";
 import { TurnRunner } from "../dist/application/turn-runner.js";
+import { CompanionTools } from "../dist/tools/companion-tools.js";
 import { CompanionStore } from "../dist/adapters/storage/companion-store.js";
 import { actionEvidence } from "../dist/application/work-feedback.js";
 
@@ -37,7 +38,8 @@ test("work feedback preserves native evidence and bound goals without per-action
   const store = new CompanionStore(":memory:");
   store.updateProfile(binding.saveId, { onboarded: true, careFrequency: "chatty" }, 0);
   const game = new FakeGame();
-  game.snapshot = { ...game.snapshot, farmWork: { locationId: "Farm", observationStatus: "observed",
+  game.snapshot = { ...game.snapshot, farming: { location: "Farm", groundItems: [{ tile: { x: 41, y: 35 }, isDropped: true }] },
+    farmWork: { locationId: "Farm", observationStatus: "observed",
     cropUnwateredTiles: [{ x: 40, y: 35 }] }, world: { year: 1, season: "spring", dayOfMonth: 18, timeOfDay: 900 } };
   let index = 0;
   game.nativeResult = (id, skill) => ({ ...receipts[index++], commandId: id, skillId: skill });
@@ -184,6 +186,44 @@ test("automatic watering accepts observed crops only and rejects invented empty-
     assert.deepEqual(calls[0].parameters.tiles, [{ x: 2, y: 3 }]);
     assert.equal(calls[0].parameters.includeEmptyTiles, false);
   } finally { await runner.stop(); store.close(); }
+});
+
+test("empty, stale and missing observations never dispatch crop or pickup actions", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  const actions = [];
+  const inspections = [];
+  const context = { binding, turnId: "batch", requestId: "batch", goalId: "batch", signal: new AbortController().signal,
+    async native(skill, parameters, observation = false) {
+      if (observation) {
+        inspections.push(skill);
+        return { terminalState: "succeeded", details: { production: {
+          locationId: parameters.locationId, groundItems: [], groundItemsTruncated: false,
+        } } };
+      }
+      actions.push({ skill, parameters });
+      return { terminalState: "succeeded" };
+    }, speak() {}, changed() {} };
+  game.snapshot = { companion: { locationId: "Farm" },
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [],
+      cropUnwateredTruncated: false, matureCrops: [], matureCropsTruncated: false },
+    farming: { location: "Farm", groundItems: [], groundItemsTruncated: false } };
+
+  const invoke = (action) => tools.invoke(context, "submit_work", { action });
+  const noWater = await invoke({ water_auto: { location_id: "Farm" } });
+  const noHarvest = await invoke({ harvest_auto: { location_id: "Farm" } });
+  const staleWater = await invoke({ water_tiles: { location_id: "Farm", tiles: [{ x: 2, y: 3 }] } });
+  const staleHarvest = await invoke({ harvest_tiles: { location_id: "Farm", tiles: [{ x: 2, y: 3 }] } });
+  const noPickup = await invoke({ pickup_items: { location_id: "Farm", tiles: [{ x: 8, y: 9 }] } });
+
+  for (const result of [noWater, noHarvest, staleWater, staleHarvest, noPickup]) {
+    assert.equal(result.terminalState, "no-observed-targets");
+    assert.equal(result.observedTargets, 0);
+  }
+  assert.ok(noWater.observationComplete);
+  assert.ok(noHarvest.observationComplete);
+  assert.deepEqual(actions, []);
+  assert.deepEqual(inspections, ["inspect-production"]);
 });
 
 function fixture(game, model) {
@@ -390,6 +430,31 @@ test("takeover makes a delayed model call ineligible to act", async () => {
   assert.equal(runner.status().controlOwner, "human");
 });
 
+test("a pause during native work blocks the next action proposed by the same model response", async () => {
+  const game = new FakeGame();
+  let finish;
+  const skills = [];
+  game.nativeResult = async (commandId, skillId) => {
+    skills.push(skillId);
+    await new Promise(resolve => { finish = resolve; });
+    return { commandId, skillId, terminalState: "succeeded" };
+  };
+  const { runner, events } = fixture(game, { async *generate({ messages }) {
+    yield messages.at(-1).role === "user"
+      ? done([action, { ...action, id: "second-action" }]) : done();
+  } });
+  try {
+    await runner.submit(binding, "pause-at-boundary", "走到出口再继续", "send");
+    await waitFor(() => finish);
+    game.state.paused = true;
+    game.emit("changed");
+    finish();
+    await waitFor(() => events.some(event => event.type === "life.chat.reply"));
+    assert.deepEqual(skills, ["navigate-to"]);
+    assert.equal(runner.status().agentPhase, "paused");
+  } finally { await runner.stop(); }
+});
+
 test("replacement waits for native settlement and keeps the completed receipt", async () => {
   const game = new FakeGame();
   let finish;
@@ -412,7 +477,7 @@ test("replacement waits for native settlement and keeps the completed receipt", 
 test("an unknown terminal action blocks replacement until a real receipt is found", async () => {
   const game = new FakeGame();
   game.nativeResult = () => { throw new Error("missed receipt"); };
-  const { runner, events } = fixture(game, { async *generate() { yield done([action]); } });
+  const { runner, events } = fixture(game, { async *generate() { yield done([action, { ...action, id: "next-action" }]); } });
   await runner.submit(binding, "first", "走一格", "send");
   await waitFor(() => runner.status().recoveryPending);
   assert.equal(game.queryCount, 1);
@@ -594,6 +659,7 @@ test("autonomous wake ignores goal-summary edits and continues other work after 
   const game = new FakeGame();
   game.snapshot = { companion: { locationId: "Farm", tileX: 10, tileY: 10 },
     farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [{ x: 10, y: 11 }] },
+    farming: { location: "Farm", groundItems: [{ tile: { x: 35, y: 57 }, isDropped: true }] },
     world: { year: 1, season: "spring", dayOfMonth: 1, timeOfDay: 900 } };
   const save = binding.saveId;
   store.append(save, "farm-request:player", "player", { text: "收集农场掉落物" });

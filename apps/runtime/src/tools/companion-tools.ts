@@ -81,6 +81,22 @@ function collectible(value: JsonValue): boolean {
   return item.isDropped === true || item.canBeGrabbed === true;
 }
 
+function matchingTiles(requested: JsonValue, observed: JsonValue[]): JsonValue[] {
+  const keys = new Set(observed.map(value => {
+    const { x, y } = object(value);
+    return `${x}:${y}`;
+  }));
+  return Array.isArray(requested) ? requested.filter(value => {
+    const { x, y } = object(value);
+    return keys.has(`${x}:${y}`);
+  }) : [];
+}
+
+function noObservedTargets(truncated = false): JsonObject {
+  return { terminalState: "no-observed-targets", observedTargets: 0, observationComplete: !truncated,
+    message: truncated ? "当前观察不完整，尚未确认可执行的目标。" : "当前没有观察到可执行的目标。" };
+}
+
 export function modelObservation(snapshot: JsonObject | undefined): JsonObject {
   if (!snapshot) return {};
   const farming = object(snapshot.farming);
@@ -177,7 +193,8 @@ export class CompanionTools {
           native.tiles = selected.slice(0, Number(params.max_tiles ?? (operation === "refill_watering_can" ? 4 : 100)));
           delete native.maxTiles;
           delete native.targetTiles;
-          if (!native.tiles.length) return { terminalState: "no-observed-targets", observedTargets: 0 };
+          if (!native.tiles.length) return noObservedTargets(operation === "water_auto"
+            ? farm.cropUnwateredTruncated === true : operation === "harvest_auto" && farm.matureCropsTruncated === true);
         }
         if (operation === "chop_tree") {
           const farming = object((await this.game.observe()).farming);
@@ -196,19 +213,34 @@ export class CompanionTools {
         if (operation === "water_tiles") {
           native.includeEmptyTiles = native.includeEmptyTiles === true;
         }
-        if (operation === "water_tiles" && native.includeEmptyTiles !== true) {
+        if (operation === "harvest_tiles" || (operation === "water_tiles" && native.includeEmptyTiles !== true)) {
           const snapshot = await this.game.observe();
           const farm = object(snapshot.farmWork ?? object(snapshot.world).farmWork);
-          if (farm.observationStatus !== "observed" || farm.locationId !== native.locationId
-              || !Array.isArray(farm.cropUnwateredTiles)) {
-            throw new Error("当前没有该农场的缺水作物观察，请先查看农场状态。");
+          const watering = operation === "water_tiles";
+          // The routine crop snapshot covers the main farm. Other locations
+          // still use the native harvest validation for explicit targets.
+          if (watering || farm.locationId === native.locationId) {
+            const source = watering ? farm.cropUnwateredTiles : farm.matureCrops;
+            if (farm.observationStatus !== "observed" || farm.locationId !== native.locationId || !Array.isArray(source)) {
+              throw new Error("当前没有该区域的作物观察，请先查看农场状态。");
+            }
+            native.tiles = matchingTiles(native.tiles, source);
+            if (!native.tiles.length) return noObservedTargets((watering ? farm.cropUnwateredTruncated : farm.matureCropsTruncated) === true);
           }
-          const observed = farm.cropUnwateredTiles.map(value => object(value));
-          const requested = Array.isArray(native.tiles) ? native.tiles : [];
-          native.tiles = requested.filter(value => observed.some(tile =>
-            tile.x === object(value).x && tile.y === object(value).y));
-          if (!native.tiles.length) return { terminalState: "no-observed-targets", observedTargets: 0,
-            message: "没有观察到指定坐标上存在缺水作物，未执行浇水。" };
+        }
+        if (operation === "pickup_items") {
+          const farming = object((await this.game.observe()).farming);
+          const local = farming.location === native.locationId && Array.isArray(farming.groundItems)
+            ? matchingTiles(native.tiles, farming.groundItems.filter(collectible).map(item => object(item).tile)) : [];
+          if (local.length !== (native.tiles as JsonValue[]).length) {
+            const result = await context.native("inspect-production", { locationId: native.locationId }, true);
+            const production = object(object(result.details).production);
+            if (result.terminalState !== "succeeded" || production.locationId !== native.locationId || !Array.isArray(production.groundItems)) {
+              throw new Error("当前没有该区域的拾取物观察，请先查看游戏状态。");
+            }
+            native.tiles = matchingTiles(native.tiles, production.groundItems.filter(collectible).map(item => object(item).tile));
+            if (!native.tiles.length) return noObservedTargets(production.groundItemsTruncated !== false);
+          }
         }
         const receipt = await context.native(skill, native);
         if (!skillsWithMaterialObservations.has(skill)) return receipt;
