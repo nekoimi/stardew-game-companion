@@ -323,9 +323,8 @@ public sealed partial class GameWorldObserver : IWorldObserver
 
     public IReadOnlyList<FarmDirtWorkItem> ScanFarmWork(string locationName)
     {
-        var loc = Game1.getLocationFromName(locationName) ?? Game1.currentLocation;
-        if (loc is null)
-            return Array.Empty<FarmDirtWorkItem>();
+        var loc = Game1.getLocationFromName(locationName)
+            ?? throw new InvalidOperationException($"Location '{locationName}' is not loaded.");
 
         var items = new List<FarmDirtWorkItem>();
         try
@@ -356,7 +355,7 @@ public sealed partial class GameWorldObserver : IWorldObserver
         catch (Exception ex)
         {
             _monitor.Log($"Error scanning farm work at '{locationName}': {ex.Message}", LogLevel.Warn);
-            return Array.Empty<FarmDirtWorkItem>();
+            throw;
         }
 
         return items.OrderBy(i => i.Tile.Y).ThenBy(i => i.Tile.X).ToList();

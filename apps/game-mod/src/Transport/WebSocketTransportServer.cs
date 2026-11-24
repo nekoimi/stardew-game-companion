@@ -1570,7 +1570,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         return Task.CompletedTask;
     }
 
-    private static bool IsObservationSkill(string? skillId) => skillId is "inspect-player-activities" or "inspect-location" or "inspect-map-image" or "inspect-crafting" or "inspect-machines" or "inspect-production" or "inspect-building-services" or "inspect-planting" or "inspect-route" or "inspect-livestock" or "inspect-shop" or "inspect-water-sources";
+    private static bool IsObservationSkill(string? skillId) => skillId is "inspect-player-activities" or "inspect-location" or "inspect-map-image" or "inspect-crafting" or "inspect-machines" or "inspect-production" or "inspect-building-services" or "inspect-planting" or "inspect-route" or "inspect-livestock" or "inspect-shop" or "inspect-water-sources" or "inspect-farm-work";
 
     public Task SendProtocolErrorAsync(string code, string message, string? correlationId = null)
     {

@@ -735,15 +735,27 @@ export class TurnRunner {
           this.assertBinding(turn.binding);
           let result: JsonValue;
           let failed = false;
+          const workBlock = () => {
+            const current = this.game.binding;
+            if (this.uncertain || this.game.state.recoveryPending === true) return "recovery-pending";
+            if (!current || current.saveId !== save || current.gameSessionId !== turn.binding.gameSessionId) return "game-changed";
+            if (signal.aborted || this.game.state.interrupting === true
+                || (this.game.actorMode === "player" && this.game.state.controlOwner !== "agent")) return "interrupted";
+            if (turn.additional.length) return "player-update";
+            if (this.game.state.paused === true) return "paused";
+            if ((startingDate && startingDate !== gameDate(this.game.snapshot)) || this.pluginRestRequired(turn.binding)) return "rest-or-new-day";
+          };
           try {
             result = await this.tools.invoke({ binding: turn.binding, turnId: turn.id, requestId: turn.originalRequestId,
-              goalId: turn.goalId, signal,
+              goalId: turn.goalId, signal, workBlock,
               native: (skill, params, observation) => {
                 if (plugin && !observation && (skill === "sleep" || this.pluginRestRequired(turn.binding)
                   || startingDate !== gameDate(this.game.snapshot))) {
                   pluginNeedsConfirmation("插件指令需要休息或过夜才能继续，是否继续剩余工作？");
                   throw new Error("需要玩家确认后续工作。");
                 }
+                if (!observation && turn.additional.length) throw new Error("收到玩家的新要求，先按新要求重新安排剩余工作。");
+                if (!observation && this.bedtimeNeedsSleep(turn.binding) && skill !== "sleep") throw new Error("已到返程时间，先按存档作息休息。");
                 return this.executeNative(turn, skill, params, observation);
               },
               speak: spoken => this.deliver(turn, spoken, `${turn.requestId}:public:${++publicMessages}`),

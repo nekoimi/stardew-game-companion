@@ -16,6 +16,7 @@ function plan(messages) {
   if (lastCall?.name !== "get_status") {
     const lastResult = messages.findLast(row => row.type === "result").result;
     const action = operation(lastCall);
+    if (action === "tend_crops" && lastResult.stopReason !== "player-update") return {};
     // Walking can collect every drop before the explicit pickup reaches it.
     // Read the actual backpack before deciding whether there is work left.
     if (action === "pickup_items" && lastResult.error?.code === "no-item") return observe;
@@ -38,10 +39,7 @@ function plan(messages) {
   const box = request.includes("取出来") ? localChests.find(chest => chest.contents?.some(item => item.itemId === "(O)24")) : empty[0];
   if (request.includes("浇完水")) {
     if (!farmWork?.cropUnwateredTiles?.length) return {};
-    if (!previous.includes("refill_watering_can") && companion.waterCanLevel < farmWork.cropUnwateredTiles.length) {
-      return work("refill_watering_can", farm);
-    }
-    return previous.includes("water_auto") ? {} : work("water_auto", farm);
+    return work("tend_crops", farm);
   }
   if (request.includes("取出来")) {
     const crop = box?.contents?.find(item => item.itemId === "(O)24");

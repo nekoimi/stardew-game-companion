@@ -226,6 +226,170 @@ test("empty, stale and missing observations never dispatch crop or pickup action
   assert.deepEqual(inspections, ["inspect-production"]);
 });
 
+test("crop-care workflow waters, refills, and resumes from fresh observations", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  let dry = [{ x: 1, y: 1 }, { x: 2, y: 1 }, { x: 3, y: 1 }];
+  let waterLeft = 1;
+  let revision = 1;
+  const nativeCalls = [];
+  game.snapshot = { companion: { locationId: "Farm", waterCanLevel: waterLeft, hasWateringCan: true },
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: dry,
+      cropUnwateredCount: dry.length, cropUnwateredTruncated: false }, capturedRevision: 1 };
+  game.observe = async () => {
+    game.snapshot.companion.waterCanLevel = waterLeft;
+    game.snapshot.farmWork.cropUnwateredTiles = dry;
+    game.snapshot.farmWork.cropUnwateredCount = dry.length;
+    game.snapshot.capturedRevision = revision;
+    return game.snapshot;
+  };
+  const context = { binding, turnId: "care", requestId: "care", goalId: "care", signal: new AbortController().signal,
+    async native(skill, parameters, observation = false) {
+      nativeCalls.push({ skill, parameters, observation });
+      if (skill === "inspect-farm-work") return { commandId: `inspect-${nativeCalls.length}`, terminalState: "succeeded",
+        finalWorldRevision: revision, details: { farmWork: { locationId: "Farm", observationStatus: "observed",
+          cropUnwateredTiles: dry, cropUnwateredCount: dry.length, cropUnwateredTruncated: false } } };
+      if (skill === "water-zone") {
+        const targets = parameters.tiles;
+        dry = dry.filter(value => !targets.some(target => value.x === target.x && value.y === target.y));
+        waterLeft -= targets.length;
+        return { commandId: `water-${nativeCalls.length}`, terminalState: "succeeded", completedCount: targets.length,
+          effects: targets.map(tile => ({ state: "watered", tile })), finalWorldRevision: ++revision };
+      }
+      if (skill === "inspect-water-sources") return { terminalState: "succeeded",
+        finalWorldRevision: revision, details: { tiles: [{ x: 4, y: 1 }] } };
+      if (skill === "refill-watering-can") {
+        waterLeft = 2;
+        return { commandId: `refill-${nativeCalls.length}`, terminalState: "succeeded",
+          finalWorldRevision: ++revision };
+      }
+      assert.fail(`Unexpected native operation ${skill}`);
+    }, speak() {}, changed() {} };
+
+  const result = await tools.invoke(context, "submit_work", { action: { tend_crops: { location_id: "Farm" } } });
+  assert.equal(result.status, "completed");
+  assert.equal(result.stopReason, "no-dry-crops");
+  assert.equal(result.completedCount, 3);
+  assert.equal(result.refills, 1);
+  assert.deepEqual(dry, []);
+  assert.deepEqual(nativeCalls.filter(call => !call.observation).map(call => call.skill),
+    ["water-zone", "refill-watering-can", "water-zone"]);
+  assert.equal(nativeCalls.filter(call => call.skill === "refill-watering-can").length, 1);
+});
+
+test("crop-care stops without a water source and reports the unwatered work", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  game.snapshot = { companion: { locationId: "Farm", waterCanLevel: 0, hasWateringCan: true }, capturedRevision: 3,
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [{ x: 2, y: 2 }],
+      cropUnwateredTruncated: false } };
+  const calls = [];
+  const context = { binding, turnId: "care", requestId: "care", goalId: "care", signal: new AbortController().signal,
+    async native(skill, _parameters, observation = false) {
+      calls.push({ skill, observation });
+      return skill === "inspect-water-sources"
+        ? { terminalState: "succeeded", details: { tiles: [] } }
+        : assert.fail(`Unexpected native operation ${skill}`);
+    }, speak() {}, changed() {} };
+
+  const result = await tools.invoke(context, "submit_work", { action: { tend_crops: { location_id: "Farm" } } });
+  assert.equal(result.status, "stopped");
+  assert.equal(result.stopReason, "no-observed-water-source");
+  assert.equal(result.completedCount, 0);
+  assert.equal(result.remainingCount, 1);
+  assert.deepEqual(calls, [{ skill: "inspect-water-sources", observation: true }]);
+});
+
+test("crop-care stops cleanly when the complete observed region has no dry crops", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  game.snapshot = { companion: { locationId: "Farm", waterCanLevel: 10, hasWateringCan: true }, capturedRevision: 3,
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [],
+      cropUnwateredTruncated: false } };
+  const context = { binding, turnId: "care", requestId: "care", goalId: "care", signal: new AbortController().signal,
+    async native() { assert.fail("No action or extra observation is valid for a complete empty crop scan."); },
+    speak() {}, changed() {} };
+  const result = await tools.invoke(context, "submit_work", { action: { tend_crops: { location_id: "Farm" } } });
+  assert.equal(result.status, "stopped");
+  assert.equal(result.stopReason, "no-observed-targets");
+  assert.equal(result.completedCount, 0);
+  assert.equal(result.remainingCount, 0);
+  assert.equal(result.observationComplete, true);
+});
+
+test("crop-care retains settled work and stops for a player update before dispatching again", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  let blocked = "";
+  game.snapshot = { companion: { locationId: "Farm", waterCanLevel: 1, hasWateringCan: true }, capturedRevision: 3,
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [{ x: 2, y: 2 }],
+      cropUnwateredTruncated: false } };
+  const calls = [];
+  const context = { binding, turnId: "care", requestId: "care", goalId: "care", signal: new AbortController().signal,
+    workBlock: () => blocked,
+    async native(skill, _parameters) {
+      calls.push(skill);
+      if (skill === "water-zone") {
+        blocked = "player-update";
+        return { commandId: "water-1", terminalState: "succeeded", finalWorldRevision: 4,
+          effects: [{ state: "watered", tile: { x: 2, y: 2 } }] };
+      }
+      return assert.fail(`Unexpected native operation ${skill}`);
+    }, speak() {}, changed() {} };
+  game.observe = async () => game.snapshot;
+
+  const result = await tools.invoke(context, "submit_work", { action: { tend_crops: { location_id: "Farm" } } });
+  assert.equal(result.stopReason, "player-update");
+  assert.equal(result.completedCount, 1);
+  assert.deepEqual(calls, ["water-zone"]);
+});
+
+test("crop-care reconciles the lost receipt before issuing the next action", async () => {
+  const game = new FakeGame();
+  const crops = [{ x: 2, y: 2 }, { x: 3, y: 2 }];
+  game.snapshot = { companion: { locationId: "Farm", waterCanLevel: 1, hasWateringCan: true }, capturedRevision: 1,
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: crops,
+      cropUnwateredTruncated: false } };
+  const actions = [];
+  game.nativeResult = (commandId, skillId, parameters) => {
+    if (skillId === "inspect-water-sources")
+      return { commandId, terminalState: "succeeded", details: { tiles: [{ x: 4, y: 2 }] } };
+    actions.push(skillId);
+    const receipt = { commandId, skillId, terminalState: "succeeded", finalWorldRevision: ++game.snapshot.capturedRevision };
+    if (skillId === "refill-watering-can") {
+      assert.equal(game.queryCount, 1);
+      game.snapshot.companion.waterCanLevel = 4;
+      return receipt;
+    }
+    game.snapshot.farmWork.cropUnwateredTiles = game.snapshot.farmWork.cropUnwateredTiles.slice(1);
+    game.snapshot.companion.waterCanLevel--;
+    const settled = { ...receipt, completedCount: 1, effects: [{ state: "watered", tile: parameters.tiles[0] }] };
+    if (actions.length !== 1) return settled;
+    game.recovered = settled;
+    throw new Error("lost acknowledgement");
+  };
+  let calls = 0;
+  let summary;
+  const { runner } = fixture(game, { async *generate({ messages, tools }) {
+    assert.equal(tools.length, 8);
+    if (++calls === 1) {
+      yield done([{ id: "care", name: "submit_work", arguments: { action: { tend_crops: { location_id: "Farm" } } } }]);
+    } else {
+      summary = messages.at(-1).result;
+      yield done();
+    }
+  } });
+  try {
+    await runner.submit(binding, "care-recovered", "给田里的作物浇水", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.deepEqual(actions, ["water-zone", "refill-watering-can", "water-zone"]);
+    assert.equal(game.queryCount, 1);
+    assert.equal(calls, 2);
+    assert.equal(summary.completedCount, 2);
+    assert.equal(summary.remainingCount, 0);
+  } finally { await runner.stop(); }
+});
+
 function fixture(game, model) {
   const events = [];
   const runner = new TurnRunner(game, model, (type, payload) => events.push({ type, payload }), "Game rules");
@@ -701,7 +865,7 @@ test("autonomous wake ignores goal-summary edits and continues other work after 
   } }, () => undefined, "", store);
   try {
     game.emit("changed");
-    await waitFor(() => modelTurns.length === 5 && !runner.status().modelBusy);
+    await waitFor(() => modelTurns.length === 5 && !runner.status().modelBusy, 300);
     await setTimeout(850);
     assert.equal(pickupCalls, 1, "The same rejected target must not be sent to the game twice without new observations.");
     assert.equal(modelTurns.length, 5, "Only the actual successful action may trigger the next autonomous turn.");

@@ -313,14 +313,14 @@ class Runner:
                 delivered = any(row.get("type") == "player-update" and row["payload"].get("text") == spec["duringAction"]
                                 and row["payload"].get("turnId") == terminal.get("turnId") for row in trace)
                 checks["player_message_delivered_at_tool_boundary"] = guidance_sent and delivered
-            operations = {"water_auto", "water_zone", "water_tiles", "refill_watering_can", "harvest_auto", "harvest_crop", "chop_tree",
+            operations = {"tend_crops", "water_auto", "water_zone", "water_tiles", "refill_watering_can", "harvest_auto", "harvest_crop", "chop_tree",
                           "pickup_items", "deposit_to_chest", "withdraw_from_chest", "ship_items", "rest", "navigate_to"}
             actions = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
                        and operations.intersection((c.get("input") or {}).get("action") or {})]
             checks["real_action_tools_observed"] = any(not c["error"] and isinstance(c["result"], dict) for c in actions)
             checks["action_calls_returned_terminal_results"] = bool(actions) and all(
                 not c["nonterminal"] and (c["error"] or isinstance(c["result"], dict)
-                    and (c["result"].get("status") in {"executed", "completed", "failed", "cancelled", "rejected", "player_update"}
+                    and (c["result"].get("status") in {"executed", "completed", "stopped", "failed", "cancelled", "rejected", "player_update"}
                          or c["result"].get("status") == "no-work" and c["result"].get("targetCount") == 0
                          or c["result"].get("terminalState") in {"succeeded", "partially-succeeded", "failed", "cancelled", "rejected", "no-observed-targets"})) for c in actions
             )

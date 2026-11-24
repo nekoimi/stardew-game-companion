@@ -6,7 +6,7 @@ import type { GameBinding } from "../adapters/game/action-receipt.js";
 import type { CompanionStore } from "../adapters/storage/companion-store.js";
 import { object } from "../application/model.js";
 import type { JsonObject, JsonValue, ToolDefinition } from "../application/model.js";
-import { actions, fields, nativeParameters, oneOperation, queries, validate } from "./native-tools.js";
+import { actions, fields, nativeParameters, oneOperation, queries, validate, workflows } from "./native-tools.js";
 
 const str = (maxLength = 200): JsonObject => ({ type: "string", minLength: 1, maxLength });
 const operationSchemas = (values: Record<string, [string, JsonObject]>) =>
@@ -39,8 +39,8 @@ const definitions = [
   { name: "get_status", description: "Read the current native game observation and control state.", parameters: fields({}) },
   { name: "query_game", description: "Query one game observation. Route checks validate the route and standing tile.",
     parameters: fields({ query: oneOperation(querySchemas) }) },
-  { name: "submit_work", description: "Run one native action immediately. Use observed targets and wait for its native result.",
-    parameters: fields({ action: oneOperation(operationSchemas(actions)) }) },
+  { name: "submit_work", description: "Run a native action or a supported work stage immediately. Use observed targets and verify results.",
+    parameters: fields({ action: oneOperation({ ...operationSchemas(actions), ...workflows }) }) },
   { name: "manage_arrangements", description: "Maintain the bound goal, reminders and milestones. Set continuation or a real game wait.",
     parameters: fields({ change: oneOperation(adjustments) }) },
   { name: "remember", description: "Save a lasting preference or agreement, remove a memory, or speak to the player.",
@@ -65,6 +65,7 @@ type ToolContext = {
   goalId: string;
   signal: AbortSignal;
   native: (skill: string, parameters: JsonObject, observation?: boolean) => Promise<JsonObject>;
+  workBlock?: () => string | undefined;
   speak: (text: string) => void;
   changed: () => void;
   pluginArrangement?: (operation: string, params: JsonObject) => JsonObject;
@@ -95,6 +96,31 @@ function matchingTiles(requested: JsonValue, observed: JsonValue[]): JsonValue[]
 function noObservedTargets(truncated = false): JsonObject {
   return { terminalState: "no-observed-targets", observedTargets: 0, observationComplete: !truncated,
     message: truncated ? "当前观察不完整，尚未确认可执行的目标。" : "当前没有观察到可执行的目标。" };
+}
+
+function tileKey(value: JsonValue | undefined): string {
+  const { x, y } = object(value);
+  return typeof x === "number" && Number.isSafeInteger(x) && x >= 0
+    && typeof y === "number" && Number.isSafeInteger(y) && y >= 0 ? `${x}:${y}` : "";
+}
+
+function observedTiles(values: JsonValue | undefined): JsonObject[] {
+  const tiles = new Map<string, JsonObject>();
+  if (Array.isArray(values)) for (const value of values) {
+    const key = tileKey(value);
+    if (key) {
+      const { x, y } = object(value);
+      tiles.set(key, { x, y });
+    }
+  }
+  return [...tiles.values()];
+}
+
+function inRegion(tile: JsonObject, value: JsonValue | undefined): boolean {
+  if (!value) return true;
+  const region = object(value);
+  return Number(tile.x) >= Number(region.x) && Number(tile.x) < Number(region.x) + Number(region.width)
+    && Number(tile.y) >= Number(region.y) && Number(tile.y) < Number(region.y) + Number(region.height);
 }
 
 export function modelObservation(snapshot: JsonObject | undefined): JsonObject {
@@ -160,6 +186,7 @@ export class CompanionTools {
       }
       case "submit_work": {
         const [operation, params] = choose(args.action);
+        if (operation === "tend_crops") return this.tendCrops(context, params);
         const [skill] = actions[operation];
         const native: JsonObject = { locationId, ...nativeParameters(params) };
         if (operation === "water_auto" || operation === "harvest_auto" ||
@@ -334,6 +361,159 @@ export class CompanionTools {
       }
       default: throw new Error("游戏工具不存在。");
     }
+  }
+
+  private async tendCrops(context: ToolContext, params: JsonObject): Promise<JsonObject> {
+    const locationId = String(params.location_id);
+    const region = params.region;
+    const receipts: string[] = [];
+    const watered = new Set<string>();
+    let skipped = 0;
+    let failed = 0;
+    let refills = 0;
+    let remaining: number | null = null;
+    let finalRevision = 0;
+    let lastRefillProgress = -1;
+    let lastErrorCode = "";
+    let stopReason = "";
+    let step = "observe";
+
+    try {
+      for (;;) {
+        stopReason = context.workBlock?.() ?? "";
+        if (stopReason) break;
+        step = "observe";
+        let snapshot = await this.game.observe();
+        let farm = object(snapshot.farmWork ?? object(snapshot.world).farmWork);
+        if (farm.locationId !== locationId || farm.observationStatus !== "observed"
+            || (region && farm.cropUnwateredTruncated !== false)
+            || (finalRevision && Number(snapshot.capturedRevision ?? -1) < finalRevision)) {
+          const receipt = await context.native("inspect-farm-work", { locationId, ...(region ? { region } : {}) }, true);
+          if (receipt.terminalState !== "succeeded" || Number(receipt.finalWorldRevision) < finalRevision) {
+            remaining = null;
+            stopReason = "crop-observation-unavailable";
+            break;
+          }
+          farm = object(object(receipt.details).farmWork);
+          snapshot = await this.game.observe();
+        }
+        if (farm.locationId !== locationId || farm.observationStatus !== "observed" || !Array.isArray(farm.cropUnwateredTiles)) {
+          remaining = null;
+          stopReason = "crop-observation-unavailable";
+          break;
+        }
+
+        const all = observedTiles(farm.cropUnwateredTiles);
+        const observed = all.filter(tile => inRegion(tile, region));
+        const targets = observed.filter(tile => !watered.has(tileKey(tile)));
+        const complete = farm.cropUnwateredTruncated === false && all.length === farm.cropUnwateredTiles.length;
+        remaining = complete ? observed.length : null;
+        if (!targets.length) {
+          stopReason = !complete ? "crop-observation-truncated" : observed.length ? "no-progress"
+            : watered.size ? "no-dry-crops" : "no-observed-targets";
+          break;
+        }
+        if (Number(snapshot.capturedRevision ?? -1) < finalRevision) {
+          stopReason = "actor-observation-unavailable";
+          break;
+        }
+        const actor = object(snapshot.companion);
+        if (actor.locationId !== locationId) { stopReason = "actor-location-changed"; break; }
+        const level = actor.waterCanLevel;
+        if (actor.hasWateringCan === false) { stopReason = "missing-watering-can"; break; }
+        if (typeof level !== "number" || !Number.isSafeInteger(level) || level < 0) {
+          stopReason = "watering-can-observation-unavailable";
+          break;
+        }
+        step = level === 0 ? "refill" : "water";
+        if (step === "refill" && lastRefillProgress === watered.size) { stopReason = "refill-no-progress"; break; }
+        const batch = targets.slice(0, Math.min(level, 24));
+        stopReason = context.workBlock?.() ?? "";
+        if (stopReason) break;
+        const receipt = step === "refill"
+          ? await this.refillCan(context, locationId)
+          : await context.native("water-zone", { locationId, tiles: batch, includeEmptyTiles: false });
+        if (typeof receipt.commandId === "string") receipts.push(receipt.commandId);
+        if (typeof receipt.finalWorldRevision === "number") finalRevision = receipt.finalWorldRevision;
+        const result = receipt.terminalState;
+        lastErrorCode = String(object(receipt.error).code ?? "");
+        if (typeof receipt.commandId === "string") remaining = null;
+
+        if (step === "refill") {
+          if (result !== "succeeded") {
+            failed += typeof receipt.commandId === "string" ? 1 : 0;
+            stopReason = context.workBlock?.() ?? String(receipt.stopReason ?? "refill-failed");
+            break;
+          }
+          lastRefillProgress = watered.size;
+          const checked = await this.game.observe();
+          const refreshed = object(checked.companion);
+          if (Number(checked.capturedRevision ?? -1) < finalRevision || refreshed.locationId !== locationId
+              || typeof refreshed.waterCanLevel !== "number" || refreshed.waterCanLevel <= level) {
+            stopReason = "refill-no-progress";
+            break;
+          }
+          refills++;
+          continue;
+        }
+
+        const sent = new Set(batch.map(tileKey));
+        let progress = false;
+        for (const value of Array.isArray(receipt.effects) ? receipt.effects : []) {
+          const effect = object(value);
+          const key = tileKey(effect.tile);
+          if (effect.state === "watered" && sent.has(key) && !watered.has(key)) {
+            watered.add(key);
+            progress = true;
+          }
+        }
+        skipped += Number(receipt.skippedCount ?? 0);
+        failed += Number(receipt.failedCount ?? 0);
+        const blocked = context.workBlock?.();
+        if (blocked || result === "cancelled" || receipt.playerActionRequired === true) {
+          stopReason = blocked ?? "interrupted";
+          break;
+        }
+        if (lastErrorCode === "CAN_EMPTY") {
+          const checked = await this.game.observe();
+          if (Number(checked.capturedRevision ?? -1) >= finalRevision && object(checked.companion).waterCanLevel === 0) continue;
+        }
+        if (result === "failed" || result === "rejected" || failed > 0) { stopReason = "watering-failed"; break; }
+        if (!progress && Number(receipt.skippedCount ?? 0) === 0) { stopReason = "no-progress"; break; }
+        if (!progress) {
+          // Skips can be due to the player tending the same tiles. Confirm the
+          // selected set actually changed before any further dispatch.
+          step = "observe";
+          const checked = await this.game.observe();
+          const current = object(checked.farmWork ?? object(checked.world).farmWork);
+          if (Number(checked.capturedRevision ?? -1) < finalRevision || current.observationStatus !== "observed"
+              || current.locationId !== locationId || current.cropUnwateredTruncated !== false || !Array.isArray(current.cropUnwateredTiles)
+              || current.cropUnwateredTiles.some(tile => sent.has(tileKey(tile)))) {
+            stopReason = "no-progress";
+            break;
+          }
+        }
+      }
+    } catch {
+      stopReason = context.workBlock?.() ?? (step === "observe" ? "crop-observation-unavailable" : "action-unavailable");
+      remaining = null;
+    }
+
+    return { status: stopReason === "no-dry-crops" ? "completed" : "stopped", stopReason,
+      completedCount: watered.size, skippedCount: skipped, failedCount: failed, refills, remainingCount: remaining,
+      observationComplete: remaining !== null, receiptCount: receipts.length, receiptIds: receipts.slice(-8),
+      needsReconciliation: stopReason === "recovery-pending" || stopReason === "game-changed",
+      ...(lastErrorCode ? { errorCode: lastErrorCode } : {}) };
+  }
+
+  private async refillCan(context: ToolContext, locationId: string): Promise<JsonObject> {
+    const result = await context.native("inspect-water-sources", { locationId }, true);
+    if (result.terminalState !== "succeeded") return { stopReason: "water-source-observation-unavailable" };
+    const tiles = observedTiles(object(result.details).tiles);
+    if (!tiles.length) return { stopReason: "no-observed-water-source" };
+    const blocked = context.workBlock?.();
+    if (blocked) return { stopReason: blocked };
+    return context.native("refill-watering-can", { locationId, tiles: tiles.slice(0, 16) });
   }
 
   private async observeAfterWork(context: ToolContext, location: JsonValue, finalRevision: JsonValue | undefined): Promise<JsonObject> {

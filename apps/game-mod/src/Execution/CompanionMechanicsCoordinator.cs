@@ -893,6 +893,47 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                 return false;
             }
 
+            if (skillId is "inspect-farm-work")
+            {
+                try
+                {
+                    string location = payload.Parameters.LocationId;
+                    if (!_observer.LocationExists(location))
+                        throw new ArgumentException("The requested farm work location is not loaded.");
+                    var region = payload.Parameters.Region;
+                    if (region is not null && (region.X < 0 || region.Y < 0 || region.Width is < 1 or > 512 || region.Height is < 1 or > 512))
+                        throw new ArgumentException("Invalid farm work region.");
+                    var entries = _observer.ScanFarmWork(location).Where(row => region is null
+                        || (row.Tile.X >= region.X && row.Tile.X < (long)region.X + region.Width
+                            && row.Tile.Y >= region.Y && row.Tile.Y < (long)region.Y + region.Height)).ToList();
+                    var dry = entries.Where(row => row.HasCrop && !row.IsDead && !row.IsWatered).ToList();
+                    var ripe = entries.Where(row => row.IsHarvestable && !row.IsDead).ToList();
+                    bool partialMap = ActorGuards.IsPlayerBound(_actor) && !string.Equals(location, "Farm", StringComparison.OrdinalIgnoreCase);
+                    var facts = new
+                    {
+                        locationId = location, observationStatus = "observed",
+                        cropUnwateredCount = dry.Count, cropUnwateredTruncated = partialMap || dry.Count > MaxReportedMatureCrops,
+                        cropUnwateredTiles = dry.Take(MaxReportedMatureCrops).Select(row => new TileCoord(row.Tile.X, row.Tile.Y)).ToList(),
+                        matureCropCount = ripe.Count, matureCropsTruncated = partialMap || ripe.Count > MaxReportedMatureCrops,
+                        matureCrops = ripe.Take(MaxReportedMatureCrops).Select(row =>
+                            new MatureCropTile(row.Tile.X, row.Tile.Y, row.CropId ?? "", row.RequiresScythe)).ToList()
+                    };
+                    var result = new SkillResultPayload(payload.CommandId, payload.TaskId, "succeeded", 0, 0, 0,
+                        _observer.WorldRevision, new(), SkillId: skillId,
+                        Details: new Dictionary<string, object> { ["farmWork"] = facts });
+                    _lastSkillResultPayload = result;
+                    if (_transportServer is not null)
+                        _ = _transportServer.SendSkillResultAsync(result, envelope.MessageId, envelope.IdempotencyKey);
+                    rejectResult = null;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    rejectResult = BuildRejection(payload, "FARM_WORK_OBSERVATION_UNAVAILABLE", ex.Message, false);
+                    return false;
+                }
+            }
+
             if (skillId is "inspect-water-sources")
             {
                 if (_actor.LocationName != payload.Parameters.LocationId)
@@ -900,7 +941,10 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                     rejectResult = BuildRejection(payload, "WATER_SOURCE_MAP_MISMATCH", "Water sources are observed on the current actor map.", false);
                     return false;
                 }
-                var tiles = _observer.FindWaterRefillTiles(_actor.LocationName, _actor.Tile, 96, 16)
+                var tiles = _observer.FindWaterRefillTiles(_actor.LocationName, _actor.Tile, 96, int.MaxValue)
+                    .Where(tile => tile.IsAdjacentTo(_actor.Tile) || tile == _actor.Tile
+                        || tile.CardinalNeighbors().Any(standing => _observer.IsTilePassable(_actor.LocationName, standing)))
+                    .Take(16)
                     .Select(tile => new TileCoord(tile.X, tile.Y)).ToList();
                 var result = new SkillResultPayload(payload.CommandId, payload.TaskId, "succeeded", 0, 0, 0,
                     _observer.WorldRevision, new(), SkillId: skillId,
@@ -1729,7 +1773,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                 MaxStamina: (int)_actor.MaxStamina,
                 WaterCanLevel: _actor.WaterLeft,
                 MaxWaterCanLevel: _actor.MaxWater,
-                HasWateringCan: true,
+                HasWateringCan: _actor.WateringCan is not null || (_actor is MechanicsActor && _actor.MaxWater > 0),
                 Activity: Rest.IsResting ? GetActivityStatus() : activeMachine is not null ? DescribeActivity(activeMachine) : "idle",
                 AvailableMoney: companionMoney,
                 MoneyStatus: companionMoneyStatus,

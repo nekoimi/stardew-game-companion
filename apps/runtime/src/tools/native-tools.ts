@@ -21,6 +21,11 @@ const region = fields({ x: integer(0, 4096), y: integer(0, 4096), width: integer
 const withLocation = (properties: Record<string, Schema>, required = Object.keys(properties)) =>
   fields({ ...location, ...properties }, required);
 
+export const workflows: Record<string, Schema> = {
+  tend_crops: { ...fields({ ...location, region }, ["location_id"]),
+    description: "Care for observed dry crops in the location or an observed region. Refill as needed and verify the remaining work." },
+};
+
 export const actions: Record<string, [string, Schema]> = {
   navigate_to: ["navigate-to", withLocation({ tile }, ["location_id", "tile"])],
   water_tiles: ["water-zone", fields({ ...tileFields, include_empty_tiles: bool }, ["tiles"])],
