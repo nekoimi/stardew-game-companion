@@ -6,7 +6,10 @@ namespace StardewAI.Companion.Mod.Navigation;
 
 public sealed record RouteSearchResult(ReachableRoute? Route, RouteFailure? Failure);
 
-public sealed record ReachableRoute(IReadOnlyList<MapEdge> Edges, int WalkingTiles, TileCoordinate TargetTile);
+public sealed record ReachableRoute(IReadOnlyList<MapEdge> Edges, int WalkingCost, TileCoordinate TargetTile)
+{
+    public int WalkingTiles => (int)Math.Ceiling((double)WalkingCost / WalkingPath.CardinalCost);
+}
 
 /// <summary>Structured cross-map route failure: a stable reason code, a human-readable
 /// message and machine-readable details (blocked side, exit/landing coordinates,
@@ -84,7 +87,7 @@ public sealed class ReachableRoutePlanner
         {
             yield return null;
             if (cost != costs[node.State]) continue;
-            if (best is not null && cost >= best.WalkingTiles) break;
+            if (best is not null && cost >= best.WalkingCost) break;
             if (string.Equals(node.Name, targetLocation, StringComparison.OrdinalIgnoreCase))
             {
                 var finalSearch = BeginDestinationPath(node.Name, node.State.Tile, target, requireExactDestination);
@@ -92,8 +95,8 @@ public sealed class ReachableRoutePlanner
                 var final = finalSearch.Result;
                 if (final.Success)
                 {
-                    int total = cost + WalkingTiles(final, node.State.Tile);
-                    if (best is null || total < best.WalkingTiles)
+                    int total = cost + final.WalkingCost;
+                    if (best is null || total < best.WalkingCost)
                     {
                         var edges = new List<MapEdge>();
                         var state = node.State;
@@ -118,9 +121,9 @@ public sealed class ReachableRoutePlanner
             foreach (var edge in _graph.GetOutgoingEdges(node.Name))
             {
                 yield return null;
-                int lowerBound = Math.Abs(node.State.Tile.X - edge.SourceTile.X)
-                    + Math.Abs(node.State.Tile.Y - edge.SourceTile.Y);
-                if (best is not null && cost + lowerBound >= best.WalkingTiles) continue;
+                // A blocked entrance tile can be approached from a cardinal neighbor.
+                int lowerBound = Math.Max(0, WalkingPath.Distance(node.State.Tile, edge.SourceTile) - WalkingPath.CardinalCost);
+                if (best is not null && cost + lowerBound >= best.WalkingCost) continue;
                 if (!_graph.CheckEdgeTraversable(edge, time, farmer, out var blocked, out _))
                 {
                     // Only a reachable entrance into the requested destination can
@@ -147,7 +150,7 @@ public sealed class ReachableRoutePlanner
                     arrivalFailures.Add(new EdgeAttempt(edge, node.Name, node.State.Tile));
                     continue;
                 }
-                int nextCost = cost + WalkingTiles(walk, node.State.Tile) + 1;
+                int nextCost = cost + walk.WalkingCost + WalkingPath.CardinalCost;
                 var next = Key(edge.TargetLocation, arrival);
                 if (costs.TryGetValue(next, out int old) && old <= nextCost) continue;
                 costs[next] = nextCost;
@@ -169,9 +172,6 @@ public sealed class ReachableRoutePlanner
         search.Result = new RouteSearchResult(best, best is not null ? null : ClassifyFailure(location, start, targetLocation, queue.Count > 0,
             unavailable, exitFailures, arrivalFailures, firstLockReason, target, destinationFailures, blocking));
     }
-
-    private static int WalkingTiles(PathResult path, TileCoordinate start) =>
-        path.Steps.Count == 1 && path.Steps[0].Tile == start ? 0 : path.Steps.Count;
 
     private RouteFailure ClassifyFailure(string location, TileCoordinate start, string targetLocation,
         bool searchLimitExceeded, string? unavailable,

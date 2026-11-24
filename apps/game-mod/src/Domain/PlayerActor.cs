@@ -7,7 +7,7 @@ namespace StardewAI.Companion.Mod.Domain;
 /// <summary>
 /// Phase-1 binding of the sole native local player (<see cref="Game1.player"/>) as the
 /// mechanics actor. Every member proxies native farmer semantics: movement is a held
-/// intention injected via <see cref="Farmer.setMoving(byte)"/> and applied by the game's
+/// intention submitted to <see cref="Farmer.movementDirections"/> and applied by the game's
 /// own Farmer.Update/MovePosition (collision, wall sliding and warp triggers included),
 /// cross-map travel is a native <see cref="Game1.warpFarmer(string, int, int, bool)"/>,
 /// and inventory mutations go through the real farmer primitives. Nothing here teleports
@@ -26,8 +26,7 @@ public sealed class PlayerActor : IFarmerActor
     private readonly string? _boundSaveId;
     private readonly Action<string, StardewModdingAPI.LogLevel>? _log;
     private string? _activeTaskId;
-    private int? _heldDirection;
-    public int? HeldDirection => _heldDirection;
+    internal int HeldDirections { get; private set; }
     private int _animationPulses;
 
 
@@ -132,10 +131,6 @@ public sealed class PlayerActor : IFarmerActor
         }
     }
 
-    // Farmer.setMoving encoding (IL-verified): press = 1 << dir, release = press | 32,
-    // 64 halts all. Dirs are 0=up, 1=right, 2=down, 3=left (same values as FacingDirection).
-    private const int ArrivalMicroAlignPixels = 8;
-
     /// <summary>
     /// Translates a per-tick delta into a held movement intention for the game's own
     /// Farmer.Update to apply (no synchronous position write). A zero delta releases the
@@ -143,55 +138,54 @@ public sealed class PlayerActor : IFarmerActor
     /// </summary>
     public void MovePixels(float dx, float dy)
     {
-        lock (_lock)
-        {
-            int? desired = ResolveDirection(dx, dy);
-            if (desired == _heldDirection)
-            {
-                return;
-            }
-            // The intent hook rewrites setMoving to the currently held input.
-            // Releasing while that intent is still set re-presses the OLD key,
-            // leaving two native directions held after a turn. Clear the intent
-            // before native Halt, then press only the newly requested direction.
-            _heldDirection = null;
-            _player.Halt();
-            _heldDirection = desired;
-            if (desired.HasValue)
-            {
-                _player.setMoving((byte)(1 << desired.Value));
-            }
-        }
+        if (dx == 0f && dy == 0f)
+            SetMovementDirections(0);
+        else if (Math.Abs(dx) >= Math.Abs(dy))
+            SetMovementDirections(1 << (int)(dx > 0 ? FacingDirection.Right : FacingDirection.Left));
+        else
+            SetMovementDirections(1 << (int)(dy > 0 ? FacingDirection.Down : FacingDirection.Up));
     }
 
-    private static int? ResolveDirection(float dx, float dy)
+    internal void MoveDiagonally(float dx, float dy)
     {
-        if (dx == 0f && dy == 0f)
+        int horizontal = Math.Abs(dx) > ActorGuards.NativeArrivalTolerance
+            ? 1 << (int)(dx > 0 ? FacingDirection.Right : FacingDirection.Left)
+            : 0;
+        int vertical = Math.Abs(dy) > ActorGuards.NativeArrivalTolerance
+            ? 1 << (int)(dy > 0 ? FacingDirection.Down : FacingDirection.Up)
+            : 0;
+        SetMovementDirections(horizontal | vertical);
+    }
+
+    private void SetMovementDirections(int desired)
+    {
+        lock (_lock)
         {
-            return null;
+            if (desired == 0)
+            {
+                if (HeldDirections != 0) Halt();
+                return;
+            }
+            HeldDirections = desired;
+            var native = _player.movementDirections;
+            // Use the same list the native input populates. Delete released axes
+            // and retain held ones so a turn never resets the walking animation.
+            for (int direction = 0; direction < 4; direction++)
+            {
+                if ((desired & (1 << direction)) == 0) native.Remove(direction);
+            }
+            for (int direction = 0; direction < 4; direction++)
+            {
+                if ((desired & (1 << direction)) != 0 && !native.Contains(direction)) native.Insert(0, direction);
+            }
         }
-        bool horizontalDominant = Math.Abs(dx) >= Math.Abs(dy);
-        // Near-aligned on the dominant axis while the other still has distance: use the other.
-        if (horizontalDominant && Math.Abs(dx) <= ArrivalMicroAlignPixels && Math.Abs(dy) > ArrivalMicroAlignPixels)
-        {
-            horizontalDominant = false;
-        }
-        else if (!horizontalDominant && Math.Abs(dy) <= ArrivalMicroAlignPixels && Math.Abs(dx) > ArrivalMicroAlignPixels)
-        {
-            horizontalDominant = true;
-        }
-        if (horizontalDominant)
-        {
-            return dx > 0f ? (int)FacingDirection.Right : (int)FacingDirection.Left;
-        }
-        return dy > 0f ? (int)FacingDirection.Down : (int)FacingDirection.Up;
     }
 
     public void Halt()
     {
         lock (_lock)
         {
-            _heldDirection = null;
+            HeldDirections = 0;
             _player.Halt();
         }
     }

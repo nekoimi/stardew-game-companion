@@ -428,7 +428,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
             var path = _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
                 _currentRequest!.LocationId, tile, _avoidTiles);
             yield return path;
-            costByTile[tile] = path.Result.Success && path.Result.Steps.Count > 0 ? path.Result.Steps.Count : int.MaxValue;
+            costByTile[tile] = path.Result.Success && path.Result.Steps.Count > 0 ? path.Result.WalkingCost : int.MaxValue;
         }
 
         int Connectivity(TileCoordinate tile) =>
@@ -485,6 +485,7 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
 
     private void TickNavigating()
     {
+        _currentPathIndex = WalkingPath.AdvanceReachedWaypoint(_actor, _currentPath, _currentPathIndex);
         if (_currentPathIndex >= _currentPath.Count)
         {
             // Destination reached
@@ -494,21 +495,8 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
         }
 
         var step = _currentPath[_currentPathIndex];
-        if (ActorGuards.HasReachedWalkingTile(_actor, step.Tile)) {
-            _actor.Halt(); _currentPathIndex++; return;
-        }
 
-        // Dynamic collision check BEFORE stepping towards destination tile.
-        // This uses exactly the same obstacle set as SameMapNavigator planning:
-        // native passability + dynamic player occupancy + recently blocked tiles.
-        // The tile the actor already stands on needs no check: it was reached legally,
-        // and rejecting it would make every replan fail identically.
-        bool isPassable = step.Tile == _actor.Tile ||
-                          (_observer.IsTilePassable(_currentRequest!.LocationId, step.Tile) &&
-                           !_observer.IsPlayerOnTile(_currentRequest!.LocationId, step.Tile) &&
-                           !_avoidTiles.Contains(step.Tile));
-
-        if (!isPassable)
+        if (!WalkingPath.IsStepOpen(_observer, _actor, _currentRequest!.LocationId, step, _avoidTiles))
         {
             _actor.Halt();
             // Remember the blocked tile so the replan cannot route through it again.
@@ -526,34 +514,11 @@ public sealed class WaterZoneStateMachine : ISkillExecutionMachine
             return;
         }
 
-        var walkingTarget = ActorGuards.WalkingTargetPixel(_actor, step.Tile);
-
-        var currentPos = _actor.PixelPosition;
-        float dx = walkingTarget.X - currentPos.X;
-        float dy = walkingTarget.Y - currentPos.Y;
-
-        float dist = MathF.Sqrt(dx * dx + dy * dy);
-        if (ActorGuards.IsPlayerBound(_actor))
+        if (WalkingPath.Move(_actor, step, WalkPixelsPerTick))
         {
-            // The native actor ignores position setters. Keep driving its held
-            // movement until the measured standing center actually reaches the tile.
-            _actor.MovePixels(dx, dy);
-            return;
-        }
-        if (dist <= WalkPixelsPerTick)
-        {
-            // Arrived at step tile
-            if (!ActorGuards.TryFinishWalkingStep(_actor, walkingTarget)) return;
             _actor.Face(step.Facing);
             _currentPathIndex++;
             _replanCount = 0;
-        }
-        else
-        {
-            // Continuous physical movement step
-            float moveX = (dx / dist) * WalkPixelsPerTick;
-            float moveY = (dy / dist) * WalkPixelsPerTick;
-            _actor.MovePixels(moveX, moveY);
         }
     }
 

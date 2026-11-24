@@ -75,6 +75,45 @@ public class SameMapNavigatorTests
     }
 
     [Fact]
+    public void PathfindingUsesSafeDiagonalStepsOnOpenGround()
+    {
+        var observer = new SimulatedWorldObserver { CurrentLocationName = "Farm" };
+        var result = new SameMapNavigator(observer).FindPath("Farm", new(0, 0), new(3, 3));
+
+        Assert.True(result.Success);
+        Assert.Equal(3, result.Steps.Count);
+        Assert.All(result.Steps, step => Assert.True(step.IsDiagonal));
+    }
+
+    [Fact]
+    public void PathfindingRejectsDiagonalCornerCutting()
+    {
+        var observer = new SimulatedWorldObserver { CurrentLocationName = "Farm" };
+        observer.SetPassable(new(1, 0), false);
+        var result = new SameMapNavigator(observer).FindPath("Farm", new(0, 0), new(1, 1));
+
+        Assert.True(result.Success);
+        Assert.DoesNotContain(result.Steps, step => step.IsDiagonal);
+        Assert.DoesNotContain(result.Steps, step => step.Tile == new TileCoordinate(1, 0));
+    }
+
+    [Fact]
+    public void EntranceApproachKeepsItsOwnCardinalWaypoint()
+    {
+        var observer = new SimulatedWorldObserver();
+        var entrance = new TileCoordinate(3, 3);
+        observer.SetWarpOrDoor(entrance, true);
+        var path = new SameMapNavigator(observer).FindPath("Farm", new(0, 0), entrance);
+
+        Assert.True(path.Success);
+        var last = path.Steps[^1];
+        Assert.Equal(entrance, last.Tile);
+        Assert.True(last.From!.Value.IsAdjacentTo(entrance));
+        Assert.False(last.IsDiagonal);
+        Assert.DoesNotContain(path.Steps, step => step.RunEnd == entrance);
+    }
+
+    [Fact]
     public void TargetCompletelyEnclosed_FailsWithoutTeleporting()
     {
         var observer = new SimulatedWorldObserver { CurrentLocationName = "Farm" };

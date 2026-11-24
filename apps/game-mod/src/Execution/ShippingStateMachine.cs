@@ -372,7 +372,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
             var path = _navigator.BeginPathToInteract(new(_actor.LocationName, _actor.Tile, _actor.Facing),
                 _currentRequest!.LocationId, footprintTile, _blockedApproach);
             yield return path;
-            if (path.Result.Success && path.Result.Steps.Count > 0 && (best is null || path.Result.Steps.Count < best.Steps.Count))
+            if (path.Result.Success && path.Result.Steps.Count > 0 && (best is null || path.Result.WalkingCost < best.WalkingCost))
             {
                 best = path.Result;
                 bestTile = footprintTile;
@@ -384,6 +384,7 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
 
     private void TickNavigating()
     {
+        _currentPathIndex = WalkingPath.AdvanceReachedWaypoint(_actor, _currentPath, _currentPathIndex);
         if (_currentPathIndex >= _currentPath.Count)
         {
             _actor.Halt();
@@ -403,16 +404,8 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
                 PlanPathToShippingBin();
             return;
         }
-        if (ActorGuards.HasReachedWalkingTile(_actor, step.Tile)) {
-            _actor.Halt(); _currentPathIndex++; return;
-        }
 
-        // Dynamic collision check BEFORE stepping
-        bool isPassable = step.Tile == _actor.Tile ||
-                          (_observer.IsTilePassable(_currentRequest!.LocationId, step.Tile) &&
-                           !_observer.IsPlayerOnTile(_currentRequest!.LocationId, step.Tile));
-
-        if (!isPassable)
+        if (!WalkingPath.IsStepOpen(_observer, _actor, _currentRequest!.LocationId, step))
         {
             _actor.Halt();
             _replanCount++;
@@ -427,32 +420,11 @@ public sealed class ShippingStateMachine : ISkillExecutionMachine
             return;
         }
 
-        var walkingTarget = ActorGuards.WalkingTargetPixel(_actor, step.Tile);
-
-        var currentPos = _actor.PixelPosition;
-        float dx = walkingTarget.X - currentPos.X;
-        float dy = walkingTarget.Y - currentPos.Y;
-
-        float dist = MathF.Sqrt(dx * dx + dy * dy);
-        if (ActorGuards.IsPlayerBound(_actor))
+        if (WalkingPath.Move(_actor, step, WalkPixelsPerTick))
         {
-            // The native actor ignores position setters. Keep driving its held
-            // movement until the measured standing center actually reaches the tile.
-            _actor.MovePixels(dx, dy);
-            return;
-        }
-        if (dist <= WalkPixelsPerTick)
-        {
-            if (!ActorGuards.TryFinishWalkingStep(_actor, walkingTarget)) return;
             _actor.Face(step.Facing);
             _currentPathIndex++;
             _replanCount = 0;
-        }
-        else
-        {
-            float moveX = (dx / dist) * WalkPixelsPerTick;
-            float moveY = (dy / dist) * WalkPixelsPerTick;
-            _actor.MovePixels(moveX, moveY);
         }
     }
 

@@ -369,6 +369,7 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
 
     private void HandleNavigating()
     {
+        _currentPathIndex = WalkingPath.AdvanceReachedWaypoint(_actor, _currentPath, _currentPathIndex);
         if (_currentPathIndex >= _currentPath.Count)
         {
             _actor.Halt();
@@ -384,14 +385,8 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
         }
 
         var targetStep = _currentPath[_currentPathIndex];
-        var targetTile = targetStep.Tile;
-        if (ActorGuards.HasReachedWalkingTile(_actor, targetTile)) {
-            _actor.Halt(); _currentPathIndex++; return;
-        }
-        var targetPixel = ActorGuards.WalkingTargetPixel(_actor, targetTile);
-        var currentPixel = _actor.PixelPosition;
 
-        if (_observer.IsPlayerOnTile(_currentRequest!.LocationId, targetTile))
+        if (!WalkingPath.IsStepOpen(_observer, _actor, _currentRequest!.LocationId, targetStep))
         {
             _actor.Halt();
             _replanCount++;
@@ -407,25 +402,8 @@ public sealed class HoeZoneStateMachine : ISkillExecutionMachine
             return;
         }
 
-        var diff = targetPixel - currentPixel;
-        float dist = diff.Length();
-
-        if (ActorGuards.IsPlayerBound(_actor))
-        {
-            _actor.MovePixels(diff.X, diff.Y);
-            return;
-        }
-        if (dist <= WalkPixelsPerTick)
-        {
-            if (!ActorGuards.TryFinishWalkingStep(_actor, targetPixel)) return;
+        if (WalkingPath.Move(_actor, targetStep, WalkPixelsPerTick))
             _currentPathIndex++;
-        }
-        else
-        {
-            diff.Normalize();
-            _actor.Facing = targetStep.Facing;
-            _actor.MovePixels(diff.X * WalkPixelsPerTick, diff.Y * WalkPixelsPerTick);
-        }
     }
 
     private void HandleFacing()

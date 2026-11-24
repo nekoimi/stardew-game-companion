@@ -125,7 +125,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
         {
             result["locations"] = new[] { origin }.Concat(route.Edges.Select(e => e.TargetLocation)).ToArray();
             result["walkingTiles"] = route.WalkingTiles;
-            result["estimatedGameMinutes"] = (int)Math.Ceiling(route.WalkingTiles * 16d / 60d * 10d / 7d);
+            result["estimatedGameMinutes"] = (int)Math.Ceiling(route.WalkingCost / (double)WalkingPath.CardinalCost * 16d / 60d * 10d / 7d);
             result["arrivalTile"] = route.TargetTile;
         }
         search.Result = result;
@@ -551,6 +551,21 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
             PlanCurrentLeg();
             return;
         }
+        bool playerBound = ActorGuards.IsPlayerBound(_actor);
+        bool wrongMap = playerBound && _currentLegIndex < _locationRoute.Count
+            && !string.Equals(_actor.LocationName, _locationRoute[_currentLegIndex], StringComparison.OrdinalIgnoreCase);
+        if (playerBound && !wrongMap && _currentPathIndex < _currentPath.Count)
+        {
+            if ((Game1.eventUp && !ActorGuards.FestivalFreeRoam) || Game1.activeClickableMenu != null)
+            {
+                FinishExecution(ExecutionState.PartiallySucceeded,
+                    "Native event/menu interrupted walking; inspect native UI and continue it through native-advance/native-answer before replanning.",
+                    "NATIVE_UI_ACTIVE");
+                return;
+            }
+        }
+        if (!wrongMap)
+            _currentPathIndex = WalkingPath.AdvanceReachedWaypoint(_actor, _currentPath, _currentPathIndex);
         if (_currentPathIndex >= _currentPath.Count)
         {
             _actor.Halt();
@@ -609,21 +624,19 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
 
         var targetStep = _currentPath[_currentPathIndex];
         var targetTile = targetStep.Tile;
-        if (!ActorGuards.IsPlayerBound(_actor) && _walkingProgress.IsBlocked(_actor, targetTile))
+        if (!playerBound && _walkingProgress.IsBlocked(_actor, targetTile))
         {
             FinishExecution(ExecutionState.Failed,
                 $"Walking blocked on '{_actor.LocationName}' at {_actor.Tile} toward {targetTile}; pixel={_actor.PixelPosition}. Inspect the obstruction before choosing clearance or another route.", "MOVEMENT_BLOCKED");
             return;
         }
-        if (ActorGuards.IsPlayerBound(_actor))
+        if (playerBound)
         {
             // A native event/warp may relocate the player while preserving the map
-            // name. BFS steps are adjacent: a distant next step is a stale path,
+            // name. Grid steps are adjacent: a distant next step is a stale path,
             // not a collision to retry for minutes against the same old waypoint.
             var currentTile = _actor.Tile;
-            bool wrongMap = _currentLegIndex < _locationRoute.Count
-                && !string.Equals(_actor.LocationName, _locationRoute[_currentLegIndex], StringComparison.OrdinalIgnoreCase);
-            if (wrongMap || Math.Abs(currentTile.X - targetTile.X) + Math.Abs(currentTile.Y - targetTile.Y) > 1)
+            if (wrongMap || Math.Abs(currentTile.X - targetTile.X) > 1 || Math.Abs(currentTile.Y - targetTile.Y) > 1)
             {
                 _locationRoute.Clear();
                 _plannedEdges = Array.Empty<MapEdge>();
@@ -633,13 +646,6 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
                 _currentPath.Clear();
                 _currentPathIndex = 0;
                 RetryBlockedLeg("Native player pose changed outside the adjacent route; replanning from the actual position.", "NATIVE_ROUTE_CHANGED");
-                return;
-            }
-            if ((Game1.eventUp && !ActorGuards.FestivalFreeRoam) || Game1.activeClickableMenu != null)
-            {
-                FinishExecution(ExecutionState.PartiallySucceeded,
-                    "Native event/menu interrupted walking; inspect native UI and continue it through native-advance/native-answer before replanning.",
-                    "NATIVE_UI_ACTIVE");
                 return;
             }
             var point = _actor.PixelPosition;
@@ -656,7 +662,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
             // farmer whose native CanMove gate remains closed without a menu.
             if (_nativeNoProgressTicks >= 180)
             {
-                RetryBlockedLeg($"No native waypoint progress on '{_actor.LocationName}' from {_actor.Tile} toward {targetTile}; pixel={point}, distance={distance:F2}, best={_nativeBestDistance:F2}, canMove={_actor.GameFarmer?.CanMove}, usingTool={_actor.GameFarmer?.UsingTool}, heldDirection={(_actor as PlayerActor)?.HeldDirection}.", "NATIVE_MOVEMENT_STALLED");
+                RetryBlockedLeg($"No native waypoint progress on '{_actor.LocationName}' from {_actor.Tile} toward {targetTile}; pixel={point}, distance={distance:F2}, best={_nativeBestDistance:F2}, canMove={_actor.GameFarmer?.CanMove}, usingTool={_actor.GameFarmer?.UsingTool}, heldDirections={(_actor as PlayerActor)?.HeldDirections}.", "NATIVE_MOVEMENT_STALLED");
                 return;
             }
             if (_nativeWalkingTile == targetTile && _nativeWalkingPoint.HasValue
@@ -673,20 +679,7 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
                 return;
             }
         }
-        // Native farmers have a bounding-box standing point rather than the legacy
-        // avatar's exact grid origin. Arrival is the native tile actually reached.
-        if (ActorGuards.HasReachedWalkingTile(_actor, targetTile))
-        {
-            _actor.Halt();
-            _currentPathIndex++;
-            return;
-        }
-        var targetPixel = ActorGuards.WalkingTargetPixel(_actor, targetTile);
-        var currentPixel = _actor.PixelPosition;
-
-        // Player obstruction avoidance
-        if (_observer.IsPlayerOnTile(_actor.LocationName, targetTile)
-            || !_observer.IsTilePassable(_actor.LocationName, targetTile))
+        if (!WalkingPath.IsStepOpen(_observer, _actor, _actor.LocationName, targetStep))
         {
             // Give moving obstructions time to clear. Keep the route and retry
             // only this leg; pause/cancel are still checked on every update.
@@ -694,25 +687,8 @@ public sealed class NavigationStateMachine : ISkillExecutionMachine
             return;
         }
 
-        var diff = targetPixel - currentPixel;
-        float dist = diff.Length();
-
-        if (ActorGuards.IsPlayerBound(_actor))
-        {
-            _actor.MovePixels(diff.X, diff.Y);
-            return;
-        }
-        if (dist <= WalkPixelsPerTick)
-        {
-            if (!ActorGuards.TryFinishWalkingStep(_actor, targetPixel)) return;
+        if (WalkingPath.Move(_actor, targetStep, WalkPixelsPerTick))
             _currentPathIndex++;
-        }
-        else
-        {
-            diff.Normalize();
-            _actor.Facing = targetStep.Facing;
-            _actor.MovePixels(diff.X * WalkPixelsPerTick, diff.Y * WalkPixelsPerTick);
-        }
     }
 
     private string? _pendingNativeWarp;

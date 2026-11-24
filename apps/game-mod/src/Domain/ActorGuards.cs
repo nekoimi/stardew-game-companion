@@ -15,6 +15,8 @@ namespace StardewAI.Companion.Mod.Domain;
 /// </summary>
 public static class ActorGuards
 {
+    internal const float NativeArrivalTolerance = 4f;
+
     /// <summary>Final short waypoint step uses the same collision check as walking.</summary>
     public static bool TryFinishWalkingStep(IFarmerActor actor, Vector2 target)
     {
@@ -44,10 +46,10 @@ public static class ActorGuards
     {
         if (!IsPlayerBound(actor)) return false;
         var delta = actor.PixelPosition - WalkingTargetPixel(actor, tile);
-        // Native cardinal movement settles each axis separately. A (3,3)
+        // Native movement settles each axis separately. A (3,3)
         // residual is within one step on both axes but outside a radius of 4;
         // requiring that circle can oscillate forever around a reached tile.
-        return Math.Abs(delta.X) <= 4f && Math.Abs(delta.Y) <= 4f;
+        return Math.Abs(delta.X) <= NativeArrivalTolerance && Math.Abs(delta.Y) <= NativeArrivalTolerance;
     }
 
     /// <summary>

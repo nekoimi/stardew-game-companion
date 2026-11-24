@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using HarmonyLib;
+using Microsoft.Xna.Framework;
 using StardewAI.Companion.Mod.Domain;
 using StardewAI.Companion.Mod.Execution;
 using StardewAI.Companion.Mod.Navigation;
@@ -5,8 +8,103 @@ using Xunit;
 
 namespace StardewAI.Companion.Mod.Tests;
 
+[Collection("Native tool ambient location")]
 public class NavigationStateMachineTests
 {
+    [Fact]
+    public void NativeMovementKeepsWalkingAcrossAReachedWaypoint()
+    {
+        var actor = new StubFarmerActor();
+        actor.SetLocation("Farm", new(10, 10));
+        var farmer = (HeadlessWalkingFarmer)RuntimeHelpers.GetUninitializedObject(typeof(HeadlessWalkingFarmer));
+        farmer.Actor = actor;
+        actor.GameFarmer = farmer;
+        var playerField = AccessTools.Field(typeof(StardewValley.Game1), "_player");
+        var originalPlayer = playerField.GetValue(null);
+        playerField.SetValue(null, farmer);
+        try
+        {
+            var observer = new SimulatedWorldObserver();
+            var machine = new NavigationStateMachine(actor, observer, new SameMapNavigator(observer), new WorldMapGraph());
+            var destination = new TileCoordinate(13, 10);
+            Assert.True(machine.Start(new("continuous", "task", "Farm", destination, 120), out _));
+            int tick = 1;
+            while (machine.CurrentState == ExecutionState.Preparing && tick < 30)
+                machine.Update(null, tick++);
+            Assert.Equal(ExecutionState.Navigating, machine.CurrentState);
+            int halts = actor.HaltCount;
+            actor.PixelPosition = new Vector2(11 * 64, 10 * 64);
+            machine.Update(null, tick++);
+            Assert.Equal(halts, actor.HaltCount);
+            Assert.True(actor.PixelPosition.X > 11 * 64);
+
+            for (; machine.IsExecuting && tick < 100; tick++) machine.Update(null, tick);
+            Assert.True(machine.CurrentState == ExecutionState.Succeeded,
+                $"State={machine.CurrentState}, pose={actor.PixelPosition}, result={machine.FinalResult?.ErrorMessage}");
+            Assert.Equal(destination, actor.Tile);
+            Assert.True(actor.HaltCount > halts);
+        }
+        finally
+        {
+            playerField.SetValue(null, originalPlayer);
+        }
+    }
+
+    [Fact]
+    public void PlayerDiagonalIntentRetainsOneAxisAtAlignmentAndReleasesBothOnHalt()
+    {
+        var farmer = (HeadlessWalkingFarmer)RuntimeHelpers.GetUninitializedObject(typeof(HeadlessWalkingFarmer));
+        AccessTools.Field(typeof(StardewValley.Farmer), nameof(StardewValley.Farmer.movementDirections))
+            .SetValue(farmer, new List<int>());
+        var actor = (PlayerActor)RuntimeHelpers.GetUninitializedObject(typeof(PlayerActor));
+        AccessTools.Field(typeof(PlayerActor), "_player").SetValue(actor, farmer);
+        AccessTools.Field(typeof(PlayerActor), "_lock").SetValue(actor, new object());
+
+        actor.MoveDiagonally(64, -64);
+        Assert.Contains((int)FacingDirection.Up, farmer.movementDirections);
+        Assert.Contains((int)FacingDirection.Right, farmer.movementDirections);
+        actor.MoveDiagonally(32, -2);
+        Assert.Equal((int)FacingDirection.Right, Assert.Single(farmer.movementDirections));
+        Assert.Equal(0, farmer.HaltCount);
+
+        actor.MoveDiagonally(-64, 64);
+        Assert.Contains((int)FacingDirection.Left, farmer.movementDirections);
+        Assert.Contains((int)FacingDirection.Down, farmer.movementDirections);
+        actor.Halt();
+        Assert.Empty(farmer.movementDirections);
+        Assert.Equal(0, actor.HeldDirections);
+        Assert.Equal(1, farmer.HaltCount);
+    }
+
+    [Fact]
+    public void ObstructionInsideStraightRunStopsMovementBeforeItAndReplans()
+    {
+        var actor = new StubFarmerActor();
+        actor.SetLocation("Farm", new(0, 1));
+        var observer = new SimulatedWorldObserver();
+        for (int x = 0; x <= 6; x++) observer.SetPassable("Farm", new(x, 1), true);
+        var navigator = new SameMapNavigator(observer);
+        var target = new TileCoordinate(6, 1);
+        Assert.Equal(target, navigator.FindPath("Farm", actor.Tile, target).Steps[0].RunEnd);
+        var machine = new NavigationStateMachine(actor, observer, navigator, new WorldMapGraph());
+        Assert.True(machine.Start(new("run-blocked", "task", "Farm", target, 120), out _));
+        int tick = 1;
+        while (machine.CurrentState == ExecutionState.Preparing && tick < 30)
+            machine.Update(null, tick++);
+        Assert.Equal(ExecutionState.Navigating, machine.CurrentState);
+
+        observer.PlayerTile = new(3, 1);
+        while (machine.CurrentState == ExecutionState.Navigating && tick < 100)
+            machine.Update(null, tick++);
+        Assert.Equal(ExecutionState.Preparing, machine.CurrentState);
+        Assert.Equal(new TileCoordinate(2, 1), actor.Tile);
+
+        observer.PlayerTile = null;
+        for (; machine.IsExecuting && tick < 250; tick++) machine.Update(null, tick);
+        Assert.Equal(ExecutionState.Succeeded, machine.CurrentState);
+        Assert.Equal(target, actor.Tile);
+    }
+
     [Fact]
     public void AlreadyAtDestinationVerifiesWithoutSearchingOrMoving()
     {
@@ -253,6 +351,19 @@ public class NavigationStateMachineTests
         Assert.Equal(hops, machine.FinalResult!.HopRecords.Count - 1);
     }
 
+    private sealed class HeadlessWalkingFarmer : StardewValley.Farmer
+    {
+        public StubFarmerActor Actor { private get; set; } = null!;
+        public int HaltCount { get; private set; }
+        public override Rectangle GetBoundingBox() => new(
+            (int)Actor.PixelPosition.X + 12, (int)Actor.PixelPosition.Y + 20, 40, 24);
+        public override void Halt()
+        {
+            HaltCount++;
+            movementDirections.Clear();
+        }
+    }
+
     private sealed class StubFarmerActor : IFarmerActor
     {
         public string CompanionId => "companion-test";
@@ -262,25 +373,42 @@ public class NavigationStateMachineTests
         public int MaxWater => 40;
         public string LocationName { get; set; } = "Farm";
         public Microsoft.Xna.Framework.Vector2 PixelPosition { get; set; } = new(10 * 64, 10 * 64);
-        public TileCoordinate Tile => new((int)PixelPosition.X / 64, (int)PixelPosition.Y / 64);
+        public TileCoordinate Tile
+        {
+            get
+            {
+                if (GameFarmer is { } player)
+                {
+                    var center = player.GetBoundingBox().Center;
+                    return new(center.X / 64, center.Y / 64);
+                }
+                return new((int)PixelPosition.X / 64, (int)PixelPosition.Y / 64);
+            }
+        }
         public FacingDirection Facing { get; set; } = FacingDirection.Down;
         public bool IsExhausted => false;
         public bool IsWateringCanEmpty => false;
         public string? ActiveTaskId { get; private set; }
         public void SetActiveTask(string? taskId) => ActiveTaskId = taskId;
         public bool BlockMovement { get; set; }
+        public int HaltCount { get; private set; }
         public void MovePixels(float dx, float dy)
         {
+            if (GameFarmer is not null)
+            {
+                dx = Math.Clamp(dx, -4, 4);
+                dy = Math.Clamp(dy, -4, 4);
+            }
             if (!BlockMovement) PixelPosition += new Microsoft.Xna.Framework.Vector2(dx, dy);
         }
         public void Face(FacingDirection dir) => Facing = dir;
-        public void Halt() { }
+        public void Halt() => HaltCount++;
         public void SetLocation(string locationName, TileCoordinate tile)
         {
             LocationName = locationName;
             PixelPosition = new Microsoft.Xna.Framework.Vector2(tile.X * 64, tile.Y * 64);
         }
-        public StardewValley.Farmer? GameFarmer => null;
+        public StardewValley.Farmer? GameFarmer { get; set; }
         public StardewValley.Tools.WateringCan? WateringCan => null;
         public StardewValley.Tools.Hoe? Hoe => null;
         public T? FindTool<T>() where T : StardewValley.Tool => null;

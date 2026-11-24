@@ -18,8 +18,7 @@ public static class NativePlayerIntentHook {
         _installed=true;
     }
     private static bool Owns(Character character) => _actor?.BindingValid == true && ReferenceEquals(character,_actor.GameFarmer) && _authority?.AgentOwns == true;
-    private static void Moving(Farmer __instance, ref byte __0) {
-        if (Owns(__instance)) __0=_actor!.HeldDirection is int direction ? (byte)(1<<direction) : (byte)64;
-    }
-    private static bool Halt(Character __instance) => !Owns(__instance) || _actor!.HeldDirection == null;
+    private static bool Moving(Farmer __instance, byte __0) =>
+        !Owns(__instance) || __0 is 16 or 48 || ((__0 & 64) != 0 && _actor!.HeldDirections == 0);
+    private static bool Halt(Character __instance) => !Owns(__instance) || _actor!.HeldDirections == 0;
 }

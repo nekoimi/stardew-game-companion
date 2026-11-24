@@ -339,7 +339,7 @@ public sealed class FarmerMechanicsActor : IFarmerActor
             _movedThisTick |= dx != 0 || dy != 0;
 
             // Determine facing direction from movement delta
-            if (Math.Abs(dx) >= Math.Abs(dy))
+            if (Math.Abs(dx) + 0.001f >= Math.Abs(dy))
             {
                 if (dx > 0) Facing = FacingDirection.Right;
                 else if (dx < 0) Facing = FacingDirection.Left;

@@ -15,6 +15,7 @@ public sealed class SameMapNavigator
 {
     private readonly IWorldObserver _observer;
     private const int MaxSearchDepth = 2500;
+    private const int ShortcutLookahead = 8;
 
     public SameMapNavigator(IWorldObserver observer)
     {
@@ -71,16 +72,15 @@ public sealed class SameMapNavigator
             search.Result = PathResult.Failed($"Target tile {target} has no passable adjacent standing positions.");
             yield break;
         }
-        IReadOnlyList<PathStep>? best = null;
+        PathResult? best = null;
         foreach (var candidate in candidates)
         {
             var path = BeginPath(location, pose.Tile, candidate.Tile, candidate.Facing, avoid);
             yield return path;
-            if (path.Result.Success && (best is null || path.Result.Steps.Count < best.Count)) best = path.Result.Steps;
+            if (path.Result.Success && (best is null || path.Result.WalkingCost < best.WalkingCost))
+                best = path.Result;
         }
-        search.Result = best is null
-            ? PathResult.Failed($"No passable path found from {pose.Tile} to target adjacent positions for {target}.")
-            : PathResult.Completed(best);
+        search.Result = best ?? PathResult.Failed($"No passable path found from {pose.Tile} to target adjacent positions for {target}.");
     }
 
     public PathResult FindPath(string locationName, TileCoordinate startTile, TileCoordinate destinationTile,
@@ -111,8 +111,34 @@ public sealed class SameMapNavigator
         var costs = new Dictionary<TileCoordinate, int> { [start] = 0 };
         // Only memoize within this search. Physical walking still checks the live world.
         var passable = new Dictionary<TileCoordinate, bool> { [goal] = true };
-        int Distance(TileCoordinate tile) => Math.Abs(tile.X - goal.X) + Math.Abs(tile.Y - goal.Y);
-        queue.Enqueue((start, 0), (Distance(start), 0));
+        var triggers = new Dictionary<TileCoordinate, bool>();
+        Func<TileCoordinate, bool> isTrigger = tile =>
+        {
+            if (!triggers.TryGetValue(tile, out bool trigger))
+                triggers[tile] = trigger = _observer.IsWarpOrDoorTile(location, tile);
+            return trigger;
+        };
+        bool IsOpen(TileCoordinate tile)
+        {
+            if (!passable.TryGetValue(tile, out bool open))
+                passable[tile] = open = IsTileNavigable(location, tile, avoid) && !isTrigger(tile);
+            return open;
+        }
+        bool CanStep(TileCoordinate from, TileCoordinate to)
+        {
+            if (!IsOpen(to)) return false;
+            bool diagonal = from.X != to.X && from.Y != to.Y;
+            if (diagonal)
+            {
+                var (horizontal, vertical) = WalkingPath.DiagonalSides(from, to);
+                if (isTrigger(from) || isTrigger(to) || !IsOpen(horizontal) || !IsOpen(vertical)
+                    || !_observer.CanWalkBetween(location, from, horizontal)
+                    || !_observer.CanWalkBetween(location, from, vertical))
+                    return false;
+            }
+            return _observer.CanWalkBetween(location, from, to);
+        }
+        queue.Enqueue((start, 0), (WalkingPath.Distance(start, goal), 0));
         int explored = 0;
         bool found = false;
         while (queue.Count > 0 && explored++ < MaxSearchDepth * 10)
@@ -120,34 +146,103 @@ public sealed class SameMapNavigator
             var (current, cost) = queue.Dequeue();
             if (costs[current] != cost) { yield return null; continue; }
             if (current == goal) { found = true; break; }
-            foreach (var neighbor in current.CardinalNeighbors())
+            foreach (var neighbor in WalkingNeighbors(current))
             {
-                int nextCost = cost + 1;
+                // A diagonal expansion may perform three native collision sweeps.
+                yield return null;
+                int nextCost = cost + WalkingPath.Distance(current, neighbor);
                 if (costs.TryGetValue(neighbor, out int previousCost) && previousCost <= nextCost) continue;
-                if (!passable.TryGetValue(neighbor, out bool open))
-                    passable[neighbor] = open = IsTileNavigable(location, neighbor, avoid);
-                if (open && _observer.CanWalkBetween(location, current, neighbor))
-                {
-                    costs[neighbor] = nextCost;
-                    parents[neighbor] = current;
-                    queue.Enqueue((neighbor, nextCost), (nextCost + Distance(neighbor), -nextCost));
-                }
+                if (!CanStep(current, neighbor)) continue;
+                costs[neighbor] = nextCost;
+                parents[neighbor] = current;
+                queue.Enqueue((neighbor, nextCost), (nextCost + WalkingPath.Distance(neighbor, goal), -nextCost));
             }
-            yield return null;
         }
         if (!found) yield break;
         var tiles = new List<TileCoordinate>();
         for (var tile = goal; tile != start; tile = parents[tile]) tiles.Add(tile);
+        tiles.Add(start);
         tiles.Reverse();
-        var steps = new List<PathStep>();
-        var previous = start;
-        foreach (var tile in tiles)
+        var waypoints = new List<TileCoordinate> { start };
+        for (int index = 0; index < tiles.Count - 1;)
         {
-            steps.Add(new PathStep(tile, FacingDirectionExtensions.DirectionToAdjacent(previous, tile) ?? FacingDirection.Down));
-            previous = tile;
+            int limit = Math.Min(index + ShortcutLookahead, tiles.Count - 1);
+            int turns = 0;
+            var direction = Direction(tiles[index], tiles[index + 1]);
+            int walkingCost = 0;
+            for (int next = index + 1; next <= limit; next++)
+            {
+                var nextDirection = Direction(tiles[next - 1], tiles[next]);
+                if (nextDirection != direction) turns++;
+                direction = nextDirection;
+                walkingCost += WalkingPath.Distance(tiles[next - 1], tiles[next]);
+                if (next < tiles.Count - 1 && isTrigger(tiles[next])) { limit = next; break; }
+            }
+            var from = tiles[index];
+            var to = tiles[limit];
+            List<TileCoordinate>? shortcut = null;
+            if (turns > 1 && WalkingPath.Distance(from, to) == walkingCost)
+            {
+                foreach (bool diagonalFirst in new[] { true, false })
+                {
+                    var candidate = new List<TileCoordinate>();
+                    var current = from;
+                    while (current != to)
+                    {
+                        yield return null;
+                        var delta = Direction(current, to);
+                        if (!diagonalFirst && Math.Abs(to.X - current.X) != Math.Abs(to.Y - current.Y))
+                            delta = Math.Abs(to.X - current.X) > Math.Abs(to.Y - current.Y)
+                                ? new(delta.X, 0) : new(0, delta.Y);
+                        var next = new TileCoordinate(current.X + delta.X, current.Y + delta.Y);
+                        if (!CanStep(current, next)) break;
+                        candidate.Add(next);
+                        current = next;
+                    }
+                    if (current != to) continue;
+                    shortcut = candidate;
+                    break;
+                }
+            }
+
+            if (shortcut is null) waypoints.Add(tiles[++index]);
+            else
+            {
+                waypoints.AddRange(shortcut);
+                index = limit;
+            }
+            yield return null;
         }
-        if (finalFacing.HasValue && steps.Count > 0) steps[^1] = new PathStep(steps[^1].Tile, finalFacing.Value);
-        search.Result = PathResult.Completed(steps);
+
+        var steps = new PathStep[waypoints.Count - 1];
+        TileCoordinate? runEnd = null;
+        for (int index = steps.Length - 1; index >= 0; index--)
+        {
+            var previous = waypoints[index];
+            var tile = waypoints[index + 1];
+            var facing = FacingDirectionExtensions.DirectionToAdjacent(previous, tile)
+                ?? (tile.Y < previous.Y ? FacingDirection.Up : FacingDirection.Down);
+            if (index + 1 < steps.Length && !isTrigger(tile) && !isTrigger(steps[index + 1].Tile)
+                && Direction(previous, tile) == Direction(tile, steps[index + 1].Tile))
+                runEnd ??= steps[index + 1].Tile;
+            else
+                runEnd = null;
+            steps[index] = new PathStep(tile, facing, previous, runEnd);
+        }
+        if (finalFacing.HasValue) steps[^1] = steps[^1] with { Facing = finalFacing.Value };
+        search.Result = PathResult.Completed(steps, costs[goal]);
+    }
+
+    private static TileCoordinate Direction(TileCoordinate from, TileCoordinate to) =>
+        new(Math.Sign(to.X - from.X), Math.Sign(to.Y - from.Y));
+
+    private static IEnumerable<TileCoordinate> WalkingNeighbors(TileCoordinate tile)
+    {
+        foreach (var cardinal in tile.CardinalNeighbors()) yield return cardinal;
+        yield return new(tile.X - 1, tile.Y - 1);
+        yield return new(tile.X + 1, tile.Y - 1);
+        yield return new(tile.X + 1, tile.Y + 1);
+        yield return new(tile.X - 1, tile.Y + 1);
     }
 
     private IEnumerable<(TileCoordinate Tile, FacingDirection Facing)> GetCandidateStandingPositions(
