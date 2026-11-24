@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { GameConnection } from "../adapters/game/game-connection.js";
@@ -19,7 +19,7 @@ const references = {
 const adjustments = {
   manage_goal: fields({ action: str(20), text: str(500), summary: str(240) }, ["action"]),
   set_goal_continuation: fields({ status: str(20), reason: str(240), next_time: { type: "integer", minimum: 600, maximum: 2600 },
-    next_day: { type: "boolean" } }, ["status", "reason"]),
+    next_day: { type: "boolean" }, when_farm_changes: { type: "boolean" } }, ["status", "reason"]),
   manage_todo: fields({ action: str(20), text: str(240), id: str(120) }, ["action"]),
   manage_milestones: fields({ title: str(120), summary: str(240), target_date: str(40) }),
 };
@@ -75,6 +75,19 @@ export function gameDate(snapshot: JsonObject | undefined): string {
   const world = object(snapshot?.world);
   return typeof world.year === "number" && typeof world.season === "string" && typeof world.dayOfMonth === "number"
     ? `${world.year}:${world.season}:${world.dayOfMonth}` : "";
+}
+
+/** Excludes revision, clock, pose and progress text: none implies new farm work. */
+export function farmWorkSignature(snapshot: JsonObject | undefined): string {
+  const farm = object(snapshot?.farmWork ?? object(snapshot?.world).farmWork);
+  if (farm.observationStatus !== "observed" || typeof farm.locationId !== "string"
+      || !Array.isArray(farm.cropUnwateredTiles) || !Array.isArray(farm.matureCrops)) return "";
+  return createHash("sha256").update(JSON.stringify({
+    locationId: farm.locationId, cropUnwateredCount: farm.cropUnwateredCount ?? null,
+    matureCropCount: farm.matureCropCount ?? null, totalCropCount: farm.totalCropCount ?? null,
+    dry: farm.cropUnwateredTiles.map(tileKey).sort(), mature: farm.matureCrops.map(tileKey).sort(),
+    dryTruncated: farm.cropUnwateredTruncated ?? null, matureTruncated: farm.matureCropsTruncated ?? null,
+  })).digest("hex");
 }
 
 function collectible(value: JsonValue): boolean {
@@ -346,13 +359,16 @@ export class CompanionTools {
               continuation: goal?.continuation ?? "continue" });
         } else if (operation === "set_goal_continuation") {
           if (params.status !== "continue" && params.status !== "wait") throw new Error("续作状态无效。");
-          if (params.status === "wait" && params.next_time === undefined && params.next_day !== true) {
-            throw new Error("等待需要真实的游戏时间或下一天条件。");
+          if (params.status === "wait" && params.next_time === undefined && params.next_day !== true && params.when_farm_changes !== true) {
+            throw new Error("等待需要真实的游戏时间、下一天或农田变化条件。");
           }
+          const farmSignature = params.when_farm_changes === true ? farmWorkSignature(await this.game.observe()) : "";
+          if (params.when_farm_changes === true && !farmSignature) throw new Error("没有有效的农田观察，暂不能等待农田变化。");
           result = store.updateItem(save, "goals", context.goalId,
             { text: goal?.text ?? params.reason, requestId: context.requestId, status: "active",
               continuation: params.status, summary: params.reason, wakeTime: params.next_time ?? null,
-              waitNextDay: params.next_day === true, updatedDay: gameDate(this.game.snapshot) });
+              waitNextDay: params.next_day === true, waitFarmSignature: farmSignature || null,
+              updatedDay: gameDate(this.game.snapshot) });
         } else if (operation === "manage_milestones") {
           result = store.updateItem(save, "milestones", randomUUID(), {
             title: params.title, summary: params.summary, targetDate: params.target_date, status: "suggested", prepItems: [],

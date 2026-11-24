@@ -522,6 +522,93 @@ test("harvest stage retains confirmed tiles when a later observation fails", asy
   assert.equal(dispatched, 1);
 });
 
+test("a batch summary persists with the goal and farm-change waits ignore clock and pose updates", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
+    farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [],
+      matureCrops: [], cropUnwateredTruncated: false, matureCropsTruncated: false },
+    world: { year: 1, season: "spring", dayOfMonth: 1, timeOfDay: 900 } };
+  let calls = 0;
+  const arrange = change => ({ id: "arrange-" + calls, name: "manage_arrangements", arguments: { change } });
+  const runner = new TurnRunner(game, { async *generate() {
+    calls++;
+    if (calls === 1) yield done([
+      arrange({ manage_goal: { action: "add", text: "持续照料农田" } }),
+      { id: "care", name: "submit_work", arguments: { action: { tend_crops: { location_id: "Farm" } } } },
+      arrange({ set_goal_continuation: { status: "wait", reason: "当天暂无缺水作物，次日或农田变化后复查",
+        next_day: true, when_farm_changes: true } }),
+    ]);
+    else if (calls === 2) yield done();
+    else if (calls === 3) yield done([arrange({ manage_goal: { action: "complete", summary: "已经根据新的农田观察重新安排" } })]);
+    else yield done();
+  } }, () => {}, "", store);
+  try {
+    game.emit("changed");
+    await runner.submit(binding, "farm-care", "每天照料农田", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    const [goal] = store.items(binding.saveId, "goals");
+    assert.equal(goal.lastStage.stopReason, "no-observed-targets");
+    assert.equal(goal.lastStage.requestId, "farm-care");
+    assert.equal(game.executed.length, 0);
+    game.snapshot = { ...game.snapshot, capturedRevision: 9, companion: { locationId: "Farm", tileX: 7 },
+      world: { ...game.snapshot.world, timeOfDay: 1400 } };
+    game.emit("changed");
+    await setTimeout(850);
+    assert.equal(calls, 2);
+    game.snapshot.farmWork = { ...game.snapshot.farmWork, cropUnwateredTiles: [{ x: 3, y: 4 }] };
+    game.emit("changed");
+    await waitFor(() => store.items(binding.saveId, "goals")[0].status === "completed", 300);
+    assert.equal(calls, 4);
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("several harvest batches need one model dispatch and one compact summary without a receipt wake loop", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  const crops = Array.from({ length: 65 }, (_, x) => ({ x, y: 3 }));
+  game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm" },
+    farmWork: { locationId: "Farm", observationStatus: "observed", matureCrops: crops, matureCropsTruncated: false },
+    farming: { location: "Farm", groundItems: [], groundItemsTruncated: false },
+    inventory: { capacity: 12, freeSlots: 3, slots: [] },
+    world: { year: 1, season: "spring", dayOfMonth: 1, timeOfDay: 900 } };
+  const batches = [];
+  game.nativeResult = (commandId, skill, parameters) => {
+    assert.equal(skill, "harvest-zone");
+    batches.push(parameters.tiles);
+    const count = crops.length - game.snapshot.farmWork.matureCrops.length + parameters.tiles.length;
+    game.snapshot = { ...game.snapshot, capturedRevision: game.snapshot.capturedRevision + 1,
+      farmWork: { ...game.snapshot.farmWork, matureCrops: game.snapshot.farmWork.matureCrops.slice(parameters.tiles.length) },
+      inventory: { ...game.snapshot.inventory, slots: [{ itemId: "(O)24", stack: count }] } };
+    game.emit("changed");
+    return { commandId, terminalState: "succeeded", finalWorldRevision: game.snapshot.capturedRevision,
+      effects: parameters.tiles.map(tile => ({ tile, state: "harvested" })) };
+  };
+  let calls = 0, summary;
+  const runner = new TurnRunner(game, { async *generate({ messages }) {
+    calls++;
+    if (calls === 1) yield done([
+      { id: "goal", name: "manage_arrangements", arguments: { change: { manage_goal: { action: "add", text: "收获农田" } } } },
+      { id: "harvest", name: "submit_work", arguments: { action: { harvest_crops: { location_id: "Farm" } } } },
+    ]);
+    else { summary = messages.at(-1).result; yield done(); }
+  } }, () => {}, "", store);
+  try {
+    game.emit("changed");
+    await runner.submit(binding, "large-harvest", "收一下成熟作物", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    await setTimeout(850);
+    assert.equal(calls, 2);
+    assert.deepEqual(batches.map(batch => batch.length), [24, 24, 17]);
+    assert.equal(summary.completedCount, 65);
+    assert.equal(summary.remainingCount, 0);
+    assert.deepEqual(summary.inventoryGains, [{ itemId: "(O)24", count: 65 }]);
+    assert.ok(JSON.stringify(summary).length < 1500);
+    assert.equal(store.recentReceipts(binding.saveId).length, 3);
+    assert.equal(store.items(binding.saveId, "goals")[0].lastStage.completedCount, 65);
+  } finally { await runner.stop(); store.close(); }
+});
+
 async function waitFor(check, attempts = 100) {
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (check()) return;

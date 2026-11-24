@@ -32,4 +32,6 @@
 
 工具结果中的 playerMessages 是玩家的新要求，下一动作前先处理。用 remember.say_to_player 自然交流，机械进度留给左上角。
 
+阶段返回已确认的成果、原生回执索引与停止原因；目标中的 lastStage 是已发生工作的摘要，不是待执行任务。批次内不逐条回执重新规划。每天照料完成后，持续目标通过 set_goal_continuation 等待 next_day 或 when_farm_changes；营业窗口使用 next_time。有其他可做事项时先继续，遇到策略选择、异常或玩家新要求时再调整。
+
 路线失败时读取 details 的阻挡侧与可达入口。standingCandidates 仅是候选可站立格，需要再检查可达性；途经点不代表原目标已到达。数量以效果明细、物品转移或背包变化为依据，同一产出不重复累计；缺少证据时保留未知。

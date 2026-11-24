@@ -5,7 +5,8 @@ import type { GameConnection } from "../adapters/game/game-connection.js";
 import { isTerminalState } from "../adapters/game/action-receipt.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
 import type { CompanionStore } from "../adapters/storage/companion-store.js";
-import { CompanionTools, decisionObservation, gameDate, gameTools } from "../tools/companion-tools.js";
+import { CompanionTools, decisionObservation, farmWorkSignature, gameDate, gameTools } from "../tools/companion-tools.js";
+import { workflows } from "../tools/native-tools.js";
 import { modelResponseTimeout, object } from "./model.js";
 import type { JsonObject, JsonValue, ModelContext, ModelEvent, ModelMessage, ModelSelection } from "./model.js";
 import { PluginCommandError, pluginAction } from "./plugin-command.js";
@@ -33,6 +34,7 @@ interface Turn {
   requests: string[];
   settled: Promise<void>;
   plugin?: PluginCommand;
+  stagePerformed?: boolean;
 }
 
 export class TurnRunner {
@@ -292,8 +294,10 @@ export class TurnRunner {
     if (goal.continuation !== "wait") return false;
     const date = gameDate(this.game.snapshot);
     const time = object(this.game.snapshot?.world).timeOfDay;
-    return goal.waitNextDay === true ? !!date && date !== goal.updatedDay
-      : typeof time === "number" && typeof goal.wakeTime === "number" && time >= goal.wakeTime;
+    const farm = typeof goal.waitFarmSignature === "string" ? farmWorkSignature(this.game.snapshot) : "";
+    return (goal.waitNextDay === true && !!date && date !== goal.updatedDay)
+      || (typeof time === "number" && typeof goal.wakeTime === "number" && time >= goal.wakeTime)
+      || (!!farm && farm !== goal.waitFarmSignature);
   }
 
   private pluginRestRequired(binding: GameBinding): boolean {
@@ -433,11 +437,7 @@ export class TurnRunner {
     const profile = this.store.profile(save);
     if (!goal && (profile.initiativeMode !== "free" || profile.idlePreference === "wait")) return;
     if (goal && !this.runnableGoal(goal)) return;
-    const lastPerformed = this.store.recentReceipts(save).findLast(row => row.terminalState === "succeeded"
-      || row.terminalState === "partially-succeeded");
-    const revision = goal ? JSON.stringify([goal.id, goal.continuation, goal.wakeTime, goal.updatedDay,
-      lastPerformed?.commandId]) : date;
-    const signature = `${binding.gameSessionId}:${date}:${revision}`;
+    const signature = this.wakeSignature(binding, goal);
     if (this.wakeSignatures.get(save) === signature) return;
     this.wakeSignatures.set(save, signature);
     const originalRequest = typeof goal?.requestId === "string" ? goal.requestId : "";
@@ -445,6 +445,15 @@ export class TurnRunner {
     this.startTurn(binding, requestId, goal?.id ?? randomUUID(),
       goal ? `继续当前目标：${goal.text}\n已记录的进度或下一步：${goal.summary || "待核对"}\n按当天实际观察与回执处理剩余工作。`
         : "按当前存档的主动帮忙偏好，观察当天需要照料的农活，然后处理适合的事项。", true, originalRequest || requestId);
+  }
+
+  private wakeSignature(binding: GameBinding, goal: JsonObject | undefined): string {
+    const date = gameDate(this.game.snapshot);
+    const lastPerformed = this.store?.recentReceipts(binding.saveId).findLast(row =>
+      row.terminalState === "succeeded" || row.terminalState === "partially-succeeded");
+    const revision = goal ? JSON.stringify([goal.id, goal.continuation, goal.wakeTime, goal.updatedDay,
+      lastPerformed?.commandId, goal.waitFarmSignature ? farmWorkSignature(this.game.snapshot) : null]) : date;
+    return `${binding.gameSessionId}:${date}:${revision}`;
   }
 
   private bedtimeNeedsSleep(binding: GameBinding): { attempt: string; locationId: string } | undefined {
@@ -774,6 +783,15 @@ export class TurnRunner {
             if (call.name === "request_player_decision") waiting = true;
           }
           catch (error) { failed = true; result = { error: error instanceof Error ? error.message : "工具执行失败。" }; }
+          const operation = call.name === "submit_work" ? Object.keys(object(call.arguments.action))[0] : "";
+          if (!failed && Object.hasOwn(workflows, operation)) {
+            turn.stagePerformed = true;
+            const goal = !plugin && this.store?.items(save, "goals").find(item => item.id === turn.goalId && item.status === "active");
+            if (goal) this.store?.updateItem(save, "goals", turn.goalId, { lastStage: {
+              operation, ...object(result), turnId: turn.id, requestId: turn.originalRequestId,
+              gameDate: gameDate(this.game.snapshot),
+            } });
+          }
           this.trace?.("tool", { turnId: turn.id, requestId: turn.requestId, name: call.name, input: call.arguments, result, error: failed });
             this.diagnostic?.("tool_result", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
               tool: gameTools.some(tool => tool.name === call.name) ? call.name : "unknown",
@@ -822,6 +840,11 @@ export class TurnRunner {
           } catch { /* The desktop receives the same result. */ }
           this.publish("life.chat.reply", reply);
         }
+      }
+      if (turn.stagePerformed && !failure && !plugin && current?.saveId === save
+          && current.gameSessionId === turn.binding.gameSessionId) {
+        const goal = this.store?.items(save, "goals").findLast(item => item.status === "active");
+        this.wakeSignatures.set(save, this.wakeSignature(turn.binding, goal));
       }
       if (this.active === turn) this.active = undefined;
       this.changed();
