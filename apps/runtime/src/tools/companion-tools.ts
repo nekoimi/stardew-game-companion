@@ -93,6 +93,32 @@ export function modelObservation(snapshot: JsonObject | undefined): JsonObject {
   } };
 }
 
+function pick(value: JsonValue | undefined, keys: readonly string[]): JsonObject {
+  const source = object(value);
+  return Object.fromEntries(keys.filter(key => Object.hasOwn(source, key)).map(key => [key, source[key]]));
+}
+
+export function decisionObservation(snapshot: JsonObject | undefined): JsonObject {
+  if (!snapshot) return {};
+  const companion = pick(snapshot.companion, ["locationId", "tileX", "tileY", "stamina", "maxStamina", "waterCanLevel",
+    "maxWaterCanLevel", "hasWateringCan", "activity", "availableMoney", "moneyStatus", "restState", "bedtime", "bedtimeSchedule"]);
+  const world = pick(snapshot.world, ["currentLocation", "timeOfDay", "season", "dayOfMonth", "year", "isRaining", "weatherIcon",
+    "playerStamina", "playerMaxStamina", "native"]);
+  const farm = object(snapshot.farmWork ?? object(snapshot.world).farmWork);
+  const farmWork = pick(farm, ["locationId", "observationStatus", "scope",
+    "tilledUnwateredCount", "matureCropCount", "cropUnwateredCount", "deadCropCount", "cultivatedPlotCount", "totalCropCount",
+    "isTruncated", "matureCropsTruncated", "cropUnwateredTruncated", "cultivatedPlotsTruncated"]);
+  for (const [key, truncated] of [["matureCrops", "matureCropsTruncated"], ["cropUnwateredTiles", "cropUnwateredTruncated"],
+    ["tilledUnwateredTiles", "isTruncated"], ["cultivatedPlots", "cultivatedPlotsTruncated"]]) {
+    const targets = farm[key];
+    if (!Array.isArray(targets)) continue;
+    farmWork[key] = targets.slice(0, 24);
+    if (targets.length > 24) farmWork[truncated] = true;
+  }
+  return { capturedRevision: snapshot.capturedRevision ?? null, actorMode: snapshot.actorMode ?? null,
+    controlOwner: snapshot.controlOwner ?? null, companion, world, ...(Object.keys(farmWork).length ? { farmWork } : {}) };
+}
+
 function choose(args: JsonValue | undefined): [string, JsonObject] {
   const [entry] = Object.entries(object(args));
   return [entry[0], object(entry[1])];

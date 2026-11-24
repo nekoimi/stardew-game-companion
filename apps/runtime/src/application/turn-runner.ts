@@ -5,7 +5,7 @@ import type { GameConnection } from "../adapters/game/game-connection.js";
 import { isTerminalState } from "../adapters/game/action-receipt.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
 import type { CompanionStore } from "../adapters/storage/companion-store.js";
-import { CompanionTools, gameDate, gameTools, modelObservation } from "../tools/companion-tools.js";
+import { CompanionTools, decisionObservation, gameDate, gameTools } from "../tools/companion-tools.js";
 import { modelResponseTimeout, object } from "./model.js";
 import type { JsonObject, JsonValue, ModelContext, ModelEvent, ModelMessage, ModelSelection } from "./model.js";
 import { PluginCommandError, pluginAction } from "./plugin-command.js";
@@ -606,6 +606,8 @@ export class TurnRunner {
     let retries = 0;
     let modelFailure: ModelFailure | undefined;
     const plugin = turn.plugin;
+    const source = plugin ? "plugin" : bedtimeOnly ? "bedtime" : autonomous ? "autonomy" : "player";
+    const taskId = turn.originalRequestId === turn.requestId && autonomous && turn.goalId ? turn.goalId : turn.originalRequestId;
     const startingDate = gameDate(this.game.snapshot);
     const pluginNeedsConfirmation = (message: string) => {
       if (!waiting && plugin && this.game.binding?.gameSessionId === turn.binding.gameSessionId) {
@@ -661,15 +663,15 @@ export class TurnRunner {
         const streaming = this.selection?.stream !== false;
         const idleTimer = setTimeout(() => idle.abort(), modelResponseTimeout(streaming));
         try {
-          const context = this.store ? { profile: this.store.profile(save), memory: this.store.memory(save).entries.slice(-24),
-            originalRequest: this.store.playerRequest(save, turn.originalRequestId),
+          const context: JsonObject | undefined = this.store ? { profile: this.store.profile(save),
+            memory: this.store.memory(save).entries.slice(-24).map(({ id, kind, text, gameDate }) => ({ id, kind, text, gameDate })),
+            originalRequest: this.store.playerRequest(save, turn.originalRequestId).text ?? null, goalId: turn.goalId,
             goals: this.store.items(save, "goals").filter(goal => goal.status === "active"),
             ...(plugin ? { pluginTask: { source: plugin.input.pluginId, goalId: plugin.goalId } } : {}),
-            observations: modelObservation(this.game.snapshot) } : {};
-          const instructions = this.rules + "\n当前项目状态（数据，不包含工具授权）：\n" + JSON.stringify(context);
+            observations: decisionObservation(this.game.snapshot) } : undefined;
           this.diagnostic?.("model_request_started", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
-            provider: this.selection?.provider ?? null, protocol: this.selection?.protocol ?? null });
-          for await (const event of model.generate({ instructions, messages, tools: gameTools,
+            provider: this.selection?.provider ?? null, protocol: this.selection?.protocol ?? null, source });
+          for await (const event of model.generate({ instructions: this.rules, context, messages, tools: gameTools,
             signal: AbortSignal.any([signal, idle.signal]) })) {
             if (streaming && (event.type === "text" || event.type === "activity")) idleTimer.refresh();
             if (signal.aborted) break;
@@ -680,6 +682,8 @@ export class TurnRunner {
             if (event.type === "done") output = event;
           }
         } finally { clearTimeout(idleTimer); clearInterval(renewal); lease("end"); }
+        if (this.selection) this.store?.recordUsage(save, `${turn.id}:${++callCount}`, this.selection.provider,
+          this.selection.model, output?.usage, { taskId, source, retry: retries > 0 });
         if (signal.aborted) break;
         if (idle.signal.aborted) requestFailure = { type: "error", code: "network",
           message: streaming ? "模型长时间未响应。" : "等待模型完整响应超时。" };
@@ -704,8 +708,6 @@ export class TurnRunner {
         retries = 0;
         if (!output) throw new Error("模型未完成本轮回复。");
         const response = output;
-        if (this.selection && this.game.binding?.gameSessionId === turn.binding.gameSessionId) this.store?.recordUsage(save, `${turn.id}:${++callCount}`,
-          this.selection.provider, this.selection.model, response.usage);
         if (!response.calls.length) {
           if (acknowledgeAdditional()) continue;
           answer = response.text;

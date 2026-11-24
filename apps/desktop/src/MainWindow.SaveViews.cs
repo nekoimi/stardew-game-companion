@@ -121,6 +121,8 @@ public partial class MainWindow
             {
                 entries.Add(new TimelineEntry("今日 · 当前存档", Text(summary, "usageSaveTodayText")));
                 entries.Add(new TimelineEntry("累计 · 当前存档", Text(summary, "usageSaveTotalText")));
+                foreach (var task in Rows(summary, "recentTasks"))
+                    entries.Add(new TimelineEntry($"{Text(task, "title")} · {Text(task, "model")}", Text(task, "text")));
             }
             UsageEntries.ItemsSource = entries;
             UsageStatus.Text = game is null ? "进入存档后可查看该存档的今日和累计用量。" : "";

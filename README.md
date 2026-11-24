@@ -85,6 +85,8 @@
 
 支持流式与非流式响应，可按服务能力配置。「测试连接」会验证工具调用和回执。[模型配置说明](https://nekoimi.github.io/stardew-game-companion/guide/models)
 
+模型请求附带精简的游戏概况，背包、箱子等详情按需查询。「用量」可查看当前存档最近任务的请求次数、重试和已报告的 Token。
+
 游戏存档由游戏保存。伙伴资料、聊天和用量按存档保存在绿色包的 `data/companion.sqlite`，API Key 交由 Windows 凭据管理器保存。运行时会向你选择的模型服务发送指令、相关游戏状态和工具结果。
 
 在「设置 → 关于与更新」可检查版本、切换镜像目录，或选择本地 ZIP。更新在原目录安装并保留数据，换目录时可导入旧绿色包或连接已有数据目录。[更新与回退](https://nekoimi.github.io/stardew-game-companion/reference/desktop-guide#更新与回退)

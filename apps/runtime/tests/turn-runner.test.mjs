@@ -124,6 +124,38 @@ test("messages received during an action apply to following work, not the in-fli
   } finally { await runner.stop(); store.close(); }
 });
 
+test("routine requests carry a compact observation while detailed queries return the original facts", async () => {
+  const store = new CompanionStore(":memory:");
+  const game = new FakeGame();
+  const soil = Array.from({ length: 30 }, (_, x) => ({ x, y: 5 }));
+  const farmWork = { locationId: "Farm", observationStatus: "observed", cropUnwateredCount: soil.length,
+    cropUnwateredTiles: soil, cropUnwateredTruncated: false };
+  const chests = { items: [{ tile: { x: 7, y: 8 }, slots: [{ itemId: "wood", stack: 15 }] }] };
+  game.snapshot = { companion: { locationId: "Farm", waterCanLevel: 6 }, world: { timeOfDay: 800, farmWork },
+    farmWork, chests, farming: { groundItems: [{ tile: { x: 2, y: 3 }, isDropped: true }] } };
+  const seen = [];
+  const runner = new TurnRunner(game, { async *generate({ instructions, context, messages }) {
+    seen.push({ instructions, context, last: messages.at(-1) });
+    yield seen.length === 1 ? done([{ id: "chest", name: "query_game", arguments: { query: { query_chests: {} } } }]) : done();
+  } }, () => undefined, "Game rules", store);
+  try {
+    await runner.submit(binding, "chests", "看看箱子木材", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(seen.length, 2);
+    const { context, instructions } = seen[0];
+    assert.equal(instructions, "Game rules");
+    assert.equal(context.originalRequest, "看看箱子木材");
+    assert.equal(context.observations.companion.waterCanLevel, 6);
+    assert.equal(context.observations.farmWork.cropUnwateredCount, 30);
+    assert.equal(context.observations.farmWork.cropUnwateredTruncated, true);
+    assert.equal(context.observations.farmWork.cropUnwateredTiles.length, 24);
+    assert.equal(context.observations.world.farmWork, undefined);
+    assert.equal(context.observations.chests, undefined);
+    assert.equal(context.observations.farming, undefined);
+    assert.deepEqual(seen[1].last.result, chests);
+  } finally { await runner.stop(); store.close(); }
+});
+
 function fixture(game, model) {
   const events = [];
   const runner = new TurnRunner(game, model, (type, payload) => events.push({ type, payload }), "Game rules");
@@ -511,8 +543,8 @@ test("a persisted goal resumes only after authority is handed back", async () =>
     change: { manage_goal: { action: "complete" } },
   } };
   const observed = [];
-  const runner = new TurnRunner(game, { async *generate({ instructions, messages }) {
-    observed.push({ instructions, message: messages.at(-1) });
+  const runner = new TurnRunner(game, { async *generate({ context, messages }) {
+    observed.push({ context, message: messages.at(-1) });
     yield messages.at(-1).role === "tool" ? done() : done([finish]);
   } }, () => undefined, "", store);
   try {
@@ -523,7 +555,7 @@ test("a persisted goal resumes only after authority is handed back", async () =>
     game.emit("changed");
     await waitFor(() => store.items(save, "goals")[0].status === "completed", 300);
     assert.match(observed[0].message.text, /继续当前目标：先浇水/);
-    assert.match(observed[0].instructions, /先打理一下农场/);
+    assert.equal(observed[0].context.originalRequest, "先打理一下农场");
   } finally { await runner.stop(); store.close(); }
 });
 
@@ -531,6 +563,7 @@ test("a rate-limited autonomous turn retries the model without repeating a settl
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const store = new CompanionStore(":memory:");
   const game = new FakeGame();
+  store.append(binding.saveId, "farm-request:player", "player", { text: "打理农场" });
   store.updateItem(binding.saveId, "goals", "farm-goal", { text: "打理农场", requestId: "farm-request",
     status: "active", continuation: "continue" });
   game.nativeResult = (commandId, skillId) => ({ commandId, skillId, terminalState: "succeeded" });
@@ -540,9 +573,10 @@ test("a rate-limited autonomous turn retries the model without repeating a settl
     requests.push(structuredClone(messages));
     if (requests.length === 1) yield done([action]);
     else if (requests.length === 2) yield { type: "error", code: "rate-limited", message: "频率受限。" };
-    else yield done();
+    else yield { ...done(), usage: { input: 42, output: 7, cacheRead: 3 } };
   } }, (type, payload) => events.push({ type, payload }), "", store);
   try {
+    runner.configure(runner.model, { provider: "custom", model: "farm-model" });
     game.emit("changed");
     t.mock.timers.tick(750);
     await new Promise(resolve => setImmediate(resolve));
@@ -562,6 +596,8 @@ test("a rate-limited autonomous turn retries the model without repeating a settl
     assert.equal(game.executed.length, 1);
     assert.equal(runner.status().modelIssue, undefined);
     assert.ok(events.some(event => event.type === "life.chat.reply" && event.payload.status === "completed"));
+    assert.deepEqual(store.usage(binding.saveId).recentTasks, [{ title: "打理农场", provider: "custom", model: "farm-model",
+      text: "3 次请求 · 输入 42 · 输出 7 · 缓存读取 3 · 1 次重试 · 2 次未报告用量" }]);
   } finally { await runner.stop(); store.close(); }
 });
 
@@ -657,7 +693,8 @@ test("the saved player bedtime triggers native sleep, then replans the same wait
     await waitFor(() => observations.length === 1, 450);
     assert.deepEqual(calls, ["sleep"]);
     assert.match(observations[0].messages.at(-1).text, /照料作物.*复查剩余待浇作物/s);
-    assert.match(observations[0].instructions, /"dayOfMonth":4.*"isRaining":true/);
+    assert.equal(observations[0].context.observations.world.dayOfMonth, 4);
+    assert.equal(observations[0].context.observations.world.isRaining, true);
     assert.equal(store.items(save, "goals")[0].id, "irrigation");
   } finally { await runner.stop(); store.close(); }
 });
@@ -701,10 +738,10 @@ test("switching models preserves companion identity, submitted conversation and 
     } }, { provider: "deepseek", model: "deepseek-flash" });
     await runner.submit(binding, "first", "安排今日农活", "send");
     await waitFor(() => events.some(e => e.type === "life.chat.reply" && e.payload.requestId === "first"));
-    runner.configure({ async *generate({ instructions, messages }) {
-      assert.match(instructions, /阿栗/);
-      assert.match(instructions, /保留幼树/);
-      assert.match(instructions, /安排今日农活/);
+    runner.configure({ async *generate({ context, messages }) {
+      assert.equal(context.profile.profile.companionName, "阿栗");
+      assert.equal(context.memory[0].text, "保留幼树");
+      assert.equal(context.originalRequest, "安排今日农活");
       assert.equal(messages[0].text, "安排今日农活");
       yield done([], "新模型继续。");
     } }, { provider: "openai", model: "gpt-5-mini" });

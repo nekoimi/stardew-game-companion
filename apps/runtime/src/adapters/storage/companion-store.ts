@@ -12,6 +12,20 @@ const defaultProfile: JsonObject = {
 };
 type Section = "profile" | "memory" | "initiative" | "goals" | "milestones" | "decisions" | "todos";
 type Item = JsonObject & { id: string };
+type UsageContext = { taskId: string; source: "player" | "autonomy" | "bedtime" | "plugin"; retry: boolean };
+const usageSources: Record<string, string> = { player: "玩家请求", autonomy: "自动经营", bedtime: "自动就寝", plugin: "插件指令" };
+const usageFields = `count(*) AS calls, sum(CASE WHEN json_extract(value, '$.input') IS NOT NULL
+  OR json_extract(value, '$.output') IS NOT NULL OR json_extract(value, '$.cacheRead') IS NOT NULL
+  OR json_extract(value, '$.cacheWrite') IS NOT NULL THEN 1 ELSE 0 END) AS recorded,
+  sum(json_extract(value, '$.input')) AS input, sum(json_extract(value, '$.output')) AS output,
+  sum(json_extract(value, '$.cacheRead')) AS cache, sum(json_extract(value, '$.retry')) AS retries`;
+
+function usageText(row: Record<string, unknown>): string {
+  const missing = Number(row.calls) - Number(row.recorded ?? 0);
+  return `${row.calls} 次请求 · 输入 ${row.input ?? "未记录"} · 输出 ${row.output ?? "未记录"} · 缓存读取 ${row.cache ?? "未记录"}`
+    + (Number(row.retries) > 0 ? ` · ${row.retries} 次重试` : "")
+    + (missing > 0 ? ` · ${missing} 次未报告用量` : "");
+}
 
 function decode<T>(row: Record<string, unknown> | undefined, fallback: T): T {
   return row ? JSON.parse(String(row.value)) as T : fallback;
@@ -364,25 +378,32 @@ export class CompanionStore {
       .all(save, limit).reverse().map(row => decode<JsonObject>(row, {}));
   }
 
-  recordUsage(save: string, requestId: string, provider: string, model: string, value?: ModelUsage): void {
+  recordUsage(save: string, requestId: string, provider: string, model: string, value?: ModelUsage, context?: UsageContext): void {
     const now = new Date();
     const day = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
     this.db.prepare("INSERT OR IGNORE INTO usage VALUES (?, ?, ?, ?, ?, ?)")
-      .run(save, requestId, provider, model, day, value ? JSON.stringify(value) : null);
+      .run(save, requestId, provider, model, day, value || context ? JSON.stringify({ ...value, ...context }) : null);
   }
 
   usage(save?: string): JsonObject {
     const now = new Date();
     const day = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
-    const summarize = (sql: string, ...params: string[]): string => {
-      const row = this.db.prepare(`SELECT count(*) AS calls, count(value) AS recorded,
-        sum(json_extract(value, '$.input')) AS input, sum(json_extract(value, '$.output')) AS output,
-        sum(json_extract(value, '$.cacheRead')) AS cache FROM usage ${sql}`).get(...params)!;
-      return `${row.calls} 次请求 · 输入 ${row.input ?? "未记录"} · 输出 ${row.output ?? "未记录"} · 缓存读取 ${row.cache ?? "未记录"}`
-        + (row.recorded !== row.calls ? ` · ${Number(row.calls) - Number(row.recorded)} 次未报告用量` : "");
-    };
+    const summarize = (sql: string, ...params: string[]): string =>
+      usageText(this.db.prepare(`SELECT ${usageFields} FROM usage ${sql}`).get(...params)!);
     return { usageTodayText: summarize("WHERE day = ?", day),
       ...(save ? { usageSaveTodayText: summarize("WHERE day = ? AND save_id = ?", day, save),
-        usageSaveTotalText: summarize("WHERE save_id = ?", save) } : {}) };
+        usageSaveTotalText: summarize("WHERE save_id = ?", save), recentTasks: this.taskUsage(save) } : {}) };
+  }
+
+  private taskUsage(save: string): JsonObject[] {
+    const goals = new Map(this.items(save, "goals").map(goal => [goal.id, goal.text]));
+    return this.db.prepare(`SELECT json_extract(value, '$.taskId') AS task, model, provider,
+      max(json_extract(value, '$.source')) AS source, ${usageFields}
+      FROM usage WHERE save_id = ? AND task IS NOT NULL GROUP BY task, model, provider
+      ORDER BY max(rowid) DESC LIMIT 10`).all(save).map(row => {
+      const task = String(row.task);
+      const title = this.playerRequest(save, task).text ?? goals.get(task) ?? usageSources[String(row.source)] ?? "模型调用";
+      return { title: String(title).replace(/\s+/g, " ").slice(0, 64), provider: String(row.provider), model: String(row.model), text: usageText(row) };
+    });
   }
 }

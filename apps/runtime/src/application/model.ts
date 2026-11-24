@@ -48,6 +48,7 @@ export type ModelEvent =
 export interface ModelContext {
   generate(request: {
     instructions: string;
+    context?: JsonObject;
     messages: readonly ModelMessage[];
     tools: readonly ToolDefinition[];
     signal: AbortSignal;
