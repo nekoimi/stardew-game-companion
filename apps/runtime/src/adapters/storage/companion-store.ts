@@ -223,6 +223,23 @@ export class CompanionStore {
       .get(save, `${requestId}:player`), {});
   }
 
+  goalInstructions(save: string, goal: JsonObject): JsonObject[] {
+    const ids = Array.isArray(goal.instructionRequestIds) ? goal.instructionRequestIds : [];
+    if (ids.length) return ids.slice(-8).flatMap(id => {
+      const row = this.playerRequest(save, String(id));
+      return typeof row.text === "string" ? [{ requestId: String(id), text: row.text, gameDate: row.gameDate ?? null }] : [];
+    });
+    // Existing goals may predate explicit instruction links. Recover player
+    // messages from this goal's lifetime, never infer authority from AI summaries.
+    if (typeof goal.requestId !== "string") return [];
+    return this.db.prepare(`SELECT id, value FROM conversations WHERE save_id = ? AND kind = 'player'
+      AND seq >= (SELECT seq FROM conversations WHERE save_id = ? AND id = ?)
+      ORDER BY seq DESC LIMIT 8`).all(save, save, goal.requestId + ":player").reverse().map(row => {
+        const value = decode<JsonObject>(row, {});
+        return { requestId: String(row.id).replace(/:player$/, ""), text: value.text ?? "", gameDate: value.gameDate ?? null };
+      });
+  }
+
   submission(binding: GameBinding, requestId: string): { signature: string; state: JsonObject } | undefined {
     const row = this.db.prepare("SELECT signature, value FROM submissions WHERE save_id = ? AND game_id = ? AND request_id = ?")
       .get(binding.saveId, binding.gameSessionId, requestId);

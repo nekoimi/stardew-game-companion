@@ -199,6 +199,7 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
                 "model_request_retry" => ("warn", "模型调用暂时失败，等待重试。"),
                 "tool_result" => ("info", "Agent 工具调用已返回。"),
                 "work_stage_completed" => ("info", "农场工作阶段已结算。"),
+                "goal_planning_checkpoint" => ("info", "持续目标正在核对当天接续工作。"),
                 "turn_completed" => ("info", "Agent 回合已结算。"),
                 "turn_failed" => ("warn", "Agent 回合未完成。"),
                 "action_result" => ("info", "收到原生动作回执。"),
@@ -211,7 +212,7 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
             {
                 if (property.Name is "completedCount" or "remainingCount" or "skippedCount" or "failedCount"
                     or "nativeActions" or "targetCount" or "modelRequestsAtDispatch" or "modelRequestsDuringStage"
-                    or "modelRequests" or "elapsedMs" or "stages"
+                    or "modelRequests" or "elapsedMs" or "stages" or "attempt"
                     && property.Value.ValueKind == JsonValueKind.Number)
                     details[property.Name] = property.Value.Clone();
                 if (property.Name == "needsReconciliation" && property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)

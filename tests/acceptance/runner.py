@@ -86,7 +86,12 @@ def evaluate(case, before, after, samples):
         "same_game_day": all(after.get(k) == before.get(k) and k in before for k in ("year", "season", "day")),
         "native_action_finished": native_finished(after),
     }
-    if case == "empty-farm":
+    if case == "farm-growth":
+        checks["daily_crops_watered"] = bool(target_count) and after.get("harnessFixtureDryCropCount") == 0
+        checks["stamina_available_after_daily_care"] = any((s.get("companionStamina") or 0) > 100
+            and s.get("harnessFixtureDryCropCount") == 0 for s in samples)
+        checks["sapling_preserved"] = before.get("acceptanceSaplingStage") == after.get("acceptanceSaplingStage") == 2
+    elif case == "empty-farm":
         checks["no_crops"] = after.get("harnessFixtureCropCount") == 0
         checks["no_dry_crops"] = after.get("harnessFixtureDryCropCount") == 0
     elif case in {"walk-pickup", "walk-pickup-full"}:
@@ -346,6 +351,21 @@ class Runner:
                 checks["three_empty_stages_confirmed"] = len(actions) == 3 and all(
                     c["result"].get("stopReason") == "no-observed-targets"
                     and c["result"].get("completedCount") == 0 for c in actions)
+            if self.case == "farm-growth":
+                native = [row["payload"] for row in trace if row.get("type") == "result"]
+                care_index = max((index for index, receipt in enumerate(native) if receipt.get("skillId") == "water-zone"
+                    and (receipt.get("completedCount") or 0) > 0), default=-1)
+                growth = {"chop-tree", "craft-items", "plant-seeds", "insert-machine", "ship-items", "deposit-chest"}
+                checks["productive_work_after_care"] = care_index >= 0 and any(
+                    receipt.get("skillId") in growth and (receipt.get("completedCount") or 0) > 0
+                    for receipt in native[care_index + 1:])
+                import sqlite3
+                with sqlite3.connect(f"file:{self.run / 'data/companion.sqlite'}?mode=ro", uri=True) as database:
+                    active = [goal for row in database.execute("SELECT value FROM save_sections WHERE name='goals'")
+                              for goal in json.loads(row[0]) if goal.get("status") == "active"]
+                checks["ongoing_goal_and_today_plan_retained"] = any(
+                    goal.get("horizon") == "ongoing" and goal.get("objective") == instruction
+                    and goal.get("dayPlan", {}).get("nextStep") for goal in active)
             self.report["checks"] = checks
             self.report["status"] = "passed" if all(checks.values()) else "failed"
         except Exception as error:

@@ -78,6 +78,17 @@ internal static class Program
                 Check(rows.Any(row => row.Text.Contains("浇水")) && !rows.Any(row => row.Text.Contains("拾取")), "Work from another goal leaked into selection.");
                 Check(Control<Button>(window, "RecentObserveButton").IsEnabled, "Observation shortcut is unavailable.");
                 Check(Control<TextBlock>(window, "WorkGoalText").Text.Contains("就寝时间") && !Control<TextBlock>(window, "WorkGoalText").Text.Contains("bedtime"), "Technical schedule label leaked into the goal.");
+                var planned = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(work))!;
+                var plannedGoal = planned["activeGoals"]!.AsArray().Single(row => row!["id"]!.GetValue<string>() == "care")!;
+                plannedGoal["dayPlan"] = JsonSerializer.SerializeToNode(new {
+                    focus = "补充仓储", nextStep = "制作箱子",
+                    blockedBranches = new[] { new { branch = "购种", reason = "当前路线受阻" } }
+                });
+                plannedGoal["planningIssue"] = "missing-next-action";
+                Invoke(window, "ApplyWork", JsonSerializer.SerializeToElement(planned));
+                string goalText = Control<TextBlock>(window, "WorkGoalText").Text;
+                Check(goalText.Contains("补充仓储") && goalText.Contains("制作箱子") && goalText.Contains("购种")
+                    && goalText.Contains("规划未给出"), "Daily continuation, branch blocker or planning issue is missing from the selected goal.");
                 Check(Control<Expander>(window, "OtherWorkExpander").Visibility == Visibility.Visible, "Unlinked historical work was silently discarded.");
                 Check(!Control<Expander>(window, "WorkProcessExpander").IsExpanded, "Detailed process should start collapsed.");
                 var phaseStatus = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.SerializeToElement(status))!;

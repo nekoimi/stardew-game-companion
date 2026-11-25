@@ -162,6 +162,7 @@ public sealed class TestDriverMod : Mod
 
     private bool _saveLoadedFired;
     private bool _dayStartedFired;
+    private long _externalObservationStarted;
     private bool _renderedWorldObserved;
     private int _renderedWorldFramesCount;
 
@@ -1123,10 +1124,17 @@ public sealed class TestDriverMod : Mod
                         : 18000;
                     // Screen-side external-agent observation needs a longer bounded window.
                     // Default acceptance timings and the explicit done signal are unchanged.
+                    bool observationExpired = _tickCounter > timeoutTicks;
                     if ((_scenario.Equals("free-mode-control", StringComparison.OrdinalIgnoreCase) || _scenario.Equals("daily-chain", StringComparison.OrdinalIgnoreCase)) &&
                         int.TryParse(Environment.GetEnvironmentVariable("STARDEW_AI_OBSERVE_SECONDS"), out var observeSeconds))
-                        timeoutTicks = Math.Clamp(observeSeconds, 600, 7200) * 60;
-                    if (doneExists || _tickCounter > timeoutTicks)
+                    {
+                        // Unfocused isolated instances can update faster than 60 Hz.
+                        // Honor the external runner's wall-clock window, not a frame estimate.
+                        if (_externalObservationStarted == 0) _externalObservationStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                        observationExpired = (System.Diagnostics.Stopwatch.GetTimestamp() - _externalObservationStarted)
+                            / (double)System.Diagnostics.Stopwatch.Frequency > Math.Clamp(observeSeconds, 600, 7200);
+                    }
+                    if (doneExists || observationExpired)
                     {
                         Monitor.Log($"[TestDriver] {_scenario} Act wait concluded (DoneFile: {doneExists}, Ticks: {_tickCounter}, Frames: {_loopDemoFrameIndex}).", LogLevel.Info);
                         _tickCounter = 0;
@@ -3504,6 +3512,8 @@ public sealed class TestDriverMod : Mod
             ?? throw new InvalidOperationException("Production ModEntry unavailable for harness fixture.");
         AssertHarnessFixtureBoundary(modEntry);
         string mode = request.GetProperty("mode").GetString() ?? "";
+        bool ongoingGrowth = mode == "farm-growth";
+        if (ongoingGrowth) mode = "mature-trees";
         if (mode is not ("watering" or "partial-planting" or "harvest-store" or "rest-water" or "water-refill" or "mature-trees" or "walk-pickup" or "walk-pickup-full" or "empty-farm"))
             throw new ArgumentException("Unknown harness fixture mode.");
         if (Game1.currentSeason != "spring")
@@ -3678,6 +3688,21 @@ public sealed class TestDriverMod : Mod
             }
             if (_acceptanceMatureTrees.Count != 2)
                 throw new InvalidOperationException("Harness fixture found no two reachable mature trees with the chest and sapling in place.");
+            if (ongoingGrowth)
+            {
+                foreach (var tile in selected.Skip(1).Take(3))
+                {
+                    // Mature trees, sapling and empty chest remain independent
+                    // opportunities after the small daily crop-care stage.
+                    if (farm.terrainFeatures.ContainsKey(tile) || farm.objects.ContainsKey(tile)) continue;
+                    var dirt = EnsureHoeDirt(farm, tile);
+                    dirt.crop = CreateParsnipCrop((int)tile.X, (int)tile.Y, farm, mature: false);
+                    dirt.state.Value = 0;
+                    _harnessFixtureTiles.Add(tile);
+                }
+                if (_harnessFixtureTiles.Count == 0) throw new InvalidOperationException("Farm growth fixture has no crops.");
+                _harnessFixtureMode = "farm-growth";
+            }
         }
         if (mode == "walk-pickup-full")
         {
@@ -3696,7 +3721,7 @@ public sealed class TestDriverMod : Mod
                 if (pair.Value.CanBeGrabbed && !pair.Value.bigCraftable.Value) farm.objects.Remove(pair.Key);
         }
         var fixture = new {
-            runId = _runId, label, mode, timestampUtc = DateTime.UtcNow.ToString("o"),
+            runId = _runId, label, mode = ongoingGrowth ? "farm-growth" : mode, timestampUtc = DateTime.UtcNow.ToString("o"),
             saveName = Constants.SaveFolderName, isolatedSavesPath = StardewValley.Program.GetSavesFolder(),
             year = Game1.year, season = Game1.currentSeason, day = Game1.dayOfMonth, timeOfDay = Game1.timeOfDay,
             locationId = "Farm", targetCount = _harnessFixtureTiles.Count, nativeReachability = reachable,
@@ -8040,7 +8065,7 @@ public sealed class TestDriverMod : Mod
                     }
                 }
                 else if (!screenshotValid && !(_scenario == "free-mode-control" &&
-                    _harnessFixtureMode is "water-refill" or "harvest-store" or "rest-water" or "mature-trees" or "walk-pickup" or "walk-pickup-full" or "empty-farm"))
+                    _harnessFixtureMode is "water-refill" or "harvest-store" or "rest-water" or "mature-trees" or "walk-pickup" or "walk-pickup-full" or "empty-farm" or "farm-growth"))
                 {
                     _evidence["functionalSkillPassed"] = false;
                     _evidence["gateSuccess"] = false;
@@ -8605,7 +8630,7 @@ public sealed class TestDriverMod : Mod
                     && young is Tree youngTree ? youngTree.growthStage.Value : (int?)null;
                 payload["acceptanceChestItems"] = _acceptanceChest is Vector2 ct && farm.objects.TryGetValue(ct, out var chestObject)
                     && chestObject is StardewValley.Objects.Chest chest ? DescribeItems(chest.Items) : null;
-                if (_harnessFixtureMode == "mature-trees")
+                if (_harnessFixtureMode is "mature-trees" or "farm-growth")
                     payload["acceptanceFarmChestWood"] = farm.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Chest)
                         .Sum(pair => ((StardewValley.Objects.Chest)pair.Value).Items
                             .Where(item => item?.QualifiedItemId == "(O)388").Sum(item => item.Stack));

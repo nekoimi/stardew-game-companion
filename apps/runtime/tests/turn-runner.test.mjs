@@ -396,6 +396,197 @@ function fixture(game, model) {
   return { runner, events };
 }
 
+test("ongoing farming retains newer player authorization beyond chat history and executes another branch before waiting", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  store.append(binding.saveId, "original:player", "player", { text: "先照料农田" });
+  store.append(binding.saveId, "expanded:player", "player", { text: "持续经营农场直到我叫停，日常之后自主制作仓储设施，保留幼树" });
+  for (let i = 0; i < 40; i++) store.append(binding.saveId, "summary-" + i, "assistant", { text: "日常已完成，下一日再规划" });
+  store.updateItem(binding.saveId, "goals", "farm-goal", { text: "春24收尾，下一日再说", status: "active",
+    continuation: "continue", requestId: "original" });
+  game.snapshot = { companion: { locationId: "Farm", stamina: 230 }, capturedRevision: 1,
+    world: { year: 1, season: "spring", dayOfMonth: 24, timeOfDay: 900 },
+    inventory: { slots: [{ itemId: "(O)388", stack: 100 }], freeSlots: 8 } };
+  const native = [];
+  game.nativeResult = (commandId, skillId) => {
+    native.push(skillId);
+    return { commandId, skillId, terminalState: skillId === "navigate-to" ? "failed" : "succeeded",
+      error: skillId === "navigate-to" ? { code: "ROUTE_PLANNING_TIMEOUT" } : null, completedCount: 1 };
+  };
+  let calls = 0;
+  const arrange = change => ({ id: "plan-" + calls, name: "manage_arrangements", arguments: { change } });
+  const seen = [];
+  const runner = new TurnRunner(game, { async *generate({ context, messages }) {
+    seen.push(context);
+    switch (++calls) {
+      case 1: yield done([arrange({ manage_goal: { action: "update", text: "今天收尾，明天再说", summary: "日常完成" } })]); break;
+      case 2: yield done([], "今天照料结束，明天继续。"); break;
+      case 3:
+        assert.match(messages.at(-1).text, /持续经营接续检查/);
+        yield done([{ id: "shop", name: "submit_work", arguments: { action: {
+          navigate_to: { location_id: "SeedShop", tile: { x: 4, y: 19 } } } } }]); break;
+      case 4: yield done([
+        arrange({ set_day_plan: { focus: "补充仓储", next_step: "用现有木材制作箱子",
+          alternatives: ["商店路线暂时受阻，先做农场内可行制作"],
+          blocked_branches: [{ branch: "购种", reason: "已确认路线规划超时", command_id: game.executed[0] }] } }),
+        { id: "craft", name: "submit_work", arguments: { action: {
+          craft_items: { location_id: "Farm", recipe_name: "Chest", item_count: 1 } } } },
+      ]); break;
+      case 5: yield done([arrange({ set_day_plan: { focus: "今日设施制作完成", next_step: "等待商店窗口或下一天",
+        alternatives: ["没有种子，暂停补种；制作目标已达成；保留幼树，不盲目耗体力"], blocked_branches: [] } }),
+        arrange({ set_goal_continuation: { status: "wait", next_day: true, reason: "已完成当前设施制作并核对其他方向" } })]); break;
+      default: yield done([], "设施已制作，等待下一次经营窗口。");
+    }
+  } }, () => {}, "", store);
+  try {
+    await runner.submit(binding, "retry", "继续", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.deepEqual(native, ["navigate-to", "craft-items"]);
+    const [goal] = store.items(binding.saveId, "goals");
+    assert.match(goal.text, /持续经营农场直到我叫停/);
+    assert.equal(goal.currentFocus, "今天收尾，明天再说");
+    assert.equal(goal.status, "active");
+    assert.equal(goal.horizon, "ongoing");
+    assert.equal(goal.continuation, "wait");
+    assert.ok(seen[0].goalInstructions.some(item => item.requestId === "expanded"));
+    assert.match(seen[0].planning.longTermObjective, /自主制作仓储设施/);
+    assert.equal(seen[0].planning.resources.stamina, 230);
+    assert.equal(seen[0].planning.resources.inventory.items[0].count, 100);
+    assert.equal(calls, 6);
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("an ongoing goal cannot end or wait without a current alternatives assessment and never spins on summaries", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  store.append(binding.saveId, "original:player", "player", { text: "持续经营农场，直到我叫停" });
+  store.updateItem(binding.saveId, "goals", "goal", { text: "经营农场", requestId: "original",
+    horizon: "ongoing", status: "active", continuation: "continue" });
+  game.snapshot = { companion: { locationId: "Farm", stamina: 220 },
+    world: { year: 1, season: "spring", dayOfMonth: 1, timeOfDay: 1000 } };
+  const context = { binding, turnId: "test", requestId: "original", goalId: "goal",
+    signal: new AbortController().signal, native() { assert.fail("No native action expected"); }, speak() {}, changed() {} };
+  const tools = new CompanionTools(game, "", store);
+  await assert.rejects(tools.invoke(context, "manage_arrangements", { change: { manage_goal: { action: "complete" } } }), /持续目标/);
+  await assert.rejects(tools.invoke(context, "manage_arrangements", { change: {
+    set_goal_continuation: { status: "wait", reason: "日常结束", next_day: true } } }), /替代工作/);
+  await assert.rejects(tools.invoke(context, "manage_arrangements", { change: {
+    set_goal_continuation: { status: "wait", reason: "时间已过", next_time: 900 } } }), /尚未到达/);
+  let calls = 0;
+  const { runner, events } = (() => {
+    const events = [];
+    return { events, runner: new TurnRunner(game, { async *generate() { calls++; yield done([], "明天再安排"); } },
+      (type, payload) => events.push({ type, payload }), "", store) };
+  })();
+  try {
+    game.emit("changed");
+    await runner.submit(binding, "continue", "继续经营", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    await setTimeout(850);
+    assert.equal(calls, 3);
+    assert.ok(events.some(row => row.type === "life.chat.reply" && row.payload.status === "failed"
+      && row.payload.error.includes("下一步")));
+    assert.equal(store.items(binding.saveId, "goals")[0].planningIssue, "missing-next-action");
+    assert.equal(game.executed.length, 0);
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("an explicit ongoing request is bound even when the model never calls manage_goal", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  let calls = 0;
+  const runner = new TurnRunner(game, { async *generate({ context }) {
+    calls++;
+    assert.equal(context.planning.horizon, "ongoing");
+    assert.match(context.planning.longTermObjective, /持续经营直到我叫停/);
+    yield done([], "明天继续");
+  } }, () => {}, "", store);
+  try {
+    await runner.submit(binding, "direct-goal", "持续经营直到我叫停", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(calls, 3);
+    const [goal] = store.items(binding.saveId, "goals");
+    assert.equal(goal.horizon, "ongoing");
+    assert.equal(goal.planningIssue, "missing-next-action");
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("ongoing replanning uses the latest player restriction and invalidates yesterday's waiting plan", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  store.append(binding.saveId, "original:player", "player", { text: "持续经营直到我叫停，允许采木" });
+  store.updateItem(binding.saveId, "goals", "farm-goal", { text: "经营农场", requestId: "original",
+    horizon: "ongoing", status: "active", continuation: "wait", waitNextDay: true, updatedDay: "1:spring:1",
+    dayPlan: { gameDate: "1:spring:1", nextStep: "明天查看农田", alternatives: ["今天已经没有合理工作"] } });
+  game.snapshot = { companion: { locationId: "Farm" }, world: { year: 1, season: "spring", dayOfMonth: 2, timeOfDay: 600 } };
+  let release, calls = 0;
+  const runner = new TurnRunner(game, { async *generate({ context, messages }) {
+    if (++calls === 1) {
+      assert.equal(context.planning.dayPlanCurrent, false);
+      await new Promise(resolve => { release = resolve; });
+      yield done([action]);
+    } else if (calls === 2) {
+      assert.equal(context.goalInstructions.at(-1).text, "不要再采木，只照料现有作物并等待明天");
+      assert.equal(messages.at(-1).text, "不要再采木，只照料现有作物并等待明天");
+      yield done([{ id: "today", name: "manage_arrangements", arguments: { change: {
+        set_day_plan: { focus: "按新要求只照料作物", next_step: "明天复查",
+          alternatives: ["玩家暂停采木及其他扩展，当前没有待照料作物"], blocked_branches: [] },
+      } } }, { id: "wait", name: "manage_arrangements", arguments: { change: {
+        set_goal_continuation: { status: "wait", next_day: true, reason: "遵守玩家最新范围" },
+      } } }]);
+    } else yield done([], "按新要求等待明天。");
+  } }, () => {}, "", store);
+  try {
+    await runner.submit(binding, "continue", "继续", "send");
+    await waitFor(() => release);
+    await runner.submit(binding, "restriction", "不要再采木，只照料现有作物并等待明天", "send");
+    release();
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(game.executed.length, 0);
+    assert.equal(store.items(binding.saveId, "goals")[0].dayPlan.gameDate, "1:spring:2");
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("takeover prevents the ongoing final-response checkpoint from calling the model again", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  let finish, calls = 0;
+  const runner = new TurnRunner(game, { async *generate() {
+    calls++;
+    await new Promise(resolve => { finish = resolve; });
+    yield done([], "明天再安排");
+  } }, () => {}, "", store);
+  try {
+    await runner.submit(binding, "farm", "持续经营直到我叫停", "send");
+    await waitFor(() => finish);
+    game.state.controlOwner = "human";
+    game.emit("changed");
+    finish();
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(calls, 1);
+    assert.equal(game.executed.length, 0);
+    assert.notEqual(store.items(binding.saveId, "goals")[0].planningIssue, "missing-next-action");
+  } finally { await runner.stop(); store.close(); }
+});
+
+test("a reached waiting condition cannot justify ending an ongoing turn without fresh planning", async () => {
+  const game = new FakeGame();
+  const store = new CompanionStore(":memory:");
+  game.snapshot = { companion: { locationId: "Farm" }, world: { year: 1, season: "spring", dayOfMonth: 2, timeOfDay: 930 } };
+  store.append(binding.saveId, "original:player", "player", { text: "持续经营直到我叫停" });
+  store.updateItem(binding.saveId, "goals", "farm-goal", { text: "经营农场", requestId: "original",
+    horizon: "ongoing", status: "active", continuation: "wait", wakeTime: 900, updatedDay: "1:spring:2",
+    dayPlan: { gameDate: "1:spring:2", nextStep: "九点查看商店", alternatives: ["开门前暂缓购种"] } });
+  let calls = 0;
+  const runner = new TurnRunner(game, { async *generate() { calls++; yield done([], "继续等待九点"); } }, () => {}, "", store);
+  try {
+    await runner.submit(binding, "wake", "继续", "send");
+    await waitFor(() => !runner.status().modelBusy);
+    assert.equal(calls, 3);
+    assert.equal(store.items(binding.saveId, "goals")[0].planningIssue, "missing-next-action");
+  } finally { await runner.stop(); store.close(); }
+});
+
 test("harvest stage limits the request and distinguishes multi-yield inventory gains from crop tiles", async () => {
   const game = new FakeGame();
   const tools = new CompanionTools(game, "");
@@ -539,11 +730,17 @@ test("a batch summary persists with the goal and farm-change waits ignore clock 
     if (calls === 1) yield done([
       arrange({ manage_goal: { action: "add", text: "持续照料农田" } }),
       { id: "care", name: "submit_work", arguments: { action: { tend_crops: { location_id: "Farm" } } } },
+      arrange({ set_day_plan: { focus: "每日农田照料", next_step: "等待农田变化或次日",
+        alternatives: ["玩家仅授权照料农田，当前无其他农田工作"], blocked_branches: [] } }),
       arrange({ set_goal_continuation: { status: "wait", reason: "当天暂无缺水作物，次日或农田变化后复查",
         next_day: true, when_farm_changes: true } }),
     ]);
     else if (calls === 2) yield done();
-    else if (calls === 3) yield done([arrange({ manage_goal: { action: "complete", summary: "已经根据新的农田观察重新安排" } })]);
+    else if (calls === 3) yield done([
+      arrange({ set_day_plan: { focus: "已经根据新的农田观察重新安排", next_step: "等待下一天",
+        alternatives: ["本轮仅验证接续；玩家保留具体农田执行"], blocked_branches: [] } }),
+      arrange({ set_goal_continuation: { status: "wait", reason: "已经根据新的农田观察重新安排", next_day: true } }),
+    ]);
     else yield done();
   } }, () => {}, "", store);
   try {
@@ -561,7 +758,8 @@ test("a batch summary persists with the goal and farm-change waits ignore clock 
     assert.equal(calls, 2);
     game.snapshot.farmWork = { ...game.snapshot.farmWork, cropUnwateredTiles: [{ x: 3, y: 4 }] };
     game.emit("changed");
-    await waitFor(() => store.items(binding.saveId, "goals")[0].status === "completed", 300);
+    await waitFor(() => store.items(binding.saveId, "goals")[0].summary === "已经根据新的农田观察重新安排", 300);
+    await waitFor(() => !runner.status().modelBusy);
     assert.equal(calls, 4);
   } finally { await runner.stop(); store.close(); }
 });

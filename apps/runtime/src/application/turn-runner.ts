@@ -101,6 +101,13 @@ export class TurnRunner {
     this.selection = selection;
     const binding = this.game.binding;
     if (binding && this.modelErrorFor(binding)) this.wakeSignatures.delete(binding.saveId);
+    if (binding && this.store) {
+      const goal = this.store.items(binding.saveId, "goals").findLast(row => row.status === "active");
+      if (goal?.planningIssue === "missing-next-action") {
+        this.store.updateItem(binding.saveId, "goals", goal.id, { planningIssue: null });
+        this.wakeSignatures.delete(binding.saveId);
+      }
+    }
     this.modelFailure = undefined;
     this.changed();
   }
@@ -354,6 +361,7 @@ export class TurnRunner {
       this.publish("submitted", { ...binding, requestId, text, status: "accepted" });
       const prompt = decision ? `玩家对「${decision.message}」的选择：${text}` : text;
       if (this.active && mode === "send") {
+        this.linkInstruction(binding.saveId, this.active.goalId, this.active.originalRequestId, requestId);
         this.active.additional.push({ requestId, text: prompt });
         this.active.requests.push(requestId);
         return;
@@ -366,6 +374,7 @@ export class TurnRunner {
       const decisionRequest = decision?.requestId;
       const originalRequest = typeof decisionRequest === "string" ? decisionRequest :
         typeof current?.requestId === "string" && mode !== "interrupt" ? current.requestId : requestId;
+      this.linkInstruction(binding.saveId, goalId, originalRequest, requestId);
       if (preset) this.notifyPreset(binding, requestId, "processing", "", goalId);
       this.startTurn(binding, requestId, goalId, prompt, false, originalRequest);
     } finally {
@@ -427,6 +436,7 @@ export class TurnRunner {
     if (this.game.actorMode === "companion" && (object(actor.bedtimeSchedule).returnDue === true
       || ["winding-down", "returning-home", "waiting-for-bed", "sleeping", "resting"].includes(String(this.game.state.activity ?? actor.restState)))) return;
     const goal = this.store.items(save, "goals").findLast(item => item.status === "active");
+    if (goal?.planningIssue === "missing-next-action") return;
     const date = gameDate(this.game.snapshot);
     if (this.bedtimeRecovery && this.bedtimeRecovery === date) {
       this.bedtimeRecovery = undefined;
@@ -448,7 +458,7 @@ export class TurnRunner {
     const originalRequest = typeof goal?.requestId === "string" ? goal.requestId : "";
     const requestId = `autonomy-${randomUUID()}`;
     this.startTurn(binding, requestId, goal?.id ?? randomUUID(),
-      goal ? `继续当前目标：${goal.text}\n已记录的进度或下一步：${goal.summary || "待核对"}\n按当天实际观察与回执处理剩余工作。`
+      goal ? `继续当前目标：${goal.objective ?? goal.text}\n已记录的进度或下一步：${goal.summary || "待核对"}\n按当天实际观察与回执处理剩余工作。`
         : "按当前存档的主动帮忙偏好，观察当天需要照料的农活，然后处理适合的事项。", true, originalRequest || requestId);
   }
 
@@ -459,6 +469,22 @@ export class TurnRunner {
     const revision = goal ? JSON.stringify([goal.id, goal.continuation, goal.wakeTime, goal.updatedDay,
       lastPerformed?.commandId, goal.waitFarmSignature ? farmWorkSignature(this.game.snapshot) : null]) : date;
     return `${binding.gameSessionId}:${date}:${revision}`;
+  }
+
+  private linkInstruction(save: string, goalId: string, original: string, requestId: string): void {
+    if (!this.store) return;
+    const goal = this.store.items(save, "goals").find(item => item.id === goalId);
+    const previous = goal ? this.store.goalInstructions(save, goal).map(item => String(item.requestId)) : [];
+    const ids = [...new Set([original, ...previous, requestId])]
+      .filter(id => typeof this.store!.playerRequest(save, id).text === "string").slice(-8);
+    const ongoingInstruction = ids.map(id => this.store!.playerRequest(save, id).text).findLast(value =>
+      /持续(?:经营|目标|照料)|直到我(?:叫停|停止)|每天.*(?:照料|经营)|第二天接着做/.test(String(value)));
+    const ongoing = goal?.horizon === "ongoing" || ongoingInstruction !== undefined;
+    if (goal || ongoing) this.store.updateItem(save, "goals", goalId, {
+      ...(!goal ? { status: "active", continuation: "continue", requestId: original } : {}),
+      instructionRequestIds: ids,
+      ...(ongoing ? { horizon: "ongoing", objective: ongoingInstruction ?? goal?.objective ?? goal?.text ?? "",
+        ...(typeof ongoingInstruction === "string" ? { text: ongoingInstruction.slice(0, 500) } : {}) } : {}), planningIssue: null });
   }
 
   private bedtimeNeedsSleep(binding: GameBinding): { attempt: string; locationId: string } | undefined {
@@ -606,6 +632,7 @@ export class TurnRunner {
 
   private async run(turn: Turn, model: ModelContext, text: string, autonomous: boolean, bedtimeOnly: boolean): Promise<void> {
     const save = turn.binding.saveId;
+    if (!turn.plugin) this.linkInstruction(save, turn.goalId, turn.originalRequestId, turn.appliedRequestId);
     const history = this.store?.recentConversation(save) ?? this.messages;
     const messages: ModelMessage[] = [...history];
     const latest = messages.at(-1);
@@ -620,6 +647,8 @@ export class TurnRunner {
     let repeatCount = 0;
     let retries = 0;
     let modelFailure: ModelFailure | undefined;
+    let planningChecks = 0;
+    let planningActions = -1;
     const plugin = turn.plugin;
     const source = plugin ? "plugin" : bedtimeOnly ? "bedtime" : autonomous ? "autonomy" : "player";
     const taskId = turn.originalRequestId === turn.requestId && autonomous && turn.goalId ? turn.goalId : turn.originalRequestId;
@@ -678,9 +707,22 @@ export class TurnRunner {
         const streaming = this.selection?.stream !== false;
         const idleTimer = setTimeout(() => idle.abort(), modelResponseTimeout(streaming));
         try {
+          const goal = this.store?.items(save, "goals").find(item => item.id === turn.goalId);
+          const instructions = goal && this.store ? this.store.goalInstructions(save, goal) : [];
           const context: JsonObject | undefined = this.store ? { profile: this.store.profile(save),
             memory: this.store.memory(save).entries.slice(-24).map(({ id, kind, text, gameDate }) => ({ id, kind, text, gameDate })),
             originalRequest: this.store.playerRequest(save, turn.originalRequestId).text ?? null, goalId: turn.goalId,
+            goalInstructions: instructions,
+            ...(goal ? { planning: { longTermObjective: goal.objective ?? goal.text, horizon: goal.horizon ?? "finite",
+              currentFocus: goal.currentFocus ?? null, dayPlan: goal.dayPlan ?? null,
+              dayPlanCurrent: object(goal.dayPlan).gameDate === gameDate(this.game.snapshot),
+              recentObstacles: this.store.recentReceipts(save).filter(receipt =>
+                object(receipt.workContext).goalId === turn.goalId && receipt.terminalState !== "succeeded").slice(-4)
+                .map(receipt => ({ commandId: receipt.commandId, skillId: receipt.skillId, errorCode: object(receipt.error).code ?? null,
+                  locationId: object(receipt.workContext).locationId ?? null, gameDate: receipt.gameDate ?? null })),
+              resources: { inventory: compactInventory(this.game.snapshot), stamina: object(this.game.snapshot?.companion).stamina ?? null,
+                timeOfDay: object(this.game.snapshot?.world).timeOfDay ?? null },
+            } } : {}),
             goals: this.store.items(save, "goals").filter(goal => goal.status === "active"),
             ...(plugin ? { pluginTask: { source: plugin.input.pluginId, goalId: plugin.goalId } } : {}),
             observations: decisionObservation(this.game.snapshot) } : undefined;
@@ -726,6 +768,24 @@ export class TurnRunner {
         const response = output;
         if (!response.calls.length) {
           if (acknowledgeAdditional()) continue;
+          const goal = plugin ? undefined : this.store?.items(save, "goals").find(item => item.id === turn.goalId && item.status === "active");
+          if (goal?.horizon === "ongoing" && !signal.aborted && !this.uncertain
+              && this.game.state.paused !== true && (this.game.actorMode !== "player" || this.game.state.controlOwner === "agent")) {
+            const plan = object(goal.dayPlan);
+            const waitingForCondition = goal.continuation === "wait" && plan.gameDate === gameDate(this.game.snapshot)
+              && typeof plan.nextStep === "string" && Array.isArray(plan.alternatives) && !this.runnableGoal(goal);
+            if (!waitingForCondition) {
+              if (planningActions !== turn.nativeActions) { planningActions = turn.nativeActions; planningChecks = 0; }
+              if (++planningChecks > 2) {
+                this.store?.updateItem(save, "goals", turn.goalId, { planningIssue: "missing-next-action" });
+                throw new Error("持续经营尚未给出可执行的下一步或有效等待条件，已保留目标。请调整要求或模型后继续。");
+              }
+              messages.push({ role: "user", text: "持续经营接续检查：日常农活完成不代表当天工作结束。请依据 goalInstructions 的最新授权、当前体力/时间/背包以及长期目标，调用 set_day_plan 记录今天的下一步、其他可选工作及仅影响相应分支的障碍，并实际执行可行工作；单项路线失败不能阻塞全部经营。确实没有可行工作时，先在 alternatives 说明已评估的替代方向与无法执行的原因，再调用 set_goal_continuation 保存真实等待条件。不要只回复明日规划。无需把体力强行耗尽，也不能扩大玩家授权。"});
+              this.diagnostic?.("goal_planning_checkpoint", { gameSessionId: turn.binding.gameSessionId, turnId: turn.id,
+                requestId: turn.originalRequestId, goalId: turn.goalId, attempt: planningChecks });
+              continue;
+            }
+          }
           answer = response.text;
           break;
         }
@@ -819,6 +879,10 @@ export class TurnRunner {
               operation, ...object(result), turnId: turn.id, requestId: turn.originalRequestId,
               gameDate: gameDate(this.game.snapshot),
             } });
+          }
+          if (!failed && !plugin && call.name === "manage_arrangements"
+              && Object.hasOwn(object(call.arguments.change), "manage_goal")) {
+            this.linkInstruction(save, turn.goalId, turn.originalRequestId, turn.appliedRequestId);
           }
           this.trace?.("tool", { turnId: turn.id, requestId: turn.requestId, name: call.name, input: call.arguments, result, error: failed });
             this.diagnostic?.("tool_result", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
@@ -966,6 +1030,18 @@ export class TurnRunner {
       return receipt;
     } finally { turn.nativeAction = undefined; turn.nativeSkill = undefined; turn.phase = undefined; this.changed(); }
   }
+}
+
+function compactInventory(snapshot: JsonObject | undefined): JsonObject {
+  const inventory = object(snapshot?.inventory);
+  const totals = new Map<string, number>();
+  if (!Array.isArray(inventory.slots)) return { status: "unavailable" };
+  for (const slot of inventory.slots.map(object)) {
+    if (typeof slot.itemId === "string" && slot.isTool !== true && typeof slot.stack === "number")
+      totals.set(slot.itemId, (totals.get(slot.itemId) ?? 0) + slot.stack);
+  }
+  return { status: "observed", freeSlots: inventory.freeSlots ?? null,
+    items: [...totals].slice(0, 24).map(([itemId, count]) => ({ itemId, count })), truncated: totals.size > 24 };
 }
 
 function canonicalJson(value: JsonValue): string {

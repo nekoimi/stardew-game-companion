@@ -11,6 +11,7 @@ function plan(messages) {
   const firstTool = messages.findIndex(row => row.type === "result");
   const before = firstTool < 0 ? messages : messages.slice(0, firstTool);
   const request = before.findLast(row => row.type === "user")?.text ?? "";
+  if (request.includes("日常完成后根据剩余时间")) return planGrowth(messages, request);
   if (firstTool < 0) return observe;
   const lastCall = messages.findLast(row => row.type === "call");
   if (request.includes("没有目标就不要动作")) {
@@ -77,6 +78,38 @@ function plan(messages) {
     });
     if (items.length) return work("store_items", { ...farm, chest_tile: box.tile, items });
   }
+  return {};
+}
+
+function planGrowth(messages, request) {
+  const calls = messages.filter(row => row.type === "call");
+  const changes = calls.filter(row => row.name === "manage_arrangements").flatMap(row => Object.keys(row.args.change));
+  const previous = calls.map(operation);
+  const observed = messages.filter(row => row.type === "result" && row.result.world).at(-1)?.result.world;
+  const last = messages.at(-1);
+  const arrange = (name, params) => ({ name: "manage_arrangements", args: { change: { [name]: params } } });
+  if (!changes.includes("manage_goal")) return arrange("manage_goal", { action: "add", text: "持续经营农场", horizon: "ongoing" });
+  if (!observed) return observe;
+  if (!previous.includes("tend_crops")) return work("tend_crops", { location_id: "Farm" });
+  // Deliberately try to finish with a summary. Only the production continuation
+  // checkpoint may ask this model to choose the next branch.
+  if (!messages.some(row => row.type === "user" && row.text.includes("持续经营接续检查"))) return {};
+  if (!changes.includes("set_day_plan")) return arrange("set_day_plan", { focus: "照料后补充经营材料",
+    next_step: "采成熟树并将木材入箱", alternatives: ["补种缺少种子，先用现有工具积累材料"], blocked_branches: [] });
+  if (!previous.includes("chop_tree")) {
+    const trees = (observed.farming?.choppableTrees ?? []).filter(tree => tree.kind === "tree" && tree.growthStage >= 5 && !tree.tapped);
+    return trees.length ? work("chop_tree", { location_id: "Farm", tiles: trees.slice(0, 2).map(tree => tree.tile) }) : observe;
+  }
+  if (last?.type === "result" && !last.result.world && !changes.includes("set_goal_continuation")) return observe;
+  if (!previous.includes("store_items")) {
+    const slots = observed.inventory?.slots ?? [];
+    const count = slots.filter(slot => slot.itemId === "(O)388").reduce((sum, slot) => sum + slot.stack, 0);
+    const chest = observed.chests?.items?.find(box => box.contentsObserved && !box.contents?.length);
+    if (count && chest) return work("store_items", { location_id: "Farm", chest_tile: chest.tile,
+      items: [{ item_id: "(O)388", count }] });
+  }
+  if (!changes.includes("set_goal_continuation")) return arrange("set_goal_continuation", {
+    status: "wait", reason: "已完成今日照料及成熟树材料入箱，其他方向需新的种子与经营机会", next_day: true });
   return {};
 }
 

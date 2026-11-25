@@ -330,7 +330,12 @@ public sealed class FarmerMechanicsActor : IFarmerActor
             if (checkCollision && _gameFarmer?.currentLocation is { } location)
             {
                 var body = _gameFarmer.GetBoundingBox();
-                var nextBody = new Rectangle((int)(body.X + dx), (int)(body.Y + dy), body.Width, body.Height);
+                // Native bounds round the position before adding the body offset.
+                // Rounding body + a negative fractional delta invents a one-pixel
+                // collision at walls, preventing the final waypoint alignment.
+                var currentPos = PixelPosition;
+                var nextBody = new Rectangle(body.X + (int)nextPos.X - (int)currentPos.X,
+                    body.Y + (int)nextPos.Y - (int)currentPos.Y, body.Width, body.Height);
                 if (location.isCollidingPosition(nextBody, Game1.viewport, true, 0, false, _gameFarmer,
                     pathfinding: true, projectile: false, ignoreCharacterRequirement: false, skipCollisionEffects: true))
                     return;

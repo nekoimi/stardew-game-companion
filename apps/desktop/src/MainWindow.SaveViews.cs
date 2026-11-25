@@ -207,6 +207,19 @@ public partial class MainWindow
         var relevant = selected is null ? results : results.Where(result => result.GoalId == selected.Id).ToArray();
         var other = selected is null ? Array.Empty<WorkResult>() : results.Where(result => result.GoalId != selected.Id).ToArray();
         WorkGoalText.Text = selected?.FullText ?? "";
+        var goal = Rows(_workState, "activeGoals").FirstOrDefault(row => Text(row, "id") == selected?.Id);
+        if (goal.ValueKind == JsonValueKind.Object) {
+            if (goal.TryGetProperty("dayPlan", out var plan) && plan.ValueKind == JsonValueKind.Object) {
+                string next = Text(plan, "nextStep");
+                WorkGoalText.Text += "\n\n当天重点：" + ActionPresentation.DisplayText(Text(plan, "focus"))
+                    + "\n下一步：" + ActionPresentation.DisplayText(next);
+                var blockers = Rows(plan, "blockedBranches").Select(row =>
+                    ActionPresentation.DisplayText(Text(row, "branch") + "：" + Text(row, "reason"))).ToArray();
+                if (blockers.Length > 0) WorkGoalText.Text += "\n受阻事项：" + string.Join("；", blockers);
+            }
+            if (Text(goal, "planningIssue") == "missing-next-action")
+                WorkGoalText.Text += "\n\n当前规划未给出可执行下一步，请调整要求或模型后继续。";
+        }
         WorkGoalExpander.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
         WorkDetails.ItemsSource = ActionPresentation.Stages(relevant);
         WorkProcess.ItemsSource = ActionPresentation.Process(relevant);

@@ -17,8 +17,15 @@ const references = {
   query_wiki: fields({ query: str(120) }),
 };
 const adjustments = {
-  manage_goal: fields({ action: str(20), text: str(500), summary: str(240) }, ["action"]),
-  set_goal_continuation: fields({ status: str(20), reason: str(240), next_time: { type: "integer", minimum: 600, maximum: 2600 },
+  manage_goal: fields({ action: { type: "string", enum: ["add", "update", "complete", "cancel"] },
+    text: str(500), summary: str(240), horizon: { type: "string", enum: ["ongoing", "finite"] } }, ["action"]),
+  set_day_plan: fields({ focus: str(240), next_step: str(240),
+    alternatives: { type: "array", minItems: 0, maxItems: 4, items: str(160) },
+    blocked_branches: { type: "array", minItems: 0, maxItems: 6,
+      items: fields({ branch: str(120), reason: str(200), command_id: str(120) }, ["branch", "reason"]) } },
+    ["focus", "next_step", "alternatives", "blocked_branches"]),
+  set_goal_continuation: fields({ status: { type: "string", enum: ["continue", "wait"] },
+    reason: str(240), next_time: { type: "integer", minimum: 600, maximum: 2600 },
     next_day: { type: "boolean" }, when_farm_changes: { type: "boolean" } }, ["status", "reason"]),
   manage_todo: fields({ action: str(20), text: str(240), id: str(120) }, ["action"]),
   manage_milestones: fields({ title: str(120), summary: str(240), target_date: str(40) }),
@@ -359,14 +366,44 @@ export class CompanionTools {
           const action = String(params.action);
           if (!["add", "update", "complete", "cancel"].includes(action)) throw new Error("目标操作不支持。");
           if (["complete", "cancel"].includes(action) && !goal) throw new Error("当前没有可完成或取消的目标。");
+          if (params.horizon !== undefined && !["ongoing", "finite"].includes(String(params.horizon)))
+            throw new Error("目标期限仅支持 ongoing 或 finite。");
+          if (goal?.horizon === "ongoing" && action === "complete")
+            throw new Error("持续目标不能因当天农活完成而结束；请安排当天其他工作或记录真实等待条件，由玩家叫停。");
           result = store.updateItem(save, "goals", context.goalId,
-            { text: params.text ?? goal?.text ?? "当前玩家目标", summary: params.summary ?? goal?.summary ?? "",
+            { text: goal?.text ?? params.text ?? "当前玩家目标", summary: params.summary ?? goal?.summary ?? "",
+              ...(goal && params.text ? { currentFocus: params.text } : {}),
+              horizon: goal?.horizon === "ongoing" ? "ongoing" : params.horizon ?? goal?.horizon ?? "finite",
               requestId: context.requestId, status: action === "complete" ? "completed" : action === "cancel" ? "cancelled" : "active",
               continuation: goal?.continuation ?? "continue" });
+        } else if (operation === "set_day_plan") {
+          if (!goal) throw new Error("请先记录当前目标，再安排当天工作。");
+          const blockers = (params.blocked_branches as JsonValue[]).map(object);
+          const receipts = store.recentReceipts(save);
+          for (const blocker of blockers) {
+            if (blocker.command_id && !receipts.some(receipt => receipt.commandId === blocker.command_id
+                && object(receipt.workContext).goalId === context.goalId && receipt.terminalState !== "succeeded"))
+              throw new Error("受阻证据必须引用当前目标已确认失败或部分完成的原生动作。");
+          }
+          result = store.updateItem(save, "goals", context.goalId, { dayPlan: {
+            gameDate: gameDate(this.game.snapshot), focus: params.focus, nextStep: params.next_step,
+            alternatives: params.alternatives, blockedBranches: blockers.map(({ branch, reason, command_id }) =>
+              ({ branch, reason, ...(command_id ? { commandId: command_id } : {}) })),
+          }, planningIssue: null });
         } else if (operation === "set_goal_continuation") {
           if (params.status !== "continue" && params.status !== "wait") throw new Error("续作状态无效。");
           if (params.status === "wait" && params.next_time === undefined && params.next_day !== true && params.when_farm_changes !== true) {
             throw new Error("等待需要真实的游戏时间、下一天或农田变化条件。");
+          }
+          if (params.next_time !== undefined) {
+            const now = object(this.game.snapshot?.world).timeOfDay;
+            if (Number(params.next_time) % 100 > 59 || (typeof now === "number" && Number(params.next_time) <= now))
+              throw new Error("等待时间必须是今天尚未到达的有效游戏时间；等待明天使用 next_day。");
+          }
+          const plan = object(goal?.dayPlan);
+          if (goal?.horizon === "ongoing" && params.status === "wait"
+              && (plan.gameDate !== gameDate(this.game.snapshot) || !Array.isArray(plan.alternatives) || !plan.alternatives.length)) {
+            throw new Error("持续经营等待前先用 set_day_plan 评估当天替代工作，单个分支受阻不能代替全天无事可做。");
           }
           const farmSignature = params.when_farm_changes === true ? farmWorkSignature(await this.game.observe()) : "";
           if (params.when_farm_changes === true && !farmSignature) throw new Error("没有有效的农田观察，暂不能等待农田变化。");
@@ -374,6 +411,7 @@ export class CompanionTools {
             { text: goal?.text ?? params.reason, requestId: context.requestId, status: "active",
               continuation: params.status, summary: params.reason, wakeTime: params.next_time ?? null,
               waitNextDay: params.next_day === true, waitFarmSignature: farmSignature || null,
+              planningIssue: null,
               updatedDay: gameDate(this.game.snapshot) });
         } else if (operation === "manage_milestones") {
           result = store.updateItem(save, "milestones", randomUUID(), {
