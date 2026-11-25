@@ -351,12 +351,13 @@ class Runner:
                 checks["three_empty_stages_confirmed"] = len(actions) == 3 and all(
                     c["result"].get("stopReason") == "no-observed-targets"
                     and c["result"].get("completedCount") == 0 for c in actions)
-            if self.case == "phase-forestry":
+            if self.case in {"phase-forestry", "phase-daily"}:
                 phases = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
                           and "execute_phase" in ((c.get("input") or {}).get("action") or {})]
                 checks["one_complete_phase"] = len(phases) == 1 and phases[0]["result"].get("status") == "completed"
                 checks["zero_model_requests_inside_phase"] = len(phases) == 1 and phases[0]["result"].get("executionModelRequests") == 0
-                checks["all_tree_products_stored"] = not [i for i in after.get("companionItems", []) if i.get("id") in {"(O)388", "(O)92", "(O)309", "(O)310", "(O)311"}]
+                if self.case == "phase-forestry":
+                    checks["all_tree_products_stored"] = not [i for i in after.get("companionItems", []) if i.get("id") in {"(O)388", "(O)92", "(O)309", "(O)310", "(O)311"}]
             if self.case == "farm-growth":
                 native = [row["payload"] for row in trace if row.get("type") == "result"]
                 care_index = max((index for index, receipt in enumerate(native) if receipt.get("skillId") == "water-zone"

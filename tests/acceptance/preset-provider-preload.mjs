@@ -123,14 +123,17 @@ function planGrowth(messages, request) {
   return {};
 }
 
-function phasePlan(context, calls) {
+function phasePlan(context, calls, daily = false) {
   const observed = context?.phaseObservation;
   if (!observed || calls.some(row => row.type === "call" && operation(row) === "execute_phase")) return {};
   const [destination] = Object.entries(observed.destinations ?? {}).filter(([, box]) => box.contentsObserved && !box.contents?.length);
   if (!destination) return {};
   return work("execute_phase", { observation_ref: observed.ref, scope_ref: observed.scopeRef, objective: "采两棵成熟树并入库",
-    completion: { metric: "trees-stored", quantity: 2 }, constraints: { stamina_floor: 80, destination_ref: destination[0], keep: [] },
-    steps: [{ id: "wood", operation: "chop-trees", after: [], inputs: [] },
+    completion: { metric: daily ? "daily-care-stored" : "trees-stored", quantity: daily ? 1 : 2 },
+    constraints: { stamina_floor: 80, destination_ref: destination[0], keep: [],
+      ...(daily ? { include_existing: [{ item_id: "(O)388", count: 3 }] } : {}) },
+    steps: [...(daily ? [{ id: "care", operation: "tend-crops", after: [], inputs: [] }] : []),
+      { id: "wood", operation: daily ? "harvest-crops" : "chop-trees", after: daily ? ["care"] : [], inputs: [] },
       { id: "drops", operation: "collect-products", after: ["wood"], inputs: ["wood"] },
       { id: "box", operation: "store-products", after: ["drops"], inputs: ["drops"] }],
     branches: [{ on: "target-unreachable", action: "skip-target" }, { on: "inventory-full", action: "store-and-resume" }] });
@@ -141,7 +144,7 @@ function planDeepSeek({ messages }) {
   for (const row of messages) if (row.role === "user") acceptContext(String(row.content ?? ""));
   const context = Object.keys(receivedContext).length ? receivedContext : parse(system.split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
   if (messages.some(row => row.role === "user" && String(row.content).includes("作为一个完整阶段")))
-    return phasePlan(context, messages.flatMap(row => (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments))));
+    return phasePlan(context, messages.flatMap(row => (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments))), messages.some(row => String(row.content).includes("当天作物照料")));
   return plan(messages.flatMap(row => {
     if (row.role === "user") return String(row.content ?? "").startsWith("项目观察数据") ? [] : [{ type: "user", text: String(row.content ?? "") }];
     if (row.role === "tool") return [{ type: "result", result: parse(row.content) }];
@@ -153,7 +156,7 @@ function planOpenAI({ input, instructions }) {
   for (const row of input) if (row.role === "user") acceptContext(row.content.filter(part => part.type === "input_text").map(part => part.text).join("\n"));
   const context = Object.keys(receivedContext).length ? receivedContext : parse(String(instructions ?? "").split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
   if (input.some(row => row.role === "user" && JSON.stringify(row.content).includes("作为一个完整阶段")))
-    return phasePlan(context, input.filter(row => row.type === "function_call").map(row => call(row.name, row.arguments)));
+    return phasePlan(context, input.filter(row => row.type === "function_call").map(row => call(row.name, row.arguments)), input.some(row => JSON.stringify(row.content).includes("当天作物照料")));
   return plan(input.flatMap(row => {
     if (row.role === "user") {
       const text = row.content.filter(part => part.type === "input_text").map(part => part.text).join("\n");

@@ -209,6 +209,19 @@ public partial class MainWindow
         WorkGoalText.Text = selected?.FullText ?? "";
         var goal = Rows(_workState, "activeGoals").FirstOrDefault(row => Text(row, "id") == selected?.Id);
         if (goal.ValueKind == JsonValueKind.Object) {
+            if (goal.TryGetProperty("phaseProgress", out var stage) && stage.ValueKind == JsonValueKind.Object) {
+                string step = Text(stage, "step") switch {
+                    "tend-crops" => "照料作物", "harvest-crops" => "收获作物", "chop-trees" => "采集木材",
+                    "collect-products" => "收集产物", "store-products" => "收纳入库", _ => "核对成果"
+                };
+                WorkGoalText.Text += "\n\n本阶段：" + ActionPresentation.DisplayText(Text(stage, "objective"))
+                    + "\n" + (Text(stage, "status") == "executing" ? "当前步骤：" + step
+                        : Text(stage, "status") == "completed" ? "阶段成果已确认" : "阶段已停止，请查看实际原因");
+                var products = Rows(stage, "storedItems").Select(row =>
+                    ActionPresentation.DisplayText(Text(row, "displayName") is { Length: > 0 } label ? label : "材料") + " × "
+                    + (row.TryGetProperty("count", out var count) ? count.ToString() : "待核对")).ToArray();
+                if (products.Length > 0) WorkGoalText.Text += "\n已入库：" + string.Join("；", products);
+            }
             if (goal.TryGetProperty("dayPlan", out var plan) && plan.ValueKind == JsonValueKind.Object) {
                 string next = Text(plan, "nextStep");
                 WorkGoalText.Text += "\n\n当天重点：" + ActionPresentation.DisplayText(Text(plan, "focus"))

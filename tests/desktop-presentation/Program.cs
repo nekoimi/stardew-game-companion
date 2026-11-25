@@ -85,10 +85,13 @@ internal static class Program
                     blockedBranches = new[] { new { branch = "购种", reason = "当前路线受阻" } }
                 });
                 plannedGoal["planningIssue"] = "missing-next-action";
+                plannedGoal["phaseProgress"] = JsonSerializer.SerializeToNode(new { objective = "储备木材并收好", status = "completed",
+                    storedItems = new[] { new { itemId = "(O)388", displayName = "木材", count = 31 } } });
                 Invoke(window, "ApplyWork", JsonSerializer.SerializeToElement(planned));
                 string goalText = Control<TextBlock>(window, "WorkGoalText").Text;
                 Check(goalText.Contains("补充仓储") && goalText.Contains("制作箱子") && goalText.Contains("购种")
                     && goalText.Contains("规划未给出"), "Daily continuation, branch blocker or planning issue is missing from the selected goal.");
+                Check(goalText.Contains("储备木材并收好") && goalText.Contains("木材 × 31") && !goalText.Contains("(O)388"), "Phase result leaked item identifiers or lost actual products.");
                 Check(Control<Expander>(window, "OtherWorkExpander").Visibility == Visibility.Visible, "Unlinked historical work was silently discarded.");
                 Check(!Control<Expander>(window, "WorkProcessExpander").IsExpanded, "Detailed process should start collapsed.");
                 var phaseStatus = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.SerializeToElement(status))!;

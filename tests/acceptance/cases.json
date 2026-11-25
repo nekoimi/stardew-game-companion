@@ -1,4 +1,11 @@
 {
+  "phase-daily": {
+    "title": "完整阶段照料收获入库",
+    "fixture": "harvest-store",
+    "stamina": 270,
+    "water": 1,
+    "instruction": "把当天作物照料、成熟作物收获、地上材料拾取和入库作为一个完整阶段规划好再连续执行。优先照料缺水作物，水不够自行补水；收获和已有的地面木材都放进田边空箱子，别卖，保留至少80点体力，全部完成再告诉我。"
+  },
   "phase-forestry": {
     "title": "完整阶段采木收集入库",
     "fixture": "mature-trees",

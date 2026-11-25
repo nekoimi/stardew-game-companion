@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$ReleaseDir,
     [string]$SavePath = '',
-    [ValidateSet('water-refill','harvest-store','rest-water','mature-trees','walk-pickup','walk-pickup-full','care-guidance','harvest-logistics','rest-forestry','empty-farm','farm-growth','phase-forestry')]
+    [ValidateSet('water-refill','harvest-store','rest-water','mature-trees','walk-pickup','walk-pickup-full','care-guidance','harvest-logistics','rest-forestry','empty-farm','farm-growth','phase-forestry','phase-daily')]
     [string[]]$Cases = @('care-guidance','harvest-logistics','rest-forestry'),
     [ValidateRange(60,3600)][int]$TimeoutSeconds = 600,
     [ValidateSet('deepseek','openai','openai-compatible','custom')][string]$Provider = 'deepseek',

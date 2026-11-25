@@ -16,7 +16,7 @@ hero:
       link: https://github.com/nekoimi/stardew-game-companion
 features:
   - title: 自然语言交代工作
-    details: 分批照料和收纳，日常之后结合资源安排当天经营。长期目标和当天计划分开保留，可以随时补充约定、暂停或改派。
+    details: 一次规划完整工作阶段，连续完成采木、收集和入库；日常照料缺水自动补水。长期目标和当天计划分开保留，可以随时暂停或改派。
   - title: 伙伴帮忙，也能交给 AI
     details: 独立伙伴拥有自己的背包、工具和体力；AI 自玩模式可以随时按 F9 接管。
   - title: 模型由你选择

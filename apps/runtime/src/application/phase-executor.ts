@@ -27,6 +27,9 @@ export class PhaseExecutor {
     const initial = await env.observe();
     const baseline = counts(initial.inventory), acquired = new Map<string, number>(), stored = new Map<string, number>();
     const allowed = new Set<string>(), worked: JsonObject[] = [], receipts: string[] = [], stepResults: JsonObject[] = [];
+    const names = new Map<string, string>();
+    const rememberNames = (snapshot: JsonObject) => { for (const slot of rows(object(snapshot.inventory).slots))
+      if (typeof slot.itemId === "string" && typeof slot.displayName === "string") names.set(slot.itemId, slot.displayName); };
     const initialDest = object(env.observation.destinations[plan.destinationRef]);
     const initialStock = rows(initialDest.contents).filter(row => row.itemId === "(O)388").reduce((sum, row) => sum + Number(row.stack ?? 0), 0);
     let chopped = 0, current = initial, stop = "", dryComplete = false;
@@ -67,6 +70,7 @@ export class PhaseExecutor {
     };
     const store = async (): Promise<void> => {
       check(); current = await env.observe();
+      rememberNames(current);
       const box = env.observation.destinations[destination];
       if (!box) throw new PhaseStop("destination-unavailable");
       const available = counts(current.inventory);
@@ -121,8 +125,8 @@ export class PhaseExecutor {
       const attempted = new Set<string>();
       for (;;) {
         check();
-        const candidates = (await ground()).filter(item => allowed.has(String(item.itemId)) && worked.some(tile =>
-          Math.abs(Number(object(item.tile).x) - Number(tile.x)) <= 5 && Math.abs(Number(object(item.tile).y) - Number(tile.y)) <= 5));
+        const candidates = (await ground()).filter(item => plan.existing.has(String(item.itemId)) || (allowed.has(String(item.itemId)) && worked.some(tile =>
+          Math.abs(Number(object(item.tile).x) - Number(tile.x)) <= 5 && Math.abs(Number(object(item.tile).y) - Number(tile.y)) <= 5)));
         if (!candidates.length) return;
         await ensureSpace();
         const actor = object(current.companion);
@@ -133,7 +137,7 @@ export class PhaseExecutor {
         const before = await env.observe();
         const result = await native("pickup-items", { locationId: env.observation.binding.locationId, tiles: [target.tile!] });
         current = await env.observe();
-        record(before, current, allowed);
+        record(before, current, new Set([...allowed, ...plan.existing.keys()]));
         if (["failed", "rejected"].includes(String(result.terminalState)) && object(result.error).code !== "no-item") {
           if (plan.branches.some(branch => branch.on === "target-unreachable" && branch.action === "skip-target")) continue;
           throw new PhaseStop(String(object(result.error).code ?? "pickup-failed"));
@@ -213,11 +217,18 @@ export class PhaseExecutor {
         else if (step.operation === "store-products") await store();
         else {
           const before = await env.observe();
+          const beforeGround = step.operation === "harvest-crops" ? await ground() : [];
+          const mature = rows(object(before.farmWork).matureCrops);
           const result = await env.workflow(step.operation === "tend-crops" ? "tend_crops" : "harvest_crops", { location_id: env.observation.binding.locationId });
           current = await env.observe();
           for (const id of Array.isArray(result.receiptIds) ? result.receiptIds : []) receipts.push(String(id));
           if (step.operation === "tend-crops") dryComplete = result.status === "completed" || result.stopReason === "no-observed-targets";
           for (const item of rows(result.inventoryGains)) allowed.add(String(item.itemId));
+          if (step.operation === "harvest-crops") {
+            worked.push(...mature.map(tile => ({ x: tile.x!, y: tile.y! })));
+            for (const item of await ground()) if (!beforeGround.some(old => tileKey(old.tile) === tileKey(item.tile)
+                && old.itemId === item.itemId && old.stack === item.stack)) allowed.add(String(item.itemId));
+          }
           record(before, current, allowed);
           if (result.status !== "completed" && result.stopReason !== "no-observed-targets") throw new PhaseStop(String(result.stopReason));
         }
@@ -235,7 +246,7 @@ export class PhaseExecutor {
     const result: JsonObject = { status, objective: plan.objective, metric: plan.metric, requestedQuantity: plan.quantity,
       stopReason: stop || "phase-objective-achieved", completedCount: chopped, executionModelRequests: 0,
       acquiredItems: [...acquired].map(([itemId, count]) => ({ itemId, count })),
-      storedItems: [...stored].map(([itemId, count]) => ({ itemId, count })),
+      storedItems: [...stored].map(([itemId, count]) => ({ itemId, count, displayName: names.get(itemId) ?? "材料" })),
       steps: stepResults, blockedBranches: [...blocks], receiptIds: receipts.slice(-16), receiptCount: receipts.length,
       needsReconciliation: status === "recovery-pending" };
     env.progress(result); return result;

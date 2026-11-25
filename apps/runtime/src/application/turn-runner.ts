@@ -42,6 +42,7 @@ interface Turn {
   startedAt: number;
   phaseObservation?: PhaseObservation;
   lastPhaseStatus?: string;
+  phaseState?: JsonObject;
 }
 
 export class TurnRunner {
@@ -135,10 +136,11 @@ export class TurnRunner {
       recoveryPending: !!this.uncertain || this.game.state.recoveryPending === true,
       activeCommandId: this.active?.nativeAction ?? "", activity: this.game.state.activity ?? "idle",
       activeSkillId: this.active?.nativeSkill ?? "", agentPhase: phase,
+      ...(this.active?.phaseState ? { phaseProgress: this.active.phaseState } : {}),
       ...(issue ? { modelIssue: { code: issue.code, message: issue.message,
         ...(retry ? { attempt: retry.attempt, maxAttempts: retry.maxAttempts } : {}) } } : {}),
       progress: this.game.state.progress ?? "", clockPauseOwner: this.game.state.clockPauseOwner ?? null,
-      thinking: !!this.active && !this.active.nativeAction && !this.active.modelRetry && !this.active.abort.signal.aborted,
+      thinking: !!this.active && !this.active.nativeAction && !this.active.phaseState && !this.active.modelRetry && !this.active.abort.signal.aborted,
       modelStreaming: this.selection?.stream !== false,
       modelBusy: !!this.active || this.transition,
       connection: { ready: !!this.model && !!binding && !this.uncertain && this.game.state.recoveryPending !== true,
@@ -176,6 +178,7 @@ export class TurnRunner {
     if (this.game.state.paused === true) return "paused";
     if (this.active?.modelRetry) return "model-retry";
     if (this.active?.phase === "reconciling") return "reconciling";
+    if (this.active?.phaseState?.status === "executing" && !this.active.nativeAction) return "executing-phase";
     if (this.active?.nativeAction) {
       return this.game.state.activeCommandId === this.active.nativeAction
         ? String(this.game.state.actionPhase ?? "executing") : "waiting-game";
@@ -869,6 +872,7 @@ export class TurnRunner {
               goalId: turn.goalId, signal, workBlock,
               phaseObservation: turn.phaseObservation, phaseBinding: () => this.phaseBinding(turn),
               phaseProgress: state => {
+                turn.phaseState = state;
                 this.publish("phase-progress", { ...turn.binding, goalId: turn.goalId, turnId: turn.id, ...state });
                 if (this.store && !plugin) this.store.updateItem(save, "goals", turn.goalId, { phaseProgress: state });
                 this.changed();
@@ -925,7 +929,8 @@ export class TurnRunner {
               operation, ...object(result), turnId: turn.id, requestId: turn.originalRequestId,
               gameDate: gameDate(this.game.snapshot),
             } });
-            if (operation === "execute_phase") { turn.phaseObservation = undefined; turn.lastPhaseStatus = String(object(result).status ?? "stopped"); }
+            if (operation === "execute_phase") { turn.phaseObservation = undefined; turn.phaseState = undefined;
+              turn.lastPhaseStatus = String(object(result).status ?? "stopped"); }
           }
           if (!failed && !plugin && call.name === "manage_arrangements"
               && Object.hasOwn(object(call.arguments.change), "manage_goal")) {

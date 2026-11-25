@@ -81,6 +81,7 @@ internal static class ActionPresentation
         "model-retry" => "模型服务暂时不可用，等待自动重试",
         "model-error" => "模型调用失败，请查看原因",
         "planning-route" => "正在寻找可通行的路线",
+        "executing-phase" => "正在连续完成本阶段工作",
         "validating" => "正在检查执行条件",
         "executing" => Activity(skill),
         "verifying" => "正在复查游戏中的实际结果",
