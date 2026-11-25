@@ -396,6 +396,20 @@ function fixture(game, model) {
   return { runner, events };
 }
 
+test("forestry rejects a protected or unobserved tree before any native action", async () => {
+  const game = new FakeGame();
+  const tools = new CompanionTools(game, "");
+  game.snapshot = { companion: { locationId: "Farm" }, farming: { location: "Farm", choppableTrees: [
+    { tile: { x: 2, y: 2 }, kind: "tree", growthStage: 2, tapped: false },
+    { tile: { x: 3, y: 2 }, kind: "tree", growthStage: 5, tapped: true },
+  ] } };
+  const context = { binding, turnId: "forestry", goalId: "forestry", requestId: "forestry",
+    signal: new AbortController().signal, native() { assert.fail("Protected trees must not be dispatched"); }, speak() {}, changed() {} };
+  for (const x of [2, 3, 4]) await assert.rejects(tools.invoke(context, "submit_work", {
+    action: { chop_tree: { location_id: "Farm", tiles: [{ x, y: 2 }] } },
+  }), /成熟/);
+});
+
 test("ongoing farming retains newer player authorization beyond chat history and executes another branch before waiting", async () => {
   const game = new FakeGame();
   const store = new CompanionStore(":memory:");

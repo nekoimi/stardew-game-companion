@@ -21,6 +21,7 @@
 - [执行可靠性与工作反馈优化进度](work-reliability-optimization.md)
 - [Agent 批次工作与阶段规划方案](agent-batched-work-plan.md)、[实施 TODO](agent-batched-work-todo.md)、[效率基线](agent-batched-work-baseline.md)与[验收报告](agent-batched-work-acceptance.md)
 - [持续经营规划与接续验收](ongoing-farm-planning-acceptance.md)
+- [Agent 完整阶段规划与连续执行方案](agent-phase-planning-plan.md)与[实施 TODO](agent-phase-planning-todo.md)（待实施）
 - [运行时提示词](../../resources/agent/prompts/agent-ts-instructions.md)与[游戏指导](../../resources/agent/prompts/agent-guidance)
 - [TypeScript 运行时方案](agent-runtime-rewrite.md)
 - [改造进度](agent-runtime-rewrite-todo.md)与[发行验收](agent-runtime-rewrite-phase3.md)

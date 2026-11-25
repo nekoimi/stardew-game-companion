@@ -4,6 +4,8 @@
 
 状态：阶段 A 至 E 已实施并验收，结果与正式 API 限制见[验收报告](agent-batched-work-acceptance.md)。
 
+下一轮跨操作的完整阶段规划、地图缓存与请求组织优化见[新方案](agent-phase-planning-plan.md)和[实施 TODO](agent-phase-planning-todo.md)，目前待实施；本页保留上一轮的实现范围。
+
 ## 背景
 
 玩家在连续经营测试中反馈，Agent 经常完成一个小动作后就再次等待模型，行动节奏断续，阶段规划也不够稳定。当前 `TurnRunner` 将模型工具调用逐项执行，并把全部结果送回模型继续决策。`submit_work` 通常对应一个原生动作，因此重复农活容易形成多轮模型请求。

@@ -105,6 +105,7 @@ export const queries: Record<string, [string, Schema]> = {
 
 export function validate(schema: Schema, value: JsonValue | undefined, path = "参数"): void {
   const invalid = () => { throw new Error(`${path}不符合工具定义。`); };
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value ?? null)) return invalid();
   if (schema.type === "object") {
     if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
     const props = object(schema.properties);
