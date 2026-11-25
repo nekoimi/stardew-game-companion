@@ -3512,6 +3512,10 @@ public sealed class TestDriverMod : Mod
             ?? throw new InvalidOperationException("Production ModEntry unavailable for harness fixture.");
         AssertHarnessFixtureBoundary(modEntry);
         string mode = request.GetProperty("mode").GetString() ?? "";
+        bool mixedDaily = mode == "phase-daily";
+        if (mixedDaily) mode = "harvest-store";
+        bool remoteForestry = mode == "phase-remote";
+        if (remoteForestry) mode = "mature-trees";
         bool ongoingGrowth = mode == "farm-growth";
         if (ongoingGrowth) mode = "mature-trees";
         if (mode is not ("watering" or "partial-planting" or "harvest-store" or "rest-water" or "water-refill" or "mature-trees" or "walk-pickup" or "walk-pickup-full" or "empty-farm"))
@@ -3614,9 +3618,10 @@ public sealed class TestDriverMod : Mod
             dirt.state.Value = mode is "watering" or "rest-water" or "water-refill" || empty ? 0 : 1;
             if (empty) _harnessFixtureInitiallyEmpty.Add(tile);
         }
-        ReadNativeMember(modEntry, "_actor")?.GetType().GetProperty("Stamina")?.SetValue(actor, stamina);
+        bool fixturePlayerMode = ReadNativeMember(ReadNativeMember(modEntry, "_config"), "Mode")?.ToString() == "player";
+        if (!fixturePlayerMode) actor.GetType().GetProperty("Stamina")?.SetValue(actor, stamina);
         farmer.stamina = stamina;
-        actor.GetType().GetProperty("WaterLeft")?.SetValue(actor, water);
+        if (!fixturePlayerMode) actor.GetType().GetProperty("WaterLeft")?.SetValue(actor, water);
         can.WaterLeft = water;
         for (int index = 0; index < farmer.Items.Count; index++)
             if (farmer.Items[index] is StardewValley.Object item && item.Edibility >= 0) farmer.Items[index] = null;
@@ -3672,6 +3677,7 @@ public sealed class TestDriverMod : Mod
                 new object?[] { actor, "Farm", NativeTile(tile), null }), "Success") is true;
             foreach (var tile in candidates)
             {
+                if (remoteForestry && Math.Max(Math.Abs(tile.X - farmer.Tile.X), Math.Abs(tile.Y - farmer.Tile.Y)) <= 17) continue;
                 if (tile.X < 0 || tile.Y < 0 || farm.objects.ContainsKey(tile) || farm.terrainFeatures.ContainsKey(tile)
                     || Vector2.DistanceSquared(tile, selected[0]) < 4
                     || _acceptanceMatureTrees.Any(other => Vector2.DistanceSquared(tile, other) < 9)
@@ -3720,11 +3726,19 @@ public sealed class TestDriverMod : Mod
             foreach (var pair in farm.objects.Pairs.ToArray())
                 if (pair.Value.CanBeGrabbed && !pair.Value.bigCraftable.Value) farm.objects.Remove(pair.Key);
         }
+        if (mixedDaily) {
+            foreach (var tile in _harnessFixtureTiles.Take(2)) {
+                var dirt = (HoeDirt)farm.terrainFeatures[tile];
+                dirt.crop = CreateParsnipCrop((int)tile.X, (int)tile.Y, farm, mature: false);
+                dirt.state.Value = 0;
+            }
+        }
         var fixture = new {
-            runId = _runId, label, mode = ongoingGrowth ? "farm-growth" : mode, timestampUtc = DateTime.UtcNow.ToString("o"),
+            runId = _runId, label, mode = ongoingGrowth ? "farm-growth" : mixedDaily ? "phase-daily" : remoteForestry ? "phase-remote" : mode, timestampUtc = DateTime.UtcNow.ToString("o"),
             saveName = Constants.SaveFolderName, isolatedSavesPath = StardewValley.Program.GetSavesFolder(),
             year = Game1.year, season = Game1.currentSeason, day = Game1.dayOfMonth, timeOfDay = Game1.timeOfDay,
             locationId = "Farm", targetCount = _harnessFixtureTiles.Count, nativeReachability = reachable,
+            matureTreeTiles = _acceptanceMatureTrees.Select(tile => new { x = (int)tile.X, y = (int)tile.Y }).ToArray(),
             chest = _acceptanceChest is Vector2 ct ? new { x = (int)ct.X, y = (int)ct.Y } : null,
             before, after = _harnessFixtureTiles.Select(tile => DescribeCropTile(tile, (HoeDirt)farm.terrainFeatures[tile])).ToArray(),
             initialCropCount = _harnessFixtureTiles.Count - _harnessFixtureInitiallyEmpty.Count, initialEmptyCount = _harnessFixtureInitiallyEmpty.Count,
@@ -3952,6 +3966,23 @@ public sealed class TestDriverMod : Mod
         else if (action == "harness-fixture")
         {
             ArrangeHarnessFixture(outDir, label, request);
+        }
+        else if (action == "harness-move-chest")
+        {
+            AssertHarnessFixtureBoundary(modEntry);
+            var farm = Game1.getFarm();
+            if (_acceptanceChest is not Vector2 old || !farm.objects.TryGetValue(old, out var box)
+                || box is not StardewValley.Objects.Chest) throw new InvalidOperationException("Fixture chest unavailable.");
+            var next = Enumerable.Range(-8, 17).SelectMany(dx => Enumerable.Range(-8, 17).Select(dy => old + new Vector2(dx, dy)))
+                .OrderBy(tile => Vector2.DistanceSquared(tile, old))
+                .FirstOrDefault(tile => tile.X > 0 && tile.Y > 0 && !farm.objects.ContainsKey(tile)
+                    && (!farm.terrainFeatures.TryGetValue(tile, out var feature) || feature is HoeDirt { crop: null })
+                    && farm.isTilePassable(tile) && !farm.buildings.Any(building => building.occupiesTile(tile)));
+            if (next == Vector2.Zero) throw new InvalidOperationException("No free fixture chest site.");
+            farm.objects.Remove(old);
+            box.TileLocation = next;
+            farm.objects[next] = box;
+            _acceptanceChest = next;
         }
         else if (action == "native-growth-fixture")
         {
@@ -8628,6 +8659,7 @@ public sealed class TestDriverMod : Mod
                 payload["acceptanceMatureTreesRemaining"] = _acceptanceMatureTrees.Count(tile => farm.terrainFeatures.TryGetValue(tile, out var tree) && tree is Tree);
                 payload["acceptanceSaplingStage"] = _acceptanceSapling is Vector2 sapling && farm.terrainFeatures.TryGetValue(sapling, out var young)
                     && young is Tree youngTree ? youngTree.growthStage.Value : (int?)null;
+                payload["acceptanceChestTile"] = _acceptanceChest is Vector2 chestTile ? new { x = (int)chestTile.X, y = (int)chestTile.Y } : null;
                 payload["acceptanceChestItems"] = _acceptanceChest is Vector2 ct && farm.objects.TryGetValue(ct, out var chestObject)
                     && chestObject is StardewValley.Objects.Chest chest ? DescribeItems(chest.Items) : null;
                 if (_harnessFixtureMode is "mature-trees" or "farm-growth")

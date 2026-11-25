@@ -27,17 +27,30 @@ def collect(run):
         tool_calls = [row["payload"] for row in trace if row.get("type") == "tool"]
         native = [row["payload"] for row in trace if row.get("type") == "result"]
         metrics = [row["payload"] for row in trace if row.get("type") == "model-metrics"]
+        transport_path = run / "evidence/model-transport-metrics.jsonl"
+        transport = [json.loads(line) for line in transport_path.read_text(encoding="utf-8").splitlines()] if transport_path.exists() else []
+        # Transport evidence is run-wide; expose it per scene only for a single
+        # scene experiment rather than assigning another scene's requests.
+        transport_wait = sum(row["elapsedMs"] for row in transport) if len(reports) == 1 and transport else None
         totals = {key: sum(value[key] for value in counters if isinstance(value.get(key), (int, float)))
                   if counters and all(isinstance(value.get(key), (int, float)) for value in counters) else None
                   for key in ("input", "output", "cacheRead", "cacheWrite")}
+        usage_coverage = {key: {"reportedRequests": sum(isinstance(value.get(key), (int, float)) for value in counters),
+                                "totalRequests": len(counters),
+                                "knownSum": sum(value[key] for value in counters if isinstance(value.get(key), (int, float)))}
+                          for key in ("input", "output", "cacheRead", "cacheWrite")}
         rows.append({"case": report["case"], "status": report["status"], "source": "simulated" if simulated else "formal",
                      "backend": report.get("backend"), "elapsedSeconds": report.get("elapsedSeconds"),
-                     "modelRequests": len(counters), "retries": sum(value.get("retry") is True for value in counters),
+                     "modelRequests": len(metrics) if metrics else len(counters),
+                     "requestCountSource": "request-metrics" if metrics else "usage-records",
+                     "retries": sum(row.get("requestKind") == "retry" for row in metrics) if metrics else sum(value.get("retry") is True for value in counters),
                      "modelWaitMs": sum(row.get("elapsedMs", 0) for row in metrics) if metrics else None,
+                     "transportWaitMs": transport_wait, "transportRequests": len(transport) if transport_wait is not None else None,
                      "scanCacheState": "instrumented" if any(row.get("type") == "phase_map_cache" for row in trace) else "not-instrumented",
                      "modelRequestKinds": [row.get("requestKind") for row in metrics],
                      "supplierCacheState": "mock" if simulated else "provider-reported-not-controlled",
-                     "usage": None if simulated else totals, "nativeActions": len(native),
+                     "usage": None if simulated else totals, "usageCoverage": None if simulated else usage_coverage,
+                     "nativeActions": len(native),
                      "nativeFailures": sum(row.get("terminalState") not in ("succeeded", "partially-succeeded") for row in native),
                      "modelObservationCalls": sum(row.get("name") in ("get_status", "query_game") for row in tool_calls),
                      "multiTargetChop": any(len(((row.get("input") or {}).get("action") or {}).get("chop_tree", {}).get("tiles", [])) > 1 for row in tool_calls),

@@ -31,6 +31,10 @@ delete environment.STARDEW_MODEL_TEST_ONLY;
 if (mock) environment.STARDEW_ACCEPTANCE_FIXTURE_PROTOCOL = protocol;
 const entry = join(runtime, "dist", "bootstrap.js");
 const options = mock ? ["--import", new URL("./preset-provider-preload.mjs", import.meta.url).href] : [];
+if (process.env.STARDEW_ACCEPTANCE_TIMING === "1") {
+  environment.STARDEW_ACCEPTANCE_TRANSPORT_METRICS = join(evidence, "model-transport-metrics.jsonl");
+  options.push("--import", new URL("./model-transport-metrics.mjs", import.meta.url).href);
+}
 const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", ...options, entry, "--desktop", mod, ownerPid], {
   env: environment, stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
 });

@@ -1,5 +1,13 @@
 import { createMockDeepSeek } from "../../apps/runtime/tests/mock-deepseek.mjs";
 import { createMockOpenAI } from "../../apps/runtime/tests/mock-openai.mjs";
+import { readFileSync } from "node:fs";
+const scenarios = JSON.parse(readFileSync(new URL("./cases.json", import.meta.url), "utf8"));
+const requests = new Set(Object.values(scenarios).flatMap(row => [row.instruction, row.then, row.cacheSecond, row.cacheThird].filter(Boolean)));
+requests.add(scenarios["phase-update"].duringAction);
+function currentTask(messages) {
+  const start = messages.findLastIndex(row => row.type === "user" && requests.has(row.text));
+  return start >= 0 ? messages.slice(start) : messages;
+}
 
 const work = (name, params) => ({ name: "submit_work", args: { action: { [name]: params } } });
 const observe = { name: "get_status", args: {} };
@@ -21,6 +29,9 @@ function plan(messages) {
   const firstTool = messages.findIndex(row => row.type === "result");
   const before = firstTool < 0 ? messages : messages.slice(0, firstTool);
   const request = before.findLast(row => row.type === "user")?.text ?? "";
+  if (request.includes("先停下采伐")) return {};
+  if (request.includes("查看") && request.includes("箱子的位置") || request.includes("箱子位置发生变化"))
+    return firstTool < 0 ? { name: "query_game", args: { query: { query_chests: {} } } } : {};
   if (request.includes("日常完成后根据剩余时间")) return planGrowth(messages, request);
   if (firstTool < 0) return observe;
   const lastCall = messages.findLast(row => row.type === "call");
@@ -131,7 +142,7 @@ function phasePlan(context, calls, daily = false) {
   return work("execute_phase", { observation_ref: observed.ref, scope_ref: observed.scopeRef, objective: "采两棵成熟树并入库",
     completion: { metric: daily ? "daily-care-stored" : "trees-stored", quantity: daily ? 1 : 2 },
     constraints: { stamina_floor: 80, destination_ref: destination[0], keep: [],
-      ...(daily ? { include_existing: [{ item_id: "(O)388", count: 3 }] } : {}) },
+      include_existing: daily ? [{ item_id: "(O)388", count: 3 }] : [] },
     steps: [...(daily ? [{ id: "care", operation: "tend-crops", after: [], inputs: [] }] : []),
       { id: "wood", operation: daily ? "harvest-crops" : "chop-trees", after: daily ? ["care"] : [], inputs: [] },
       { id: "drops", operation: "collect-products", after: ["wood"], inputs: ["wood"] },
@@ -143,21 +154,20 @@ function planDeepSeek({ messages }) {
   const system = messages.find(row => row.role === "system")?.content ?? "";
   for (const row of messages) if (row.role === "user") acceptContext(String(row.content ?? ""));
   const context = Object.keys(receivedContext).length ? receivedContext : parse(system.split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
-  if (messages.some(row => row.role === "user" && String(row.content).includes("作为一个完整阶段")))
-    return phasePlan(context, messages.flatMap(row => (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments))), messages.some(row => String(row.content).includes("当天作物照料")));
-  return plan(messages.flatMap(row => {
+  const decoded = currentTask(messages.flatMap(row => {
     if (row.role === "user") return String(row.content ?? "").startsWith("项目观察数据") ? [] : [{ type: "user", text: String(row.content ?? "") }];
     if (row.role === "tool") return [{ type: "result", result: parse(row.content) }];
     return (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments));
   }));
+  if (decoded.some(row => row.type === "user" && row.text.includes("作为一个完整阶段")))
+    return phasePlan(context, decoded, decoded.some(row => row.type === "user" && row.text.includes("当天作物照料")));
+  return plan(decoded);
 }
 
 function planOpenAI({ input, instructions }) {
   for (const row of input) if (row.role === "user") acceptContext(row.content.filter(part => part.type === "input_text").map(part => part.text).join("\n"));
   const context = Object.keys(receivedContext).length ? receivedContext : parse(String(instructions ?? "").split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
-  if (input.some(row => row.role === "user" && JSON.stringify(row.content).includes("作为一个完整阶段")))
-    return phasePlan(context, input.filter(row => row.type === "function_call").map(row => call(row.name, row.arguments)), input.some(row => JSON.stringify(row.content).includes("当天作物照料")));
-  return plan(input.flatMap(row => {
+  const decoded = currentTask(input.flatMap(row => {
     if (row.role === "user") {
       const text = row.content.filter(part => part.type === "input_text").map(part => part.text).join("\n");
       if (text.startsWith("项目观察数据")) return [];
@@ -167,6 +177,9 @@ function planOpenAI({ input, instructions }) {
     if (row.type === "function_call_output") return [{ type: "result", result: parse(row.output) }];
     return [];
   }));
+  if (decoded.some(row => row.type === "user" && row.text.includes("作为一个完整阶段")))
+    return phasePlan(context, decoded, decoded.some(row => row.type === "user" && row.text.includes("当天作物照料")));
+  return plan(decoded);
 }
 
 const openAI = process.env.STARDEW_ACCEPTANCE_FIXTURE_PROTOCOL === "responses";

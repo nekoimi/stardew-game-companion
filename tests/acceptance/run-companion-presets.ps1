@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$ReleaseDir,
     [string]$SavePath = '',
-    [ValidateSet('water-refill','harvest-store','rest-water','mature-trees','walk-pickup','walk-pickup-full','care-guidance','harvest-logistics','rest-forestry','empty-farm','farm-growth','phase-forestry','phase-daily')]
+    [ValidateSet('water-refill','harvest-store','rest-water','mature-trees','walk-pickup','walk-pickup-full','care-guidance','harvest-logistics','rest-forestry','empty-farm','farm-growth','phase-forestry','phase-daily','phase-remote','phase-cache','phase-update','phase-takeover')]
     [string[]]$Cases = @('care-guidance','harvest-logistics','rest-forestry'),
     [ValidateRange(60,3600)][int]$TimeoutSeconds = 600,
     [ValidateSet('deepseek','openai','openai-compatible','custom')][string]$Provider = 'deepseek',
@@ -10,6 +10,7 @@ param(
     [switch]$NonStreaming,
     [string]$Model,
     [switch]$Simulated,
+    [switch]$PlayerMode,
     [string]$Python
 )
 $ErrorActionPreference = 'Stop'
@@ -66,6 +67,7 @@ $launchArgs += @('-ApiProvider', $Provider, '-ApiModel', $Model)
 if ($Protocol) { $launchArgs += @('-ApiProtocol', $Protocol) }
 if ($NonStreaming) { $launchArgs += '-ApiNonStreaming' }
 if ($Simulated) { $launchArgs += '-ApiSimulated' }
+if ($PlayerMode) { $launchArgs += '-PlayerMode' }
 try {
     $launcher = Start-Process -FilePath $shell -ArgumentList $launchArgs -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $suite 'launch.log') -RedirectStandardError (Join-Path $suite 'launch.err')

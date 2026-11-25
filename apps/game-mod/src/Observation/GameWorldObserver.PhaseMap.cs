@@ -31,7 +31,8 @@ public sealed partial class GameWorldObserver
                 && tile.CardinalNeighbors().Any(standing => IsTilePassable(locationName, standing)),
             tile => {
                 if (location.objects.TryGetValue(new Vector2(tile.X, tile.Y), out var item) && item is Chest chest && !chest.fridge.Value)
-                    return new() { ["kind"] = "chest", ["tile"] = new { x = tile.X, y = tile.Y }, ["itemId"] = item.QualifiedItemId };
+                    return new() { ["kind"] = "chest", ["tile"] = new { x = tile.X, y = tile.Y }, ["itemId"] = item.QualifiedItemId,
+                        ["identity"] = RuntimeHelpers.GetHashCode(chest).ToString() };
                 if (location.furniture.OfType<BedFurniture>().Any(bed => bed.TileLocation.X == tile.X && bed.TileLocation.Y == tile.Y))
                     return new() { ["kind"] = "bed", ["tile"] = new { x = tile.X, y = tile.Y } };
                 if (location.warps.FirstOrDefault(warp => warp.X == tile.X && warp.Y == tile.Y) is { } exit)

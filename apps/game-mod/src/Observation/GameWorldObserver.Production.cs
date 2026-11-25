@@ -6,6 +6,11 @@ namespace StardewAI.Companion.Mod.Observation;
 
 public sealed partial class GameWorldObserver
 {
+    // Identity follows the native object while debris moves between tiles. It is
+    // observation-only, expires with the object, and grants no pickup permission.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, GroundSource> _groundSources = new();
+    private sealed class GroundSource { public string Id { get; } = Guid.NewGuid().ToString("N"); }
+    private string GroundSourceId(object value) => _groundSources.GetValue(value, _ => new GroundSource()).Id;
     public bool ProductionSignalsTruncated { get; private set; }
     private int _productionSignalTime = -1;
     private List<ProductionSignal> _productionSignals = new();
@@ -55,7 +60,7 @@ public sealed partial class GameWorldObserver
             .Select(i => new { itemId=i.QualifiedItemId, name=i.DisplayName, stack=i.Stack,
                 staminaRecovered=i.staminaRecoveredOnConsumption(), healthRecovered=i.healthRecoveredOnConsumption() }).ToList();
         return new() { ["locationId"]=locationName, ["capturedRevision"]=WorldRevision,
-            ["groundItems"]=collectibles.Take(256).Select(g=> new GroundItemSnapshot(new(g.Tile.X,g.Tile.Y),g.Kind,g.ItemId,g.Name,g.Stack,g.IsDropped,g.IsWeed,g.CanBeGrabbed,g.ClearTool,g.IsStone,g.IsTwig,g.Quality)).ToList(),
+            ["groundItems"]=collectibles.Take(256).Select(g=> new GroundItemSnapshot(new(g.Tile.X,g.Tile.Y),g.Kind,g.ItemId,g.Name,g.Stack,g.IsDropped,g.IsWeed,g.CanBeGrabbed,g.ClearTool,g.IsStone,g.IsTwig,g.Quality,g.SourceId)).ToList(),
             ["groundItemsScope"]="existing-drops-and-collectibles",
             ["groundItemsTruncated"]=collectibles.Count>256 || Math.Max(width,height)>256, ["waterRefillTiles"]=water.Take(32).Select(t=>new TileCoord(t.X,t.Y)).ToList(),
             ["waterRefillTilesTruncated"]=water.Count>32, ["waterRefillScope"]="map", ["waterRefillMapComplete"]=true,

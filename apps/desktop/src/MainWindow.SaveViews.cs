@@ -216,7 +216,16 @@ public partial class MainWindow
                 };
                 WorkGoalText.Text += "\n\n本阶段：" + ActionPresentation.DisplayText(Text(stage, "objective"))
                     + "\n" + (Text(stage, "status") == "executing" ? "当前步骤：" + step
-                        : Text(stage, "status") == "completed" ? "阶段成果已确认" : "阶段已停止，请查看实际原因");
+                        : Text(stage, "status") == "completed" ? "阶段成果已确认" : "阶段已停止：" + (Text(stage, "stopReason") switch {
+                            "stamina-reserve" => "已达到保留体力边界", "inventory-full" => "背包空间不足",
+                            "destination-replaced" or "destination-unavailable" => "原定箱子已变化，需要重新安排",
+                            "phase-map-changed" => "地图发生变化，需要重新规划", "player-update" => "收到你的新要求",
+                            "interrupted" or "phase-context-changed" => "控制或游戏状态已变化",
+                            "recovery-pending" => "原生动作结果待核对", "product-collection-unconfirmed" => "产物去向尚未确认",
+                            "product-source-unconfirmed" => "产物与其他物品混在一起，需要确认收集范围",
+                            "existing-material-quantity-exceeded" => "同一位置的现有材料超出指定数量，需要重新安排",
+                            "phase-objective-unmet" => "已完成部分工作，剩余目标需要重新安排", _ => "执行条件已变化，需要重新核对"
+                        }));
                 var products = Rows(stage, "storedItems").Select(row =>
                     ActionPresentation.DisplayText(Text(row, "displayName") is { Length: > 0 } label ? label : "材料") + " × "
                     + (row.TryGetProperty("count", out var count) ? count.ToString() : "待核对")).ToArray();

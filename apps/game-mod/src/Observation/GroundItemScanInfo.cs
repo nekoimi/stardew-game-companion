@@ -21,5 +21,6 @@ public sealed record GroundItemScanInfo(
     /// <summary>True for a native twig obstacle (cleared with the native Axe).</summary>
     bool IsTwig = false,
     int? Quality = null,
-    long? ReservedForFarmer = null
+    long? ReservedForFarmer = null,
+    string? SourceId = null
 );

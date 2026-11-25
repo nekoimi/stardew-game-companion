@@ -719,6 +719,8 @@ export class TurnRunner {
         const idleTimer = setTimeout(() => idle.abort(), modelResponseTimeout(streaming));
         try {
           const phaseBinding = this.phaseBinding(turn);
+          if (turn.phaseObservation && turn.phaseObservation.binding.locationId !== phaseBinding.locationId)
+            turn.phaseObservation = undefined;
           if (this.game.supportsPhaseMap && phaseBinding.locationId === "Farm" && !bedtimeOnly
               && (!turn.phaseObservation || turn.phaseObservation.binding.instructionVersion !== phaseBinding.instructionVersion
                 || turn.phaseObservation.binding.gameDate !== phaseBinding.gameDate)) {
@@ -838,6 +840,7 @@ export class TurnRunner {
         repeatedBatch = batch;
         if (repeatCount >= 4) throw new Error("模型重复请求同一工具且游戏状态未变，请补充要求后继续。");
         messages.push({ role: "assistant", text: response.text, calls: response.calls });
+        const publicBeforeTools = publicMessages;
         for (const call of response.calls) {
           if (signal.aborted) break;
           if (call.name === "submit_work" && this.bedtimeNeedsSleep(turn.binding)) {
@@ -874,7 +877,14 @@ export class TurnRunner {
               phaseProgress: state => {
                 turn.phaseState = state;
                 this.publish("phase-progress", { ...turn.binding, goalId: turn.goalId, turnId: turn.id, ...state });
-                if (this.store && !plugin) this.store.updateItem(save, "goals", turn.goalId, { phaseProgress: state });
+                if (this.store && !plugin) {
+                  const existing = this.store.items(save, "goals").find(goal => goal.id === turn.goalId);
+                  this.store.updateItem(save, "goals", turn.goalId, { ...(!existing ? {
+                    text: this.store.playerRequest(save, turn.originalRequestId).text ?? state.objective ?? "当前工作",
+                    requestId: turn.originalRequestId, status: "active", continuation: "wait",
+                    horizon: "finite", updatedDay: gameDate(this.game.snapshot),
+                  } : {}), phaseProgress: state });
+                }
                 this.changed();
               },
               native: (skill, params, observation) => {
@@ -907,6 +917,7 @@ export class TurnRunner {
             if (call.name === "request_player_decision") waiting = true;
           }
           catch (error) { failed = true; result = { error: error instanceof Error ? error.message : "工具执行失败。" }; }
+          if (operation === "execute_phase" && failed) { turn.phaseObservation = undefined; turn.lastPhaseStatus = "rejected"; }
           if (stage) {
             turn.stages++;
             const summary = object(result);
@@ -945,6 +956,24 @@ export class TurnRunner {
           if (waiting) break;
         }
         if (waiting) break;
+        // After the model confirms a completed finite goal, another request to
+        // restate the same phase receipts adds no decision. Keep ongoing goals,
+        // new work, failures and player updates on the usual model loop.
+        if (!plugin && !turn.additional.length && !signal.aborted && turn.lastPhaseStatus === "completed"
+            && output.calls.length && output.calls.every(call => call.name === "manage_arrangements" || call.name === "remember")) {
+          const completed = this.store?.items(save, "goals").find(goal => goal.id === turn.goalId
+            && goal.status === "completed" && goal.horizon !== "ongoing");
+          const phase = object(completed?.lastStage);
+          if (phase.operation === "execute_phase" && phase.status === "completed"
+              && !messages.slice(-output.calls.length).some(message => message.role === "tool" && message.failed)) {
+            const stored = Array.isArray(phase.storedItems) ? phase.storedItems.map(object)
+              .map(item => `${String(item.displayName ?? "材料")} ${Number(item.count ?? 0)} 件`).join("、") : "";
+            answer = publicMessages > publicBeforeTools ? "" : output.text.trim()
+              || (stored ? `这一阶段已完成，已入库：${stored}。` : "这一阶段已完成，成果已核对。");
+            model.settleTools?.(messages);
+            break;
+          }
+        }
       }
     } catch (error) {
       failure = error instanceof Error ? error.message : "Agent 回合未完成。";

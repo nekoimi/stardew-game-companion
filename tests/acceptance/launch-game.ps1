@@ -18,6 +18,7 @@ param(
     [switch]$ApiNonStreaming,
     [string]$ApiModel,
     [switch]$ApiSimulated,
+    [switch]$PlayerMode,
     # Optional child-process environment overrides (name => value). Used by sandboxed
     # runs to redirect SMAPI's %APPDATA% error-log path into the workspace, because
     # the DSH file sandbox denies writes under the user's real AppData.
@@ -452,6 +453,9 @@ try {
     if ($PresetAcceptance) {
         if ($Scenario -ne 'free-mode-control' -or $Mode -ne 'scenario') {
             throw 'Preset acceptance requires the isolated free-mode-control scenario.'
+        }
+        if ($PlayerMode) {
+            @{ Mode = 'player' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $prodDest 'config.json') -Encoding utf8NoBOM
         }
     }
 

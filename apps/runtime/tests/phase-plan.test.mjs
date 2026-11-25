@@ -9,7 +9,7 @@ export const observation = { ref: "observed", binding, revision: 12, complete: t
   destinations: { box: { tile: { x: 2, y: 2 } } }, facts: {} };
 export const plan = () => ({ observation_ref: "observed", objective: "采木并收好", scope_ref: "farm",
   completion: { metric: "new-wood-stored", quantity: 60 },
-  constraints: { stamina_floor: 80, destination_ref: "box", keep: [{ item_id: "(O)388", count: 10 }] },
+  constraints: { stamina_floor: 80, destination_ref: "box", keep: [{ item_id: "(O)388", count: 10 }], include_existing: [] },
   steps: [{ id: "chop", operation: "chop-trees", after: [], inputs: [] },
     { id: "collect", operation: "collect-products", after: ["chop"], inputs: ["chop"] },
     { id: "store", operation: "store-products", after: ["collect"], inputs: ["collect"] }],

@@ -98,7 +98,7 @@ def evaluate(case, before, after, samples):
         checks.pop("targets_preserved")
         checks["ground_drop_matches_capacity"] = after.get("acceptanceGroundDropRemaining") is (case == "walk-pickup-full")
         checks["wood_in_backpack"] = count(after.get("companionItems"), "(O)388") == (0 if case == "walk-pickup-full" else 3)
-    elif case in {"mature-trees", "phase-forestry"}:
+    elif case in {"mature-trees", "phase-forestry", "phase-remote"}:
         checks.pop("targets_preserved")
         checks["two_mature_trees_cut"] = before.get("acceptanceMatureTreesRemaining") == 2 and after.get("acceptanceMatureTreesRemaining") == 0
         checks["sapling_preserved"] = before.get("acceptanceSaplingStage") == after.get("acceptanceSaplingStage") == 2
@@ -122,6 +122,11 @@ def evaluate(case, before, after, samples):
                 60 <= (after.get("companionStamina") or 0) < 100
                 and any((s.get("companionStamina") or 0) >= 80 for s in samples)
             )
+    elif case == "phase-daily":
+        checks["daily_care_and_harvest"] = (after.get("harnessFixtureDryCropCount") == 0
+            and after.get("harnessFixtureCropCount") == 2 and count(after.get("acceptanceChestItems"), "(O)24") == target_count - 2)
+        checks["wood_stored"] = count(after.get("acceptanceChestItems"), "(O)388") == 3
+        checks["refilled_during_phase"] = any((s.get("companionWater") or 0) > (before.get("companionWater") or 0) for s in samples)
     else:
         checks["harvested_all_targets"] = bool(target_count) and after.get("harnessFixtureCropCount") == 0
         checks["harvest_in_chest"] = count(after.get("acceptanceChestItems"), "(O)24") == target_count
@@ -255,6 +260,10 @@ class Runner:
                 await asyncio.sleep(1)
             trace_offset = len(rows(self.trace_file))
             self.report["traceOffset"] = trace_offset
+            if spec.get("takeover"):
+                ui = await self.request("snapshot")
+                if ui.get("playerControlApproved") is not True:
+                    await self.request("takeover-key")  # Explicit initial handoff in the player-only fixture.
             await self.request("open-conversation")
             await self.request("text", field="_input", text=instruction)
             await self.request("key", key="Enter")
@@ -266,6 +275,9 @@ class Runner:
             guidance_sent = False
             while time.monotonic() < deadline:
                 sample = await self.native()
+                if spec.get("takeover") and not guidance_sent and sample.get("companionMachineExecuting"):
+                    await self.request("takeover-key")
+                    guidance_sent = True
                 if spec.get("duringAction") and not guidance_sent and sample.get("companionMachineExecuting"):
                     await self.request("open-conversation")
                     await self.request("text", field="_input", text=spec["duringAction"])
@@ -286,6 +298,21 @@ class Runner:
             after = await self.native()
             self.report["after"] = after
             checks = evaluate(spec.get("fixture", self.case), before, after, self.samples)
+            if self.case == "phase-cache":
+                if not self.simulated:
+                    raise RuntimeError("Controlled cache experiment requires the simulated API")
+                for index, text in enumerate((spec["cacheSecond"], spec["cacheThird"])):
+                    if index == 1:
+                        await self.request("harness-move-chest")
+                    await self.request("open-conversation")
+                    await self.request("text", field="_input", text=text)
+                    await self.request("key", key="Enter")
+                    await self.request("close")
+                    await self.wait(lambda: self.terminal(text, trace_offset), "Cache observation did not finish", self.timeout)
+                after = await self.native()
+                self.report["after"] = after
+                checks = {"same_game_day": after.get("day") == before.get("day"),
+                          "chest_really_moved": after.get("acceptanceChestTile") != before.get("acceptanceChestTile")}
             if spec.get("then") and terminal.get("status") == "completed" and native_finished(after):
                 self.report["intermediate"] = after
                 deadline = time.monotonic() + self.timeout
@@ -311,7 +338,8 @@ class Runner:
                 checks["worked_before_full_recovery"] = (after.get("companionStamina") or 0) < 100
             backend = self.report["backend"] or {}
             checks["configured_model_round_completed"] = all(terminal.get(key) == backend.get(key)
-                for key in ("provider", "model", "protocol", "stream")) and terminal.get("status") == "completed"
+                for key in ("provider", "model", "protocol", "stream")) and terminal.get("status") in (
+                    {"completed", "interrupted", "cancelled", "failed"} if spec.get("takeover") else {"completed"})
             trace = rows(self.trace_file)[trace_offset:]
             summary = summarize_trace(trace)
             self.report["traceSummary"] = summary
@@ -333,7 +361,7 @@ class Runner:
             checks["real_action_tools_observed"] = any(not c["error"] and isinstance(c["result"], dict) for c in actions)
             checks["action_calls_returned_terminal_results"] = bool(actions) and all(
                 not c["nonterminal"] and (c["error"] or isinstance(c["result"], dict)
-                    and (c["result"].get("status") in {"executed", "completed", "stopped", "failed", "cancelled", "rejected", "player_update"}
+                    and (c["result"].get("status") in {"executed", "completed", "stopped", "failed", "cancelled", "rejected", "player_update", "interrupted", "recovery-pending"}
                          or c["result"].get("status") == "no-work" and c["result"].get("targetCount") == 0
                          or c["result"].get("terminalState") in {"succeeded", "partially-succeeded", "failed", "cancelled", "rejected", "no-observed-targets"})) for c in actions
             )
@@ -344,6 +372,33 @@ class Runner:
                 key.startswith("walking-facing:") and len(set(value)) >= 2 for key, value in frames.items()
             )
             checks["no_solid_overlap_while_moving"] = (after.get("movementSamples") or 0) > 0 and after.get("solidOverlaps") == []
+            if self.case == "phase-cache":
+                checks.pop("walking_animation_changes_in_same_direction")
+                checks.pop("no_solid_overlap_while_moving")
+                checks.pop("real_action_tools_observed")
+                checks.pop("action_calls_returned_terminal_results")
+                cache = [row["payload"] for row in trace if row.get("type") == "phase_map_cache"]
+                checks["cold_hot_and_invalidated_scans"] = ([row.get("hit") for row in cache] == [False, True, False]
+                    and cache[0].get("scannedTiles", 0) > 0 and cache[1].get("scannedTiles") == 0 and cache[2].get("scannedTiles", 0) > 0)
+                queries = [c["result"] for c in summary["toolCalls"] if c["name"] == "query_game"]
+                moved = after.get("acceptanceChestTile")
+                old = before.get("acceptanceChestTile")
+                checks["observed_new_chest_instead_of_old_position"] = (len(queries) == 3
+                    and any(box.get("tile") == moved for box in queries[-1].get("items", []))
+                    and not any(box.get("tile") == old for box in queries[-1].get("items", [])))
+                checks["no_actions_during_cache_probe"] = not any(row.get("type") == "result" for row in trace)
+            if self.case in {"phase-update", "phase-takeover"}:
+                checks = {key: value for key, value in checks.items() if key not in {"two_mature_trees_cut", "wood_stored"}}
+                phases = [c for c in summary["toolCalls"] if "execute_phase" in ((c.get("input") or {}).get("action") or {})]
+                checks["phase_interrupted_before_second_tree"] = (guidance_sent and len(phases) == 1
+                    and phases[0]["result"].get("status") == "interrupted" and after.get("acceptanceMatureTreesRemaining", 0) >= 1)
+                checks["no_storage_after_control_change"] = not any(row.get("type") == "result" and
+                    row["payload"].get("skillId") == "deposit-chest" for row in trace)
+                if spec.get("takeover"):
+                    await asyncio.sleep(2)
+                    ui = await self.request("snapshot")
+                    checks["player_ownership_retained"] = ui.get("playerControlApproved") is False
+                    checks["turn_ended_by_takeover"] = terminal.get("status") == "failed" and terminal.get("error") == "本轮已停止。"
             if self.case == "empty-farm":
                 checks.pop("walking_animation_changes_in_same_direction")
                 checks.pop("no_solid_overlap_while_moving")
@@ -351,13 +406,23 @@ class Runner:
                 checks["three_empty_stages_confirmed"] = len(actions) == 3 and all(
                     c["result"].get("stopReason") == "no-observed-targets"
                     and c["result"].get("completedCount") == 0 for c in actions)
-            if self.case in {"phase-forestry", "phase-daily"}:
+            if self.case in {"phase-forestry", "phase-daily", "phase-remote"}:
                 phases = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
                           and "execute_phase" in ((c.get("input") or {}).get("action") or {})]
                 checks["one_complete_phase"] = len(phases) == 1 and phases[0]["result"].get("status") == "completed"
-                checks["zero_model_requests_inside_phase"] = len(phases) == 1 and phases[0]["result"].get("executionModelRequests") == 0
-                if self.case == "phase-forestry":
+                phase_stages = [stage for stage in summary["workStages"] if stage.get("operation") == "execute_phase"]
+                checks["zero_model_requests_inside_phase"] = (len(phases) == 1 and phases[0]["result"].get("executionModelRequests") == 0
+                    and len(phase_stages) == 1 and phase_stages[0].get("modelRequestsDuringStage") == 0)
+                if self.case in {"phase-forestry", "phase-remote"}:
                     checks["all_tree_products_stored"] = not [i for i in after.get("companionItems", []) if i.get("id") in {"(O)388", "(O)92", "(O)309", "(O)310", "(O)311"}]
+                if self.case == "phase-remote":
+                    actor = before.get("companionTile", {})
+                    remote = fixture.get("matureTreeTiles", [])
+                    checks["both_trees_beyond_local_snapshot_radius"] = len(remote) == 2 and all(max(
+                        abs(tile["x"] - actor.get("x", -1000)), abs(tile["y"] - actor.get("y", -1000))) > 16 for tile in remote)
+                if self.case == "phase-daily":
+                    checks["existing_materials_stored_inside_phase"] = (len(phases) == 1 and any(
+                        item.get("itemId") == "(O)388" and item.get("count") == 3 for item in phases[0]["result"].get("storedItems", [])))
             if self.case == "farm-growth":
                 native = [row["payload"] for row in trace if row.get("type") == "result"]
                 care_index = max((index for index, receipt in enumerate(native) if receipt.get("skillId") == "water-zone"

@@ -46,6 +46,8 @@ export type ModelEvent =
 
 /** One provider-bound context. A new context is assembled from project data after a model change. */
 export interface ModelContext {
+  /** Keep locally settled tool receipts for the next request; this is not delivery confirmation. */
+  settleTools?(messages: readonly ModelMessage[]): void;
   generate(request: {
     instructions: string;
     context?: JsonObject;

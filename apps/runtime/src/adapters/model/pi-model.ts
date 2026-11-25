@@ -72,6 +72,7 @@ export class PiModelAdapter implements ModelAdapter {
     let lastResponse: AssistantMessage | undefined;
     const delivery = new ContextDelivery();
     return {
+      settleTools(messages) { delivery.settleTools(messages); },
       async *generate({ instructions, context, messages, tools, signal }): AsyncIterable<ModelEvent> {
         try {
           let reported: JsonObject = {};

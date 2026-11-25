@@ -36,6 +36,24 @@ test("usage observation preserves missing cache counters without delaying stream
   assert.equal(observed.prompt_tokens_details, undefined);
 });
 
+test("finishing locally after tool settlement preserves receipts for the next turn without confirming an unsent delta", () => {
+  const delivery = new ContextDelivery();
+  const assistant = { role: "assistant", text: "", calls: [{ id: "complete", name: "manage_arrangements", arguments: {} }] };
+  const first = delivery.prepare(source, ctx(270));
+  first.confirm(assistant);
+  const receipt = { role: "tool", callId: "complete", name: "manage_arrangements", result: { status: "completed" }, failed: false };
+  delivery.settleTools([...source, assistant, receipt]);
+  assert.equal(delivery.prepare([...source, assistant, receipt], ctx(260)).messages.filter(row => row.role === "tool").length, 1);
+  const nextSource = [...source, { role: "assistant", text: "本阶段完成", calls: [] }, { role: "user", text: "继续" }];
+  const retry = delivery.prepare(nextSource, ctx(250));
+  assert.deepEqual(retry.messages.slice(0, first.messages.length), first.messages);
+  assert.deepEqual(retry.messages.slice(first.messages.length, first.messages.length + 2), [assistant, receipt]);
+  assert.deepEqual(delivery.prepare(nextSource, ctx(240)).messages.filter(row => row.role === "tool"), [receipt]);
+  assert.equal(data(delivery.prepare(nextSource, ctx(240)).messages.findLast(row => row.role === "user" && row.text.startsWith("项目观察数据"))).changes.stamina, 240);
+  retry.confirm();
+  assert.equal(delivery.prepare(nextSource, ctx(230)).messages.filter(row => row.role === "tool").length, 1);
+});
+
 test("Chat and Responses preserve a stable system and acknowledged prefix across planning turns in both stream modes", async () => {
   const chat = await createMockDeepSeek(() => ({}));
   const responses = await createMockOpenAI(() => ({}));

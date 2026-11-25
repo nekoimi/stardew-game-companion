@@ -14,8 +14,8 @@ export const phasePlanSchema: JsonObject = fields({
     quantity: { type: "integer", minimum: 1, maximum: 9999 } }),
   constraints: fields({ stamina_floor: { type: "number", minimum: 1, maximum: 1000 },
     destination_ref: text(), keep: list(fields({ item_id: text(), count: { type: "integer", minimum: 0, maximum: 999999 } }), 36),
-    include_existing: list(fields({ item_id: text(), count: { type: "integer", minimum: 1, maximum: 999999 } }), 36) },
-    ["stamina_floor", "destination_ref", "keep"]),
+    include_existing: { ...list(fields({ item_id: text(), count: { type: "integer", minimum: 1, maximum: 999999 } }), 36),
+      description: "Explicitly select player-authorized existing materials for this same phase. Check originalBackpack and observed ground items; already auto-picked materials are existing inventory. Use [] only when all existing materials must stay untouched." } }),
   steps: list(fields({ id: text(40), operation: enumeration("tend-crops", "harvest-crops", "chop-trees", "collect-products", "store-products"),
     after: list(text(40), 7), inputs: list(text(40), 7) }), 8, 1),
   branches: list(fields({ on: enumeration("target-unreachable", "inventory-full", "destination-unavailable", "insufficient-resources"),
@@ -75,8 +75,13 @@ export function bindPhasePlan(input: JsonObject, observation: PhaseObservation, 
     throw new Error("木材或树木成果要求包含采伐步骤。");
   if (completion.metric === "daily-care-stored" && !steps.some(step => step.operation === "tend-crops"))
     throw new Error("日常阶段必须安排作物照料。");
+  if (completion.metric === "daily-care-stored" && Number(object(observation.facts.farmWork).matureCropCount ?? 0) > 0
+      && !steps.some(step => step.operation === "harvest-crops")) throw new Error("当前成熟作物尚未纳入日常收获计划。");
   if (!storage.length || producing.some(source => !storage.some(step => sourceOf(step, source.id))))
     throw new Error("产物入库判据需要覆盖每个产物步骤，不能只安排采集。");
+  if (producing.some(source => !steps.some(step => step.operation === "collect-products" && sourceOf(step, source.id)
+      && storage.some(store => sourceOf(store, step.id)))))
+    throw new Error("产物入库前需要安排关联的收集步骤，不能遗漏散落物。");
   const branches = (input.branches as JsonObject[]).map(row => ({ on: String(row.on), action: String(row.action),
     ...(typeof row.destination_ref === "string" ? { destinationRef: row.destination_ref } : {}) }));
   if (new Set(branches.map(branch => branch.on)).size !== branches.length) throw new Error("同一异常不能指定多个冲突分支。");

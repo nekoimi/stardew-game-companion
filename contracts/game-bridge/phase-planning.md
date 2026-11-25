@@ -1,6 +1,6 @@
 # 完整阶段规划契约
 
-状态：阶段 A～E 已实现，完整验收进行中。原生全图分页观察与缓存、`submit_work.execute_phase`、稳定前缀和 GUI 反馈均已接入。
+状态：阶段 A～F 已实现并验收，完整日常与远树采木已通过正式模型验收。原生全图分页观察与缓存、`submit_work.execute_phase`、稳定前缀和 GUI 反馈均已接入；正式协议限制见 `docs/development/agent-phase-planning-acceptance.md`。
 
 ## 观察身份
 
@@ -14,7 +14,7 @@
 
 ## 计划字段
 
-TypeScript 正本为 `apps/runtime/src/application/phase-plan.ts` 的 `phasePlanSchema` 与 `bindPhasePlan`。保持八个模型工具，后续在 `submit_work` 的动作联合中增加 `execute_phase`。
+TypeScript 正本为 `apps/runtime/src/application/phase-plan.ts` 的 `phasePlanSchema` 与 `bindPhasePlan`。保持八个模型工具，`execute_phase` 已接入 `submit_work` 的动作联合。
 
 | 字段 | 约束 |
 | --- | --- |
@@ -28,7 +28,9 @@ TypeScript 正本为 `apps/runtime/src/application/phase-plan.ts` 的 `phasePlan
 
 步骤按拓扑顺序给出，禁止重复 ID、循环、引用未来或外部结果。收集和入库必须引用前置结果；全部产物步骤必须能追溯到最终入库步骤。schema 中的枚举由本地校验器实际验证，不只提供给模型。
 
-`constraints.include_existing` 可选，包含 `item_id` 和 `count`，仅用于玩家已授权处置的原有背包物品或现存地面材料；未列出的原有库存保留。正常新产物按本阶段真实获得量转移，入库过程中自动吸入的材料也重新核对，累计入库不重置成果量。`phaseProgress.storedItems` 提供原生显示名和确认数量，桌面不直接显示内部物品 ID。
+`constraints.include_existing` 必填数组，包含 `item_id` 和 `count`，仅用于玩家已授权处置的原有背包物品或现存地面材料；显式空数组表示保留全部原有库存。选入材料未完成入库时，阶段不能标为完成。正常新产物按本阶段真实获得量转移，入库过程中自动吸入的材料也重新核对，累计入库不重置成果量。`phaseProgress.storedItems` 提供原生显示名和确认数量，桌面不直接显示内部物品 ID。
+
+地面观察的可选 `sourceId` 是原生物品/掉落物实例的短期身份，移动跨格不改变，读档或重启不沿用，也不授予拾取权限。阶段按动作前后来源差异及生产位置关联新产物；原有掉落物移动不算新产物，同格含未授权物品时停止整格拾取，避免扩大收集范围。
 
 计划只在当前回合存活，不是原生命令数组，不在数据库保存待执行步骤；立即按真实观察逐动作执行。现有回执保存已发生事实，摘要保存实际成果。执行器处理自动拾取、资源检查和预先指定分支，正常步骤之间不调用模型。
 
@@ -38,4 +40,4 @@ TypeScript 正本为 `apps/runtime/src/application/phase-plan.ts` 的 `phasePlan
 
 F8 新要求、F9 接管、读档和跨日使后续计划失效；暂停恢复重新核对前提。未知终态先查询既有动作和世界状态，不继续派工或重发。回执确认失败后释放动作执行权，不后台恢复旧导航。就寝优先于普通工作，没有总时长上限打断仍有进展的任务。
 
-验证见运行时 `phase-plan.test.mjs` 及既有回合边界测试；后续阶段补全原生分页的共享只读样例、完整执行、协议与实机验收。
+验证见运行时 `phase-plan.test.mjs`、`phase-observation.test.mjs`、`phase-executor.test.mjs`、回合与协议回归，以及 `docs/development/agent-phase-planning-acceptance.md` 中的原生共享样例、隔离实机和发行证据。

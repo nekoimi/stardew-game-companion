@@ -1,7 +1,39 @@
 {
+  "phase-cache": {
+    "title": "阶段地图缓存冷热与箱子移动失效",
+    "fixture": "mature-trees",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "只查看农场箱子的位置，不要进行任何工作。",
+    "cacheSecond": "再查看一次农场箱子的位置，仍然不要工作。",
+    "cacheThird": "箱子位置发生变化，请重新查看，不要工作。"
+  },
+  "phase-update": {
+    "title": "完整阶段执行中新要求停止后续工作",
+    "fixture": "mature-trees",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "把采两棵成熟树、拾取和入库作为一个完整阶段连续执行，保留80点体力和幼树。",
+    "duringAction": "先停下采伐，不要再砍树，也不要继续拾取或入库，只告诉我当前情况。"
+  },
+  "phase-takeover": {
+    "title": "完整阶段执行中F9接管",
+    "fixture": "mature-trees",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "把采两棵成熟树、拾取和入库作为一个完整阶段连续执行，保留80点体力和幼树。",
+    "takeover": true
+  },
+  "phase-remote": {
+    "title": "完整阶段发现远处成熟树",
+    "fixture": "phase-remote",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "帮我在农场找两棵成熟的普通树，保留幼树和装采集器的树。把这次采伐的材料捡好收进田边空箱子，保留80点体力；采伐、拾取、入库作为一个完整阶段先规划再连续执行，完成后结束工作。"
+  },
   "phase-daily": {
     "title": "完整阶段照料收获入库",
-    "fixture": "harvest-store",
+    "fixture": "phase-daily",
     "stamina": 270,
     "water": 1,
     "instruction": "把当天作物照料、成熟作物收获、地上材料拾取和入库作为一个完整阶段规划好再连续执行。优先照料缺水作物，水不够自行补水；收获和已有的地面木材都放进田边空箱子，别卖，保留至少80点体力，全部完成再告诉我。"

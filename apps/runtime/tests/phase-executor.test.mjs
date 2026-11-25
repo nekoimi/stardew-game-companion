@@ -2,22 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PhaseExecutor } from "../dist/application/phase-executor.js";
 
-function fixture({ updateAt = "", unknown = false, autoPickup = false, latePickup = false } = {}) {
+function fixture({ updateAt = "", unknown = false, autoPickup = false, latePickup = false, smallPack = false, externalPickup = false, pickupBeforeSnapshot = false, splitPickup = false } = {}) {
   const binding = { saveId: "farm", gameSessionId: "game", actorMode: "companion", goalId: "goal", requestId: "original",
     instructionVersion: "original", gameDate: "1:spring:5", locationId: "Farm" };
   const trees = [2, 5, 8].map(x => ({ tile: { x, y: 2 }, kind: "tree", growthStage: 5, tapped: false }));
-  let wood = 10, stored = 0, drops = [], blocked = "", count = 0;
+  let wood = 10, stored = 0, drops = [], blocked = "", count = 0, productQueries = 0;
   const actions = [];
   const observation = { ref: "map", binding: { ...binding }, complete: true, revision: 1, scopeRef: "current-map",
     destinations: { box: { tile: { x: 1, y: 1 }, contents: [] } }, facts: { trees, map: { width: 10, fingerprint: "v1" } } };
   const input = { observation_ref: "map", objective: "新增20木材并入库", scope_ref: "current-map",
-    completion: { metric: "new-wood-stored", quantity: 20 }, constraints: { stamina_floor: 80, destination_ref: "box", keep: [] },
+    completion: { metric: "new-wood-stored", quantity: 20 }, constraints: { stamina_floor: 80, destination_ref: "box", keep: [], include_existing: [] },
     steps: [{ id: "chop", operation: "chop-trees", after: [], inputs: [] },
       { id: "collect", operation: "collect-products", after: ["chop"], inputs: ["chop"] },
       { id: "store", operation: "store-products", after: ["collect"], inputs: ["collect"] }],
     branches: [{ on: "target-unreachable", action: "skip-target" }, { on: "inventory-full", action: "store-and-resume" }] };
   const snapshot = () => ({ capturedRevision: count + 1, companion: { locationId: "Farm", tileX: 0, tileY: 0, stamina: 270 - count * 30 },
-    inventory: { freeSlots: 8, slots: [{ itemId: "(O)388", stack: wood }] } });
+    inventory: { freeSlots: smallPack && wood >= 34 ? 1 : 8, slots: [{ itemId: "(O)388", stack: wood }] } });
   const env = { observation, current: () => binding, block: () => blocked, observe: async () => snapshot(), progress() {},
     async workflow(op, args) {
       assert.equal(op, "store_items");
@@ -31,20 +31,30 @@ function fixture({ updateAt = "", unknown = false, autoPickup = false, latePicku
       if (skill === "inspect-route") return { terminalState: "succeeded", details: { route: { reachable: true, walkingTiles: args.tile.x } } };
       if (skill === "inspect-phase-map") return { terminalState: "succeeded", details: { page: {
         fingerprint: "v1", trees: trees.filter(tree => tree.tile.x + 20 === args.scanOffset) } } };
-      if (skill === "inspect-production") return { terminalState: "succeeded", details: { production: {
-        locationId: "Farm", groundItems: structuredClone(drops), groundItemsTruncated: false } } };
+      if (skill === "inspect-production") {
+        const observed = structuredClone(drops);
+        if (pickupBeforeSnapshot && drops.length && ++productQueries % 2 === 0) {
+          wood += drops.reduce((sum, item) => sum + item.stack, 0); drops = [];
+        }
+        return { terminalState: "succeeded", details: { production: {
+          locationId: "Farm", groundItems: observed, groundItemsTruncated: false } } };
+      }
       assert.equal(read, false);
       actions.push(skill);
       if (skill === "chop-tree") {
         count++;
         if (autoPickup) wood += 12;
-        else drops.push({ tile: args.tiles[0], itemId: "(O)388", stack: 12, isDropped: true });
+        else {
+          drops.push({ tile: args.tiles[0], itemId: "(O)388", stack: 12, isDropped: true, sourceId: `tree-${count}` });
+          if (splitPickup) drops.push({ tile: args.tiles[0], itemId: "(O)388", stack: 12, isDropped: true, sourceId: `tree-${count}-second` });
+        }
         if (updateAt === skill) blocked = "player-update";
         if (unknown) return {};
         return { terminalState: "succeeded", completedCount: 1, commandId: `chop-${count}` };
       }
       assert.equal(skill, "pickup-items");
-      wood += drops.reduce((sum, item) => sum + item.stack, 0); drops = [];
+      const picked = splitPickup ? drops.splice(0, 1) : drops.splice(0);
+      if (!externalPickup) wood += picked.reduce((sum, item) => sum + item.stack, 0);
       return { terminalState: "rejected", commandId: `pickup-${count}`, error: { code: "no-item" } };
     } };
   return { env, input, actions, stored: () => stored, wood: () => wood };
@@ -85,4 +95,129 @@ test("new requirements and an unknown native result prevent all following phase 
     assert.equal(f.stored(), 0);
     if (option.unknown) assert.equal(result.needsReconciliation, true);
   }
+});
+
+test("mid-phase storage does not reset material progress or select original stock", async () => {
+  const f = fixture({ smallPack: true });
+  f.input.completion.quantity = 36;
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.stored(), 36);
+  assert.equal(f.actions.filter(action => action === "chop-tree").length, 3);
+  assert.equal(f.actions.filter(action => action === "deposit-chest").length, 2);
+  assert.equal(f.wood(), 10);
+});
+
+test("a drop removed by another actor cannot become a successful phase product", async () => {
+  const f = fixture({ externalPickup: true });
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "stopped");
+  assert.equal(result.stopReason, "product-collection-unconfirmed");
+  assert.equal(f.stored(), 0);
+});
+
+test("a replaced destination is rejected before transferring any material", async () => {
+  const f = fixture();
+  f.env.observation.destinations.box.nativeIdentity = "old-chest";
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.stopReason, "destination-replaced");
+  assert.equal(f.stored(), 0);
+});
+
+test("moving old debris does not authorize its pickup even when its item matches the new tree products", async () => {
+  const f = fixture();
+  const native = f.env.native;
+  let treeCut = false;
+  f.env.native = async (skill, args, read) => {
+    if (skill === "pickup-items") assert.notEqual(args.tiles[0].x, 3, "Old moving debris was selected");
+    const result = await native(skill, args, read);
+    if (skill === "chop-tree") treeCut = true;
+    if (skill === "inspect-production") result.details.production.groundItems.push({
+      sourceId: "pre-existing-drop", tile: { x: treeCut ? 3 : 9, y: 2 }, itemId: "(O)388", stack: 30, isDropped: true });
+    return result;
+  };
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.stored(), 24);
+});
+
+test("a product tile shared with an unauthorized item stops instead of broadening collection", async () => {
+  const f = fixture();
+  const native = f.env.native;
+  f.env.native = async (skill, args, read) => {
+    const result = await native(skill, args, read);
+    if (skill === "inspect-production") result.details.production.groundItems.push({
+      sourceId: "foreign-drop", tile: { x: 2, y: 2 }, itemId: "(O)390", stack: 1, isDropped: true });
+    return result;
+  };
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.stopReason, "product-source-unconfirmed");
+  assert.deepEqual(f.actions, ["chop-tree"]);
+  assert.equal(f.stored(), 0);
+});
+
+test("a product absorbed before the pickup snapshot is reconciled without falsely reporting external collection", async () => {
+  const f = fixture({ pickupBeforeSnapshot: true });
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.stored(), 24);
+});
+
+test("selecting three existing materials cannot authorize a larger pre-existing ground stack", async () => {
+  const f = fixture();
+  f.input.constraints.include_existing = [{ item_id: "(O)390", count: 3 }];
+  const native = f.env.native;
+  f.env.native = async (skill, args, read) => {
+    if (skill === "pickup-items") assert.notEqual(args.tiles[0].x, 9);
+    const result = await native(skill, args, read);
+    if (skill === "inspect-production") result.details.production.groundItems.push({
+      sourceId: "existing-stone", tile: { x: 9, y: 2 }, itemId: "(O)390", stack: 10, isDropped: true });
+    return result;
+  };
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "stopped");
+  assert.equal(result.stopReason, "phase-objective-unmet");
+  assert.ok(!result.storedItems.some(item => item.itemId === "(O)390"));
+});
+
+test("different product sources sharing a tile can be collected in sequence while inventory progresses", async () => {
+  const f = fixture({ splitPickup: true });
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.stored(), 24);
+  assert.deepEqual(f.actions, ["chop-tree", "pickup-items", "pickup-items", "deposit-chest"]);
+});
+
+test("stock-at-least uses the final observed destination rather than stock removed by another actor", async () => {
+  const f = fixture();
+  f.input.completion = { metric: "wood-stock-at-least", quantity: 20 };
+  f.env.observation.destinations.box.contents = [{ itemId: "(O)388", stack: 20 }];
+  const observe = f.env.observe;
+  f.env.observe = async () => ({ ...await observe(), chests: { items: [{ tile: { x: 1, y: 1 }, contentsObserved: true, contents: [] }] } });
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "stopped");
+  assert.equal(result.stopReason, "phase-objective-unmet");
+  assert.equal(f.stored(), 0);
+});
+
+test("pre-existing wood absorbed during tree work is retained instead of counted and stored as tree production", async () => {
+  const f = fixture({ autoPickup: true });
+  const native = f.env.native, observe = f.env.observe;
+  let oldDropPresent = true;
+  f.env.native = async (skill, args, read) => {
+    const result = await native(skill, args, read);
+    if (skill === "chop-tree") oldDropPresent = false;
+    if (skill === "inspect-production" && oldDropPresent) result.details.production.groundItems.push({
+      sourceId: "old-wood", tile: { x: 2, y: 3 }, itemId: "(O)388", stack: 30, isDropped: true });
+    return result;
+  };
+  f.env.observe = async () => {
+    const snapshot = await observe();
+    if (!oldDropPresent) snapshot.inventory.slots[0].stack += 30;
+    return snapshot;
+  };
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.stored(), 24);
+  assert.equal(result.acquiredItems.find(item => item.itemId === "(O)388").count, 24);
 });

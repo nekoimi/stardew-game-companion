@@ -2082,7 +2082,8 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                         ClearTool: g.ClearTool,
                         IsStone: g.IsStone,
                         IsTwig: g.IsTwig,
-                        Quality: g.Quality
+                        Quality: g.Quality,
+                        SourceId: g.SourceId
                     ))
                     .ToList();
 

@@ -1937,7 +1937,8 @@ public sealed partial class GameWorldObserver : IWorldObserver
                     ClearTool: clearTool,
                     IsStone: isStone,
                     IsTwig: isTwig,
-                    Quality: obj.Quality
+                    Quality: obj.Quality,
+                    SourceId: GroundSourceId(obj)
                 ));
             }
 
@@ -1954,7 +1955,8 @@ public sealed partial class GameWorldObserver : IWorldObserver
                         Stack: debris.item?.Stack ?? group.Count(), IsDropped: true,
                         IsWeed: false, CanBeGrabbed: true, ClearTool: null,
                         Quality: debris.item?.Quality,
-                        ReservedForFarmer: debris.player.Value?.UniqueMultiplayerID));
+                        ReservedForFarmer: debris.player.Value?.UniqueMultiplayerID,
+                        SourceId: GroundSourceId(debris)));
                 }
             }
         }

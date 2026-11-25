@@ -14,6 +14,8 @@ test("full map pagination discovers remote targets, validates cache headers and 
   const store = new CompanionStore(":memory:");
   let fingerprint = sample.fingerprint, scans = 0;
   const native = async (_skill, { scanOffset: offset, scanLimit: limit }) => {
+    if (_skill === "inspect-production") return { terminalState: "succeeded", details: { production: {
+      locationId: "Farm", groundItemsTruncated: false, groundItems: [{ itemId: "(O)388", stack: 3, isDropped: true, name: "木材" }] } } };
     if (limit) scans++;
     const end = Math.min(1200, offset + limit);
     const page = offset === 1024 ? { ...sample, fingerprint } : { ...sample, fingerprint, offset, end,
@@ -24,6 +26,7 @@ test("full map pagination discovers remote targets, validates cache headers and 
     const observer = new PhaseObserver(game, store);
     const first = await observer.prepare(binding, native, () => {});
     assert.equal(first.facts.trees[0].tile.x, 599);
+    assert.deepEqual(first.facts.summary.existingGround, [{ itemId: "(O)388", count: 3, displayName: "木材" }]);
     assert.equal(scans, 3);
     await new PhaseObserver(game, store).prepare(binding, native, () => {});
     assert.equal(scans, 3);

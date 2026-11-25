@@ -66,18 +66,35 @@ export class PhaseObserver {
     const snapshot = await this.game.observe();
     check();
     if (object(snapshot.companion).locationId !== binding.locationId) throw new Error("角色地图已经变化。");
+    const productionResult = await native("inspect-production", { locationId: binding.locationId }, true);
+    check();
+    const production = object(object(productionResult.details).production);
+    const groundObserved = productionResult.terminalState === "succeeded" && production.locationId === binding.locationId
+      && production.groundItemsTruncated === false && Array.isArray(production.groundItems);
+    const ground = groundObserved ? production.groundItems as JsonObject[] : [];
+    const existingGround = new Map<string, { itemId: string; count: number; displayName: string }>();
+    for (const item of ground) if ((item.isDropped === true || item.canBeGrabbed === true) && typeof item.itemId === "string") {
+      const row = existingGround.get(item.itemId) ?? { itemId: item.itemId, count: 0, displayName: String(item.name ?? item.itemId) };
+      row.count += Number(item.stack ?? 1); existingGround.set(item.itemId, row);
+    }
     const destinations: Record<string, JsonObject> = {};
     const chests = object(snapshot.chests);
     for (const [index, value] of (Array.isArray(chests.items) ? chests.items : []).entries()) {
       const chest = object(value);
       if (binding.locationId === "Farm" && chest.contentsObserved === true && Array.isArray(chest.contents))
-        destinations[`chest-${index + 1}`] = chest;
+        destinations[`chest-${index + 1}`] = { ...chest, nativeIdentity: object(map.fixtures.find(fixture =>
+          fixture.kind === "chest" && object(fixture.tile).x === object(chest.tile).x && object(fixture.tile).y === object(chest.tile).y)).identity ?? null };
     }
     const trees = map.trees.filter(tree => tree.kind === "tree" && Number(tree.growthStage) >= 5 && tree.tapped !== true);
     return { ref: randomUUID(), binding: { ...binding }, revision: Number(snapshot.capturedRevision ?? 0),
       complete: map.complete === true, scopeRef: "current-map", destinations,
       facts: { locationId: binding.locationId, map, trees, world: snapshot.world ?? {}, companion: snapshot.companion ?? {},
         inventory: snapshot.inventory ?? {}, farmWork: snapshot.farmWork ?? {}, chests: destinations,
-        summary: { matureTrees: trees.length, waterSources: map.waterTiles.length, destinationRefs: Object.keys(destinations) } } };
+        summary: { matureTrees: trees.length, waterSources: map.waterTiles.length, destinationRefs: Object.keys(destinations),
+          existingGround: [...existingGround.values()], existingGroundStatus: groundObserved ? "complete" : "unknown",
+          originalBackpack: (Array.isArray(object(snapshot.inventory).slots) ? object(snapshot.inventory).slots as JsonObject[] : [])
+            .filter(slot => slot.isTool !== true).map(slot => ({ itemId: slot.itemId ?? null, count: slot.stack ?? 0,
+              displayName: slot.displayName ?? slot.name ?? null })),
+          note: "Select player-authorized originalBackpack and existingGround materials in constraints.include_existing in this same phase. Unselected existing materials are retained. Unknown ground is not empty." } } };
   }
 }

@@ -260,9 +260,19 @@ export class CompanionTools {
         const [operation, params] = choose(args.action);
         if (operation === "execute_phase") {
           if (!context.phaseObservation || !context.phaseBinding) throw new Error("尚未准备有效阶段观察，请重新观察。");
+          const floor = Number(object(params.constraints).stamina_floor);
+          const phaseNative: ToolContext["native"] = async (skill, args, observation) => {
+            if (!observation) {
+              const cost = skill === "chop-tree" ? 30 : skill === "water-zone" ? 2 * (Array.isArray(args.tiles) ? args.tiles.length : 1) : 0;
+              if (cost && Number(object((await this.game.observe()).companion).stamina ?? 0) - cost < floor)
+                throw new Error("本阶段已达到体力保留边界。");
+            }
+            return context.native(skill, args, observation);
+          };
+          const childContext = { ...context, native: phaseNative };
           return new PhaseExecutor().execute(params, { observation: context.phaseObservation, current: context.phaseBinding,
-            native: context.native, observe: () => this.game.observe(), block: () => context.signal.aborted ? "interrupted" : context.workBlock?.(),
-            workflow: async (name, args) => object(await this.invoke(context, "submit_work", { action: { [name]: args } })),
+            native: phaseNative, observe: () => this.game.observe(), block: () => context.signal.aborted ? "interrupted" : context.workBlock?.(),
+            workflow: async (name, args) => object(await this.invoke(childContext, "submit_work", { action: { [name]: args } })),
             progress: state => context.phaseProgress?.(state) });
         }
         if (operation === "tend_crops") return this.tendCrops(context, params);

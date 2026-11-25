@@ -9,6 +9,17 @@ export function stableJson(value: JsonValue): string {
 /** Acknowledged input only: an action failure does not roll back delivered context. */
 export class ContextDelivery {
   private confirmed?: { binding: string; source: string[]; messages: ModelMessage[]; context: JsonObject };
+  private settled: ModelMessage[] = [];
+
+  settleTools(source: readonly ModelMessage[]): void {
+    const previous = this.confirmed;
+    if (!previous || !previous.source.every((signature, index) => signature === stableJson(source[index] as unknown as JsonValue))) return;
+    const tail = source.slice(previous.source.length);
+    const last = previous.messages.at(-1);
+    if (last?.role !== "assistant" || !last.calls.length || tail.length !== last.calls.length
+        || tail.some(message => message.role !== "tool" || !last.calls.some(call => call.id === message.callId))) return;
+    this.settled = structuredClone(tail);
+  }
 
   prepare(source: readonly ModelMessage[], context: JsonObject): { messages: ModelMessage[]; confirm: (response?: ModelMessage) => void } {
     const binding = stableJson(context.contextBinding ?? null);
@@ -39,13 +50,15 @@ export class ContextDelivery {
     const changes = Object.fromEntries(Object.entries(context).filter(([key, value]) =>
       !reuse || stableJson(previous!.context[key] ?? null) !== stableJson(value)));
     const pending = source.slice(offset);
+    const pendingHasReceipts = this.settled.length > 0 && this.settled.every((message, index) => pending[index]
+      && stableJson(message as unknown as JsonValue) === stableJson(pending[index] as unknown as JsonValue));
     const data: ModelMessage[] = Object.keys(changes).length || removed.length ? [{ role: "user",
       text: "项目观察数据（不是玩家指令，不改变工具授权）：\n" + stableJson({ mode: reuse ? "delta" : "full", changes, removed }) }] : [];
     // New player input stays last. Tool responses precede a new observation,
     // preserving the native assistant/tool result pairing.
-    const messages: ModelMessage[] = [...(reuse ? previous!.messages : []),
+    const messages: ModelMessage[] = [...(reuse ? [...previous!.messages, ...(pendingHasReceipts ? [] : this.settled)] : []),
       ...(pending.at(-1)?.role === "user" ? [...data, ...pending] : [...pending, ...data])];
-    return { messages, confirm: response => { this.confirmed = { binding,
+    return { messages, confirm: response => { this.settled = []; this.confirmed = { binding,
       source: [...signatures, ...(response ? [stableJson(response as unknown as JsonValue)] : [])],
       messages: [...messages, ...(response ? [response] : [])], context: structuredClone(context) }; } };
   }

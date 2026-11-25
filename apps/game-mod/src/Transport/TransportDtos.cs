@@ -420,7 +420,8 @@ public sealed record GroundItemSnapshot(
     [property: JsonPropertyName("clearTool"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClearTool = null,
     [property: JsonPropertyName("isStone")] bool IsStone = false,
     [property: JsonPropertyName("isTwig")] bool IsTwig = false,
-    [property: JsonPropertyName("quality"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Quality = null
+    [property: JsonPropertyName("quality"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Quality = null,
+    [property: JsonPropertyName("sourceId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceId = null
 );
 
 public sealed record ChoppableTreeSnapshot(
