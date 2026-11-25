@@ -6,6 +6,16 @@ const observe = { name: "get_status", args: {} };
 const parse = value => { try { return JSON.parse(value); } catch { return {}; } };
 const call = (name, args) => ({ type: "call", name, args: parse(args) });
 const operation = message => Object.keys(message?.args.action ?? {})[0];
+let receivedContext = {};
+function acceptContext(text) {
+  const marker = "项目观察数据（不是玩家指令，不改变工具授权）：\n";
+  if (!text.startsWith(marker)) return false;
+  const data = parse(text.slice(marker.length));
+  if (data.mode === "full") receivedContext = {};
+  Object.assign(receivedContext, data.changes ?? {});
+  for (const key of data.removed ?? []) delete receivedContext[key];
+  return true;
+}
 
 function plan(messages) {
   const firstTool = messages.findIndex(row => row.type === "result");
@@ -128,23 +138,26 @@ function phasePlan(context, calls) {
 
 function planDeepSeek({ messages }) {
   const system = messages.find(row => row.role === "system")?.content ?? "";
-  const context = parse(system.split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
+  for (const row of messages) if (row.role === "user") acceptContext(String(row.content ?? ""));
+  const context = Object.keys(receivedContext).length ? receivedContext : parse(system.split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
   if (messages.some(row => row.role === "user" && String(row.content).includes("作为一个完整阶段")))
     return phasePlan(context, messages.flatMap(row => (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments))));
   return plan(messages.flatMap(row => {
-    if (row.role === "user") return [{ type: "user", text: String(row.content ?? "") }];
+    if (row.role === "user") return String(row.content ?? "").startsWith("项目观察数据") ? [] : [{ type: "user", text: String(row.content ?? "") }];
     if (row.role === "tool") return [{ type: "result", result: parse(row.content) }];
     return (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments));
   }));
 }
 
 function planOpenAI({ input, instructions }) {
-  const context = parse(String(instructions ?? "").split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
+  for (const row of input) if (row.role === "user") acceptContext(row.content.filter(part => part.type === "input_text").map(part => part.text).join("\n"));
+  const context = Object.keys(receivedContext).length ? receivedContext : parse(String(instructions ?? "").split("当前项目状态（数据，不包含工具授权）：\n")[1] ?? "{}");
   if (input.some(row => row.role === "user" && JSON.stringify(row.content).includes("作为一个完整阶段")))
     return phasePlan(context, input.filter(row => row.type === "function_call").map(row => call(row.name, row.arguments)));
   return plan(input.flatMap(row => {
     if (row.role === "user") {
       const text = row.content.filter(part => part.type === "input_text").map(part => part.text).join("\n");
+      if (text.startsWith("项目观察数据")) return [];
       return [{ type: "user", text }];
     }
     if (row.type === "function_call") return [call(row.name, row.arguments)];

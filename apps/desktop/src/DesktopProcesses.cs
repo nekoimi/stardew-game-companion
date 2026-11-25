@@ -196,6 +196,9 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
                 "model_test_passed" => ("info", "模型与工具调用测试通过。"),
                 "model_request_failed" => ("warn", "模型配置或连接测试失败。"),
                 "model_request_started" => ("info", "开始调用模型。"),
+                "model_request_completed" => ("info", "模型请求已结算。"),
+                "phase_map_cache" => ("info", "阶段地图缓存已核对。"),
+                "phase_observation_unavailable" => ("warn", "阶段地图观察暂不可用。"),
                 "model_request_retry" => ("warn", "模型调用暂时失败，等待重试。"),
                 "tool_result" => ("info", "Agent 工具调用已返回。"),
                 "work_stage_completed" => ("info", "农场工作阶段已结算。"),
@@ -212,13 +215,16 @@ internal sealed class DesktopProcesses(string root, FileLogger logger)
             {
                 if (property.Name is "completedCount" or "remainingCount" or "skippedCount" or "failedCount"
                     or "nativeActions" or "targetCount" or "modelRequestsAtDispatch" or "modelRequestsDuringStage"
-                    or "modelRequests" or "elapsedMs" or "stages" or "attempt"
+                    or "modelRequests" or "elapsedMs" or "stages" or "attempt" or "scannedTiles"
+                    or "input" or "output" or "cacheRead" or "cacheWrite"
                     && property.Value.ValueKind == JsonValueKind.Number)
                     details[property.Name] = property.Value.Clone();
                 if (property.Name == "needsReconciliation" && property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
                     details[property.Name] = property.Value.Clone();
+                if (property.Name == "hit" && property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    details[property.Name] = property.Value.Clone();
                 if (property.Name is "gameSessionId" or "requestId" or "commandId" or "skillId" or "status" or "tool"
-                    or "provider" or "protocol" or "code" or "turnId" or "goalId" or "operation" or "stopReason"
+                    or "provider" or "protocol" or "code" or "turnId" or "goalId" or "operation" or "stopReason" or "requestKind"
                     && property.Value.ValueKind == JsonValueKind.String
                     && DiagnosticToken.IsMatch(property.Value.GetString()!))
                     details[property.Name] = property.Value.Clone();

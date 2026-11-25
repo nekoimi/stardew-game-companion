@@ -26,13 +26,16 @@ def collect(run):
         counters = [value for request, value in usage if request.rsplit(":", 1)[0] in turns]
         tool_calls = [row["payload"] for row in trace if row.get("type") == "tool"]
         native = [row["payload"] for row in trace if row.get("type") == "result"]
+        metrics = [row["payload"] for row in trace if row.get("type") == "model-metrics"]
         totals = {key: sum(value[key] for value in counters if isinstance(value.get(key), (int, float)))
                   if counters and all(isinstance(value.get(key), (int, float)) for value in counters) else None
                   for key in ("input", "output", "cacheRead", "cacheWrite")}
         rows.append({"case": report["case"], "status": report["status"], "source": "simulated" if simulated else "formal",
                      "backend": report.get("backend"), "elapsedSeconds": report.get("elapsedSeconds"),
                      "modelRequests": len(counters), "retries": sum(value.get("retry") is True for value in counters),
-                     "modelWaitMs": None, "scanCacheState": "not-instrumented",
+                     "modelWaitMs": sum(row.get("elapsedMs", 0) for row in metrics) if metrics else None,
+                     "scanCacheState": "instrumented" if any(row.get("type") == "phase_map_cache" for row in trace) else "not-instrumented",
+                     "modelRequestKinds": [row.get("requestKind") for row in metrics],
                      "supplierCacheState": "mock" if simulated else "provider-reported-not-controlled",
                      "usage": None if simulated else totals, "nativeActions": len(native),
                      "nativeFailures": sum(row.get("terminalState") not in ("succeeded", "partially-succeeded") for row in native),

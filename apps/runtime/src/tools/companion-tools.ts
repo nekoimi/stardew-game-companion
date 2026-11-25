@@ -238,7 +238,9 @@ function choose(args: JsonValue | undefined): [string, JsonObject] {
 export class CompanionTools {
   readonly phaseObserver: PhaseObserver;
   constructor(private readonly game: GameConnection, private readonly directory: string,
-              private readonly store?: CompanionStore) { this.phaseObserver = new PhaseObserver(game, store); }
+              private readonly store?: CompanionStore, metrics?: (event: string, details: JsonObject) => void) {
+    this.phaseObserver = new PhaseObserver(game, store, metrics);
+  }
 
   async invoke(context: ToolContext, name: string, args: JsonObject): Promise<JsonValue> {
     const definition = definitions.find(item => item.name === name);

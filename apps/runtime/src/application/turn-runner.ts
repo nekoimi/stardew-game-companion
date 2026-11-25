@@ -41,6 +41,7 @@ interface Turn {
   stages: number;
   startedAt: number;
   phaseObservation?: PhaseObservation;
+  lastPhaseStatus?: string;
 }
 
 export class TurnRunner {
@@ -67,7 +68,9 @@ export class TurnRunner {
               private readonly rules: string, private readonly store?: CompanionStore, directory = "",
               private readonly trace?: (type: string, payload: JsonObject) => void,
               private readonly diagnostic?: (event: string, details: JsonObject) => void) {
-    this.tools = new CompanionTools(game, directory, store);
+    this.tools = new CompanionTools(game, directory, store, (event, details) => {
+      this.diagnostic?.(event, details); this.trace?.(event, details);
+    });
     game.on("changed", () => {
       const binding = game.binding;
       if (!binding) this.observedOwner = false;
@@ -705,6 +708,9 @@ export class TurnRunner {
         const renewal = setInterval(() => lease("renew"), 3000);
         let output: Complete | undefined;
         let requestFailure: ModelFailure | undefined;
+        let modelStarted = 0;
+        const requestKind = retries ? "retry" : turn.lastPhaseStatus === "completed" ? "summary-or-next-phase"
+          : turn.lastPhaseStatus ? "replanning" : "planning";
         const idle = new AbortController();
         const streaming = this.selection?.stream !== false;
         const idleTimer = setTimeout(() => idle.abort(), modelResponseTimeout(streaming));
@@ -726,6 +732,7 @@ export class TurnRunner {
           const goal = this.store?.items(save, "goals").find(item => item.id === turn.goalId);
           const instructions = goal && this.store ? this.store.goalInstructions(save, goal) : [];
           const context: JsonObject | undefined = this.store ? { profile: this.store.profile(save),
+            contextBinding: { ...turn.binding, actorMode: this.game.actorMode },
             memory: this.store.memory(save).entries.slice(-24).map(({ id, kind, text, gameDate }) => ({ id, kind, text, gameDate })),
             originalRequest: this.store.playerRequest(save, turn.originalRequestId).text ?? null, goalId: turn.goalId,
             goalInstructions: instructions,
@@ -752,6 +759,7 @@ export class TurnRunner {
           this.diagnostic?.("model_request_started", { gameSessionId: turn.binding.gameSessionId, requestId: turn.requestId,
             provider: this.selection?.provider ?? null, protocol: this.selection?.protocol ?? null, source });
           turn.modelRequests++;
+          modelStarted = Date.now();
           for await (const event of model.generate({ instructions: this.rules, context, messages, tools: gameTools,
             signal: AbortSignal.any([signal, idle.signal]) })) {
             if (streaming && (event.type === "text" || event.type === "activity")) idleTimer.refresh();
@@ -762,7 +770,16 @@ export class TurnRunner {
             if (event.type === "error") { requestFailure = event; break; }
             if (event.type === "done") output = event;
           }
-        } finally { clearTimeout(idleTimer); clearInterval(renewal); lease("end"); }
+        } finally {
+          clearTimeout(idleTimer); clearInterval(renewal); lease("end");
+          if (modelStarted) {
+            const metrics: JsonObject = { turnId: turn.id, requestId: turn.originalRequestId, goalId: turn.goalId,
+              requestKind, elapsedMs: Date.now() - modelStarted, status: output ? "responded" : "failed",
+              input: output?.usage?.input ?? null, output: output?.usage?.output ?? null,
+              cacheRead: output?.usage?.cacheRead ?? null, cacheWrite: output?.usage?.cacheWrite ?? null };
+            this.diagnostic?.("model_request_completed", metrics); this.trace?.("model-metrics", metrics);
+          }
+        }
         if (this.selection) this.store?.recordUsage(save, `${turn.id}:${++callCount}`, this.selection.provider,
           this.selection.model, output?.usage, { taskId, source, retry: retries > 0 });
         if (signal.aborted) break;
@@ -908,7 +925,7 @@ export class TurnRunner {
               operation, ...object(result), turnId: turn.id, requestId: turn.originalRequestId,
               gameDate: gameDate(this.game.snapshot),
             } });
-            if (operation === "execute_phase") turn.phaseObservation = undefined;
+            if (operation === "execute_phase") { turn.phaseObservation = undefined; turn.lastPhaseStatus = String(object(result).status ?? "stopped"); }
           }
           if (!failed && !plugin && call.name === "manage_arrangements"
               && Object.hasOwn(object(call.arguments.change), "manage_goal")) {

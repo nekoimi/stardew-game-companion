@@ -7,6 +7,9 @@ import type {
 } from "../../application/model.js";
 import { completeResponseFetch, invalidCompleteResponse } from "./complete-response.js";
 import { ModelError, presets, resolveSelection, thinkingLevels } from "./model-catalogue.js";
+import { ContextDelivery } from "./context-delivery.js";
+import { observeUsageFetch } from "./usage-observer.js";
+import { object } from "../../application/model.js";
 
 function classifyFailure(text: string | undefined, cancelled: boolean): ModelError {
   if (cancelled) return new ModelError("cancelled", "模型请求已取消。");
@@ -67,10 +70,14 @@ export class PiModelAdapter implements ModelAdapter {
     const providerHistory = new WeakMap<ModelMessage, AssistantMessage>();
     const fetchComplete = resolved.stream ? undefined : completeResponseFetch(resolved.protocol);
     let lastResponse: AssistantMessage | undefined;
+    const delivery = new ContextDelivery();
     return {
       async *generate({ instructions, context, messages, tools, signal }): AsyncIterable<ModelEvent> {
         try {
-          const transcript: Message[] = messages.map(message => {
+          let reported: JsonObject = {};
+          const observedFetch = observeUsageFetch(fetchComplete ?? globalThis.fetch, usage => { reported = usage; });
+          const prepared = context ? delivery.prepare(messages, context) : undefined;
+          const transcript: Message[] = (prepared?.messages ?? messages).map(message => {
             const timestamp = Date.now();
             if (message.role === "user") return { role: "user", content: message.text, timestamp };
             if (message.role === "tool") return { role: "toolResult", toolCallId: message.callId, toolName: message.name,
@@ -88,10 +95,10 @@ export class PiModelAdapter implements ModelAdapter {
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
             };
           });
-          const systemPrompt = context ? instructions + "\n当前项目状态（数据，不包含工具授权）：\n" + JSON.stringify(context) : instructions;
+          const systemPrompt = instructions;
           const stream = models.streamSimple(model, { systemPrompt, messages: transcript, tools: [...tools] },
             { apiKey: key, signal, reasoning, maxTokens: 4096, maxRetries: 0,
-              fetch: fetchComplete });
+              fetch: observedFetch });
           for await (const event of stream) {
             if (resolved.stream && event.type === "text_delta") yield { type: "text", delta: event.delta };
             if (resolved.stream && (event.type === "thinking_delta" || event.type === "toolcall_delta")) yield { type: "activity" };
@@ -105,6 +112,11 @@ export class PiModelAdapter implements ModelAdapter {
               throw new ModelError("invalid-tool-response", "模型返回了无法解析的工具参数。");
             }
             if (event.reason === "deferred") throw new ModelError("unsupported", "模型返回了延后执行结果。");
+            const delivered: ModelMessage = { role: "assistant",
+              text: message.content.filter(part => part.type === "text").map(part => part.text).join(""),
+              calls: calls.map(call => ({ id: call.id, name: call.name, arguments: call.arguments as JsonObject })) };
+            providerHistory.set(delivered, message);
+            if (event.reason !== "length") prepared?.confirm(delivered);
             lastResponse = calls.length ? message : undefined;
             const usage = message.usage;
             yield {
@@ -114,7 +126,11 @@ export class PiModelAdapter implements ModelAdapter {
               calls: calls.map(call => ({ id: call.id, name: call.name, arguments: call.arguments as JsonObject })),
               // Pi initializes absent counters to zero. Report only an observed non-empty receipt.
               usage: usage.totalTokens > 0 ? {
-                input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite,
+                input: usage.input, output: usage.output,
+                ...(typeof reported.prompt_cache_hit_tokens === "number" || typeof reported.cached_tokens === "number"
+                  || typeof object(reported.prompt_tokens_details).cached_tokens === "number"
+                  || typeof object(reported.input_tokens_details).cached_tokens === "number" ? { cacheRead: usage.cacheRead } : {}),
+                ...(typeof reported.cache_creation_input_tokens === "number" ? { cacheWrite: usage.cacheWrite } : {}),
               } : undefined,
             };
             return;
