@@ -98,7 +98,7 @@ def evaluate(case, before, after, samples):
         checks.pop("targets_preserved")
         checks["ground_drop_matches_capacity"] = after.get("acceptanceGroundDropRemaining") is (case == "walk-pickup-full")
         checks["wood_in_backpack"] = count(after.get("companionItems"), "(O)388") == (0 if case == "walk-pickup-full" else 3)
-    elif case == "mature-trees":
+    elif case in {"mature-trees", "phase-forestry"}:
         checks.pop("targets_preserved")
         checks["two_mature_trees_cut"] = before.get("acceptanceMatureTreesRemaining") == 2 and after.get("acceptanceMatureTreesRemaining") == 0
         checks["sapling_preserved"] = before.get("acceptanceSaplingStage") == after.get("acceptanceSaplingStage") == 2
@@ -325,7 +325,7 @@ class Runner:
                 delivered = any(row.get("type") == "player-update" and row["payload"].get("text") == spec["duringAction"]
                                 and row["payload"].get("turnId") == terminal.get("turnId") for row in trace)
                 checks["player_message_delivered_at_tool_boundary"] = guidance_sent and delivered
-            operations = {"tend_crops", "harvest_crops", "collect_ground_items", "store_items", "ship_inventory",
+            operations = {"execute_phase", "tend_crops", "harvest_crops", "collect_ground_items", "store_items", "ship_inventory",
                           "water_auto", "water_zone", "water_tiles", "refill_watering_can", "harvest_auto", "harvest_crop", "chop_tree",
                           "pickup_items", "deposit_to_chest", "withdraw_from_chest", "ship_items", "rest", "navigate_to"}
             actions = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
@@ -351,6 +351,12 @@ class Runner:
                 checks["three_empty_stages_confirmed"] = len(actions) == 3 and all(
                     c["result"].get("stopReason") == "no-observed-targets"
                     and c["result"].get("completedCount") == 0 for c in actions)
+            if self.case == "phase-forestry":
+                phases = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
+                          and "execute_phase" in ((c.get("input") or {}).get("action") or {})]
+                checks["one_complete_phase"] = len(phases) == 1 and phases[0]["result"].get("status") == "completed"
+                checks["zero_model_requests_inside_phase"] = len(phases) == 1 and phases[0]["result"].get("executionModelRequests") == 0
+                checks["all_tree_products_stored"] = not [i for i in after.get("companionItems", []) if i.get("id") in {"(O)388", "(O)92", "(O)309", "(O)310", "(O)311"}]
             if self.case == "farm-growth":
                 native = [row["payload"] for row in trace if row.get("type") == "result"]
                 care_index = max((index for index, receipt in enumerate(native) if receipt.get("skillId") == "water-zone"

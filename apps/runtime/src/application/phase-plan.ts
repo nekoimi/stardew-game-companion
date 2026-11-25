@@ -13,7 +13,9 @@ export const phasePlanSchema: JsonObject = fields({
   completion: fields({ metric: enumeration("new-wood-stored", "wood-stock-at-least", "trees-stored", "daily-care-stored"),
     quantity: { type: "integer", minimum: 1, maximum: 9999 } }),
   constraints: fields({ stamina_floor: { type: "number", minimum: 1, maximum: 1000 },
-    destination_ref: text(), keep: list(fields({ item_id: text(), count: { type: "integer", minimum: 0, maximum: 999999 } }), 36) }),
+    destination_ref: text(), keep: list(fields({ item_id: text(), count: { type: "integer", minimum: 0, maximum: 999999 } }), 36),
+    include_existing: list(fields({ item_id: text(), count: { type: "integer", minimum: 1, maximum: 999999 } }), 36) },
+    ["stamina_floor", "destination_ref", "keep"]),
   steps: list(fields({ id: text(40), operation: enumeration("tend-crops", "harvest-crops", "chop-trees", "collect-products", "store-products"),
     after: list(text(40), 7), inputs: list(text(40), 7) }), 8, 1),
   branches: list(fields({ on: enumeration("target-unreachable", "inventory-full", "destination-unavailable", "insufficient-resources"),
@@ -36,7 +38,7 @@ export interface PhaseObservation {
 export interface PhaseStep { id: string; operation: string; after: string[]; inputs: string[] }
 export interface PhasePlan {
   objective: string; metric: string; quantity: number; staminaFloor: number; destinationRef: string;
-  keep: Map<string, number>; steps: PhaseStep[]; branches: { on: string; action: string; destinationRef?: string }[];
+  keep: Map<string, number>; existing: Map<string, number>; steps: PhaseStep[]; branches: { on: string; action: string; destinationRef?: string }[];
 }
 
 /** Schema validation is performed by the tool boundary before this semantic preflight. */
@@ -83,6 +85,13 @@ export function bindPhasePlan(input: JsonObject, observation: PhaseObservation, 
     if ((branch.action === "skip-target" && branch.on !== "target-unreachable")
         || (branch.action === "store-and-resume" && branch.on !== "inventory-full")) throw new Error("阶段异常处理不适用于该条件。");
   }
+  if (completion.metric === "daily-care-stored" && completion.quantity !== 1) throw new Error("日常完成指标的数量固定为 1。");
+  const existing = new Map<string, number>();
+  for (const row of Array.isArray(constraints.include_existing) ? constraints.include_existing.map(object) : []) {
+    const id = String(row.item_id);
+    if (existing.has(id)) throw new Error("原有物品数量必须合并。");
+    existing.set(id, Number(row.count));
+  }
   return { objective: String(input.objective), metric: String(completion.metric), quantity: Number(completion.quantity),
-    staminaFloor: Number(constraints.stamina_floor), destinationRef: String(constraints.destination_ref), keep, steps, branches };
+    staminaFloor: Number(constraints.stamina_floor), destinationRef: String(constraints.destination_ref), keep, existing, steps, branches };
 }

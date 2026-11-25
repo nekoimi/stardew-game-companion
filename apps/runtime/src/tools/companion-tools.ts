@@ -7,6 +7,8 @@ import type { CompanionStore } from "../adapters/storage/companion-store.js";
 import { object } from "../application/model.js";
 import { PhaseObserver } from "../application/phase-observation.js";
 import type { PhaseBinding } from "../application/phase-plan.js";
+import type { PhaseObservation } from "../application/phase-plan.js";
+import { PhaseExecutor } from "../application/phase-executor.js";
 import type { JsonObject, JsonValue, ToolDefinition } from "../application/model.js";
 import { actions, fields, nativeParameters, oneOperation, queries, validate, workflows } from "./native-tools.js";
 
@@ -78,6 +80,9 @@ type ToolContext = {
   speak: (text: string) => void;
   changed: () => void;
   pluginArrangement?: (operation: string, params: JsonObject) => JsonObject;
+  phaseObservation?: PhaseObservation;
+  phaseBinding?: () => PhaseBinding;
+  phaseProgress?: (state: JsonObject) => void;
 };
 
 export function gameDate(snapshot: JsonObject | undefined): string {
@@ -251,6 +256,13 @@ export class CompanionTools {
       }
       case "submit_work": {
         const [operation, params] = choose(args.action);
+        if (operation === "execute_phase") {
+          if (!context.phaseObservation || !context.phaseBinding) throw new Error("尚未准备有效阶段观察，请重新观察。");
+          return new PhaseExecutor().execute(params, { observation: context.phaseObservation, current: context.phaseBinding,
+            native: context.native, observe: () => this.game.observe(), block: () => context.signal.aborted ? "interrupted" : context.workBlock?.(),
+            workflow: async (name, args) => object(await this.invoke(context, "submit_work", { action: { [name]: args } })),
+            progress: state => context.phaseProgress?.(state) });
+        }
         if (operation === "tend_crops") return this.tendCrops(context, params);
         if (operation === "harvest_crops") return this.harvestCrops(context, params);
         if (operation === "collect_ground_items") return this.collectGroundItems(context, params);

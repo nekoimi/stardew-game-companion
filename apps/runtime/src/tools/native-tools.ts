@@ -1,5 +1,6 @@
 import type { JsonObject, JsonValue } from "../application/model.js";
 import { object } from "../application/model.js";
+import { phasePlanSchema } from "../application/phase-plan.js";
 
 type Schema = JsonObject;
 const text = (maxLength = 100): Schema => ({ type: "string", minLength: 1, maxLength });
@@ -22,6 +23,7 @@ const withLocation = (properties: Record<string, Schema>, required = Object.keys
   fields({ ...location, ...properties }, required);
 
 export const workflows: Record<string, Schema> = {
+  execute_phase: { ...phasePlanSchema, description: "Execute one complete multi-step phase planned from phaseObservation, including resource constraints, collection and storage. Normal internal work requires no model calls." },
   tend_crops: { ...fields({ ...location, region }, ["location_id"]),
     description: "Care for observed dry crops in the location or an observed region. Refill as needed and verify the remaining work." },
   harvest_crops: { ...withLocation({ region, limit: integer(1, 4096) }, ["location_id"]),

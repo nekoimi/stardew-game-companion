@@ -1,4 +1,11 @@
 {
+  "phase-forestry": {
+    "title": "完整阶段采木收集入库",
+    "fixture": "mature-trees",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "帮我砍两棵成熟的普通树，保留幼树和装采集器的树。把这次采伐得到的材料捡好收进田边空箱子，保留至少80点体力。请先把采伐、拾取、入库作为一个完整阶段规划好再连续执行，完成后就休息。"
+  },
   "farm-growth": {
     "title": "日常照料后推进经营",
     "stamina": 270,

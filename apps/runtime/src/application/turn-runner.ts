@@ -850,6 +850,12 @@ export class TurnRunner {
           try {
             result = await this.tools.invoke({ binding: turn.binding, turnId: turn.id, requestId: turn.originalRequestId,
               goalId: turn.goalId, signal, workBlock,
+              phaseObservation: turn.phaseObservation, phaseBinding: () => this.phaseBinding(turn),
+              phaseProgress: state => {
+                this.publish("phase-progress", { ...turn.binding, goalId: turn.goalId, turnId: turn.id, ...state });
+                if (this.store && !plugin) this.store.updateItem(save, "goals", turn.goalId, { phaseProgress: state });
+                this.changed();
+              },
               native: (skill, params, observation) => {
                 if (plugin && !observation && (skill === "sleep" || this.pluginRestRequired(turn.binding)
                   || startingDate !== gameDate(this.game.snapshot))) {
@@ -902,6 +908,7 @@ export class TurnRunner {
               operation, ...object(result), turnId: turn.id, requestId: turn.originalRequestId,
               gameDate: gameDate(this.game.snapshot),
             } });
+            if (operation === "execute_phase") turn.phaseObservation = undefined;
           }
           if (!failed && !plugin && call.name === "manage_arrangements"
               && Object.hasOwn(object(call.arguments.change), "manage_goal")) {
