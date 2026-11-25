@@ -541,8 +541,8 @@ public sealed class WebSocketTransportServer : ITransportServer
                 SmapiVersion: "4.2.1",
                 LifecycleState: "syncing",
                 Skills: ActorMode == "player"
-                    ? new[] { "navigate-to", "water-zone", "harvest-zone", "open-chest", "open-shop", "deposit-chest", "organize-chest", "withdraw-chest", "hoe-tiles", "plant-seeds", "ship-items", "purchase-items", "sleep", "refill-watering-can", "clear-debris", "cut-grass", "apply-fertilizer", "pickup-items" }
-                    : new[] { "water-zone", "harvest-zone", "deposit-chest", "organize-chest", "hoe-tiles", "plant-seeds", "ship-items", "withdraw-chest" },
+                    ? new[] { "navigate-to", "water-zone", "harvest-zone", "open-chest", "open-shop", "deposit-chest", "organize-chest", "withdraw-chest", "hoe-tiles", "plant-seeds", "ship-items", "purchase-items", "sleep", "refill-watering-can", "clear-debris", "cut-grass", "apply-fertilizer", "pickup-items", "inspect-phase-map" }
+                    : new[] { "water-zone", "harvest-zone", "deposit-chest", "organize-chest", "hoe-tiles", "plant-seeds", "ship-items", "withdraw-chest", "inspect-phase-map" },
                 ActorMode: ActorMode, ActorMultiplayerId: ActorMultiplayerId,
                 CommandResultQuery: true
             );
@@ -1570,7 +1570,7 @@ public sealed class WebSocketTransportServer : ITransportServer
         return Task.CompletedTask;
     }
 
-    private static bool IsObservationSkill(string? skillId) => skillId is "inspect-player-activities" or "inspect-location" or "inspect-map-image" or "inspect-crafting" or "inspect-machines" or "inspect-production" or "inspect-building-services" or "inspect-planting" or "inspect-route" or "inspect-livestock" or "inspect-shop" or "inspect-water-sources" or "inspect-farm-work";
+    private static bool IsObservationSkill(string? skillId) => skillId is "inspect-player-activities" or "inspect-location" or "inspect-map-image" or "inspect-crafting" or "inspect-machines" or "inspect-production" or "inspect-building-services" or "inspect-planting" or "inspect-route" or "inspect-livestock" or "inspect-shop" or "inspect-water-sources" or "inspect-farm-work" or "inspect-phase-map";
 
     public Task SendProtocolErrorAsync(string code, string message, string? correlationId = null)
     {

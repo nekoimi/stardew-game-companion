@@ -12,6 +12,7 @@ import type { JsonObject, JsonValue, ModelContext, ModelEvent, ModelMessage, Mod
 import { PluginCommandError, pluginAction } from "./plugin-command.js";
 import type { PluginCommand, PluginRequest } from "./plugin-command.js";
 import { actionEvidence } from "./work-feedback.js";
+import type { PhaseBinding, PhaseObservation } from "./phase-plan.js";
 
 type Complete = Extract<ModelEvent, { type: "done" }>;
 type ModelFailure = Extract<ModelEvent, { type: "error" }>;
@@ -39,6 +40,7 @@ interface Turn {
   nativeActions: number;
   stages: number;
   startedAt: number;
+  phaseObservation?: PhaseObservation;
 }
 
 export class TurnRunner {
@@ -707,12 +709,33 @@ export class TurnRunner {
         const streaming = this.selection?.stream !== false;
         const idleTimer = setTimeout(() => idle.abort(), modelResponseTimeout(streaming));
         try {
+          const phaseBinding = this.phaseBinding(turn);
+          if (this.game.supportsPhaseMap && phaseBinding.locationId === "Farm" && !bedtimeOnly
+              && (!turn.phaseObservation || turn.phaseObservation.binding.instructionVersion !== phaseBinding.instructionVersion
+                || turn.phaseObservation.binding.gameDate !== phaseBinding.gameDate)) {
+            const check = () => { signal.throwIfAborted(); this.assertBinding(turn.binding);
+              if (turn.additional.length || turn.appliedRequestId !== phaseBinding.instructionVersion) throw new Error("阶段观察期间收到新要求。"); };
+            try { turn.phaseObservation = await this.tools.phaseObserver.prepare(phaseBinding,
+              (skill, params) => this.executeNative(turn, skill, params, true), check); }
+            catch (error) {
+              if (signal.aborted) throw error;
+              if (turn.additional.length) continue;
+              this.diagnostic?.("phase_observation_unavailable", { turnId: turn.id });
+            }
+          }
           const goal = this.store?.items(save, "goals").find(item => item.id === turn.goalId);
           const instructions = goal && this.store ? this.store.goalInstructions(save, goal) : [];
           const context: JsonObject | undefined = this.store ? { profile: this.store.profile(save),
             memory: this.store.memory(save).entries.slice(-24).map(({ id, kind, text, gameDate }) => ({ id, kind, text, gameDate })),
             originalRequest: this.store.playerRequest(save, turn.originalRequestId).text ?? null, goalId: turn.goalId,
             goalInstructions: instructions,
+            ...(turn.phaseObservation ? { phaseObservation: {
+              ref: turn.phaseObservation.ref, scopeRef: turn.phaseObservation.scopeRef,
+              complete: turn.phaseObservation.complete, revision: turn.phaseObservation.revision,
+              ...object(turn.phaseObservation.facts.summary), resources: {
+                companion: turn.phaseObservation.facts.companion, inventory: turn.phaseObservation.facts.inventory,
+                farmWork: turn.phaseObservation.facts.farmWork }, destinations: turn.phaseObservation.destinations,
+            } } : {}),
             ...(goal ? { planning: { longTermObjective: goal.objective ?? goal.text, horizon: goal.horizon ?? "finite",
               currentFocus: goal.currentFocus ?? null, dayPlan: goal.dayPlan ?? null,
               dayPlanCurrent: object(goal.dayPlan).gameDate === gameDate(this.game.snapshot),
@@ -958,6 +981,12 @@ export class TurnRunner {
       profileRevision: this.store?.profile(save).profileRevision ?? 0, memoryRevision: this.store?.memory(save).memoryRevision ?? 0 };
     this.game.notify("chat.reply", { ...reply, status: "public-message" });
     this.publish("life.chat.reply", reply);
+  }
+
+  private phaseBinding(turn: Turn): PhaseBinding {
+    return { ...turn.binding, actorMode: this.game.actorMode, goalId: turn.goalId, requestId: turn.originalRequestId,
+      instructionVersion: turn.appliedRequestId, gameDate: gameDate(this.game.snapshot),
+      locationId: String(object(this.game.snapshot?.companion).locationId ?? "") };
   }
 
   private settleReceipt(binding: GameBinding, actionId: string, receipt: JsonObject): void {

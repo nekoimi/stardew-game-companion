@@ -5,6 +5,8 @@ import type { GameConnection } from "../adapters/game/game-connection.js";
 import type { GameBinding } from "../adapters/game/action-receipt.js";
 import type { CompanionStore } from "../adapters/storage/companion-store.js";
 import { object } from "../application/model.js";
+import { PhaseObserver } from "../application/phase-observation.js";
+import type { PhaseBinding } from "../application/phase-plan.js";
 import type { JsonObject, JsonValue, ToolDefinition } from "../application/model.js";
 import { actions, fields, nativeParameters, oneOperation, queries, validate, workflows } from "./native-tools.js";
 
@@ -229,8 +231,9 @@ function choose(args: JsonValue | undefined): [string, JsonObject] {
 }
 
 export class CompanionTools {
+  readonly phaseObserver: PhaseObserver;
   constructor(private readonly game: GameConnection, private readonly directory: string,
-              private readonly store?: CompanionStore) {}
+              private readonly store?: CompanionStore) { this.phaseObserver = new PhaseObserver(game, store); }
 
   async invoke(context: ToolContext, name: string, args: JsonObject): Promise<JsonValue> {
     const definition = definitions.find(item => item.name === name);
@@ -608,6 +611,29 @@ export class CompanionTools {
   }
 
   private async refillCan(context: ToolContext, locationId: string): Promise<JsonObject> {
+    if (this.game.supportsPhaseMap) {
+      const binding: PhaseBinding = { ...context.binding, actorMode: this.game.actorMode, goalId: context.goalId,
+        requestId: context.requestId, instructionVersion: context.requestId, gameDate: gameDate(this.game.snapshot), locationId };
+      const check = () => { context.signal.throwIfAborted(); const blocked = context.workBlock?.(); if (blocked) throw new Error(blocked); };
+      // Native actions still verify each shore point. A rejected cached source
+      // triggers a fresh map, never a model round or blind action replay.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const map = await this.phaseObserver.map(binding, context.native, check, attempt > 0);
+        const actor = object(this.game.snapshot?.companion);
+        const tiles = map.waterTiles.slice().sort((a, b) =>
+          Math.abs(Number(a.x) - Number(actor.tileX ?? 0)) + Math.abs(Number(a.y) - Number(actor.tileY ?? 0))
+          - Math.abs(Number(b.x) - Number(actor.tileX ?? 0)) - Math.abs(Number(b.y) - Number(actor.tileY ?? 0)));
+        if (!tiles.length) return { stopReason: "no-observed-water-source" };
+        for (let offset = 0; offset < tiles.length; offset += 100) {
+          check();
+          const receipt = await context.native("refill-watering-can", { locationId, tiles: tiles.slice(offset, offset + 100) });
+          if (receipt.terminalState === "succeeded") return receipt;
+          check();
+          if (!["rejected", "failed"].includes(String(receipt.terminalState)) || receipt.playerActionRequired === true) return receipt;
+        }
+      }
+      return { stopReason: "refill-sources-unavailable" };
+    }
     const result = await context.native("inspect-water-sources", { locationId }, true);
     if (result.terminalState !== "succeeded") return { stopReason: "water-source-observation-unavailable" };
     const tiles = observedTiles(object(result.details).tiles);

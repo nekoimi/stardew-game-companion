@@ -101,6 +101,10 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
         if (!_desktopMode) helper.Events.GameLoop.UpdateTicking += (_, _) => TickNativeChatInput();
         helper.Events.GameLoop.TimeChanged += OnTimeChanged;
+        helper.Events.World.ObjectListChanged += (_, _) => _observer?.InvalidatePhaseMap();
+        helper.Events.World.TerrainFeatureListChanged += (_, _) => _observer?.InvalidatePhaseMap();
+        helper.Events.World.BuildingListChanged += (_, _) => _observer?.InvalidatePhaseMap();
+        helper.Events.Content.AssetsInvalidated += (_, _) => _observer?.InvalidatePhaseMap();
         CompanionWorldDraw.Install(() => PlayerModeEnabled ? null : _avatar);
         if (!_desktopMode) helper.Events.Display.RenderedHud += OnRenderedHud;
         helper.Events.Display.MenuChanged += (_, e) => {

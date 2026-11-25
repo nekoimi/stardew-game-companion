@@ -1,12 +1,16 @@
 # 完整阶段规划契约
 
-状态：实施中。阶段 A 固化模型侧 schema 和语义预检；原生全图查询及 `submit_work.execute_phase` 接线在后续阶段实施，不代表当前发行包已有该入口。
+状态：实施中。阶段 A 固化模型侧 schema 和语义预检；阶段 B 已提供原生全图分页观察与缓存，`submit_work.execute_phase` 在阶段 C 接入。
 
 ## 观察身份
 
 `PhaseObservation` 由运行时创建，包含 `ref`、`binding`、`revision`、`complete`、`scopeRef`、`destinations` 和 `facts`。`binding` 固定存档、游戏会话、角色模式、目标、原要求、最新要求版本、日期和地图；模型只能引用不能填写身份。完整性为假时不得按全图目标派工，陈旧引用必须重新准备观察。
 
 后续原生分页查询需返回实际地图尺寸、当前页范围、下一页、观察版本和完整性。未加载、未知、截断和失败不能转为空集合。地图、水源和设施缓存只提供候选，原生动作使用前核对真实状态。
+
+阶段 B 的原生查询为 `inspect-phase-map`，参数 `locationId`、`scanOffset`、`scanLimit`（0～512）；0 只查询地图头，其他值逐页读取。结果 `details.page` 包含宽高、offset/end/nextOffset（-1 表示结束）、fingerprint、capturedRevision、trees、waterTiles、fixtures、scannedTiles 和 complete。单页完成标记不代替整图完整性，运行时验证全部页覆盖后才视为完整。共享样例见 `examples/phase-map-page.json`。
+
+原生事件及内容失效更新指纹，读档重建会话盐；数据库缓存按存档、模式和地图隔离。命中前查询权威地图头，指纹不同重扫；水源执行失败还会主动刷新并尝试其他岸边。玩家模式首版仅允许 Farm 全图业务观察，其他地图返回不可用，避免绕过可见区域约束。
 
 ## 计划字段
 

@@ -21,6 +21,9 @@ public sealed record ShopActionMetadata(
 /// </summary>
 public interface IWorldObserver
 {
+    Dictionary<string, object> InspectPhaseMapPage(string locationName, int offset, int limit) =>
+        throw new NotSupportedException("Phase map observation is unavailable.");
+    void InvalidatePhaseMap() { }
     /// <summary>On-demand complete spatial facts; never included in periodic snapshots.</summary>
     Dictionary<string, object> InspectLocation(string locationName, Rectangle? region = null) =>
         throw new NotSupportedException("Spatial observation is unavailable in this observer.");

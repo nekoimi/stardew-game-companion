@@ -78,11 +78,27 @@ export class CompanionStore {
         save_id TEXT NOT NULL, game_id TEXT NOT NULL, action_id TEXT NOT NULL, value TEXT NOT NULL,
         PRIMARY KEY(save_id, game_id, action_id)
       );
+      CREATE TABLE IF NOT EXISTS map_cache (
+        save_id TEXT NOT NULL, mode TEXT NOT NULL, location TEXT NOT NULL, value TEXT NOT NULL,
+        PRIMARY KEY(save_id, mode, location)
+      );
     `);
     for (const row of this.db.prepare("SELECT DISTINCT save_id FROM receipts").all()) this.maintainReceipts(String(row.save_id));
   }
 
   close(): void { this.db.close(); }
+
+  mapCache(save: string, mode: string, location: string): JsonObject | undefined {
+    try {
+      const row = this.db.prepare("SELECT value FROM map_cache WHERE save_id=? AND mode=? AND location=?").get(save, mode, location);
+      return row ? object(JSON.parse(String(row.value))) : undefined;
+    } catch { return undefined; } // Derived cache can always be rebuilt.
+  }
+
+  saveMapCache(save: string, mode: string, location: string, value: JsonObject): void {
+    this.db.prepare("INSERT INTO map_cache VALUES (?,?,?,?) ON CONFLICT(save_id,mode,location) DO UPDATE SET value=excluded.value")
+      .run(save, mode, location, JSON.stringify(value));
+  }
 
   private section<T>(save: string, name: Section, fallback: T): { revision: number; value: T } {
     const row = this.db.prepare("SELECT rev, value FROM save_sections WHERE save_id = ? AND name = ?").get(save, name);

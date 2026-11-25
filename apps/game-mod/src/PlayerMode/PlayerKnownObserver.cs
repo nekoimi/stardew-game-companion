@@ -43,6 +43,14 @@ namespace StardewAI.Companion.Mod.PlayerMode;
 /// </summary>
 public sealed class PlayerKnownObserver : IWorldObserver
 {
+    public void InvalidatePhaseMap() => _inner.InvalidatePhaseMap();
+    public Dictionary<string, object> InspectPhaseMapPage(string locationName, int offset, int limit)
+    {
+        // Farm business is fully observable. Other maps retain their visible
+        // knowledge boundary; never upgrade a partial view to a full-map claim.
+        if (!IsFarm(locationName)) throw new NotSupportedException("Whole-map phase observation is only available for player-owned Farm.");
+        return _inner.InspectPhaseMapPage(locationName, offset, limit);
+    }
     public void NoteChestOpened(string location,int x,int y) => _knowledge.NoteChestObserved(location,x,y);
     private readonly GameWorldObserver _inner;
     private readonly PlayerKnowledgeTracker _knowledge;

@@ -1,0 +1,6 @@
+{
+  "locationId": "Farm", "width": 600, "height": 2, "offset": 1024, "end": 1200, "nextOffset": -1,
+  "complete": true, "fingerprint": "fixture-map-v1", "capturedRevision": 7,
+  "trees": [{ "tile": { "x": 599, "y": 1 }, "kind": "tree", "growthStage": 5, "tapped": false }],
+  "waterTiles": [{ "x": 590, "y": 1 }], "fixtures": [], "scannedTiles": 176
+}

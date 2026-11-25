@@ -47,6 +47,7 @@ export class GameConnection extends EventEmitter {
   snapshot?: JsonObject;
   state: JsonObject = {};
   actorMode = "player";
+  supportsPhaseMap = false;
 
   constructor(private readonly modDirectory: string) { super(); }
 
@@ -127,6 +128,7 @@ export class GameConnection extends EventEmitter {
     this.commands = this.chat = undefined;
     this.connecting = this.welcomed = false;
     this.snapshot = undefined;
+    this.supportsPhaseMap = false;
     this.state = {};
     this.revision = 0;
     if (!keepDescriptor) {
@@ -146,6 +148,7 @@ export class GameConnection extends EventEmitter {
       this.welcomed = true;
       this.connecting = false;
       this.actorMode = String(message.payload.actorMode ?? "player");
+      this.supportsPhaseMap = Array.isArray(message.payload.skills) && message.payload.skills.includes("inspect-phase-map");
     }
     if (!this.welcomed) return;
     if (message.messageType === "world.snapshot" && message.worldRevision >= this.revision) {

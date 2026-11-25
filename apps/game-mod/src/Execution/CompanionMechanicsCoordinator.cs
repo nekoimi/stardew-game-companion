@@ -934,6 +934,20 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                 }
             }
 
+            if (skillId is "inspect-phase-map")
+            {
+                try
+                {
+                    if (_actor.LocationName != payload.Parameters.LocationId) throw new InvalidOperationException("Observe the actor's current map.");
+                    var page = _observer.InspectPhaseMapPage(payload.Parameters.LocationId, payload.Parameters.ScanOffset, payload.Parameters.ScanLimit);
+                    var result = new SkillResultPayload(payload.CommandId, payload.TaskId, "succeeded", 0, 0, 0,
+                        _observer.WorldRevision, new(), SkillId: skillId, Details: new Dictionary<string, object> { ["page"] = page });
+                    _lastSkillResultPayload = result;
+                    if (_transportServer is not null) _ = _transportServer.SendSkillResultAsync(result, envelope.MessageId, envelope.IdempotencyKey);
+                    rejectResult = null; return true;
+                }
+                catch (Exception ex) { rejectResult = BuildRejection(payload, "PHASE_MAP_UNAVAILABLE", ex.Message, false); return false; }
+            }
             if (skillId is "inspect-water-sources")
             {
                 if (_actor.LocationName != payload.Parameters.LocationId)

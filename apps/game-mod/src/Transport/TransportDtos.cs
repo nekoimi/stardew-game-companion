@@ -469,6 +469,8 @@ public sealed record WaterZoneParameters(
     [property: JsonPropertyName("tiles")] List<TileCoord>? Tiles = null
 )
 {
+    [JsonPropertyName("scanOffset")] public int ScanOffset { get; init; }
+    [JsonPropertyName("scanLimit")] public int ScanLimit { get; init; } = 512;
     [JsonPropertyName("includeEmptyTiles")]
     public bool IncludeEmptyTiles { get; init; } = true;
     [JsonPropertyName("tile")]
