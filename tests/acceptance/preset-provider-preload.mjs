@@ -150,6 +150,21 @@ function phasePlan(context, calls, daily = false) {
     branches: [{ on: "target-unreachable", action: "skip-target" }, { on: "inventory-full", action: "store-and-resume" }] });
 }
 
+function noChestPlan(context, calls, daily) {
+  const observed = context?.phaseObservation;
+  if (!observed || calls.some(row => row.type === "call" && operation(row) === "execute_phase")) return {};
+  return work("execute_phase", { observation_ref: observed.ref, scope_ref: observed.scopeRef,
+    objective: daily ? "照料、收获出货并保留木材" : "成熟树采伐并留包",
+    completion: { metric: daily ? "daily-care-shipped" : "trees-collected", quantity: daily ? 1 : 2 },
+    constraints: { stamina_floor: 80, keep: [], include_existing: daily ? [{ item_id: "(O)388", count: 3 }] : [],
+      ...(daily ? { ship_item_ids: ["(O)24"] } : {}) },
+    steps: [...(daily ? [{ id: "care", operation: "tend-crops", after: [], inputs: [] }] : []),
+      { id: "products", operation: daily ? "harvest-crops" : "chop-trees", after: daily ? ["care"] : [], inputs: [] },
+      { id: "collect", operation: "collect-products", after: ["products"], inputs: ["products"] },
+      ...(daily ? [{ id: "ship", operation: "ship-products", after: ["collect"], inputs: ["collect"] }] : [])],
+    branches: [{ on: "target-unreachable", action: "skip-target" }] });
+}
+
 function planDeepSeek({ messages }) {
   const system = messages.find(row => row.role === "system")?.content ?? "";
   for (const row of messages) if (row.role === "user") acceptContext(String(row.content ?? ""));
@@ -159,6 +174,8 @@ function planDeepSeek({ messages }) {
     if (row.role === "tool") return [{ type: "result", result: parse(row.content) }];
     return (row.tool_calls ?? []).map(tool => call(tool.function.name, tool.function.arguments));
   }));
+  if (decoded.some(row => row.type === "user" && row.text.includes("农场还没箱子")))
+    return noChestPlan(context, decoded, decoded.some(row => row.type === "user" && row.text.includes("防风草")));
   if (decoded.some(row => row.type === "user" && row.text.includes("作为一个完整阶段")))
     return phasePlan(context, decoded, decoded.some(row => row.type === "user" && row.text.includes("当天作物照料")));
   return plan(decoded);
@@ -177,6 +194,8 @@ function planOpenAI({ input, instructions }) {
     if (row.type === "function_call_output") return [{ type: "result", result: parse(row.output) }];
     return [];
   }));
+  if (decoded.some(row => row.type === "user" && row.text.includes("农场还没箱子")))
+    return noChestPlan(context, decoded, decoded.some(row => row.type === "user" && row.text.includes("防风草")));
   if (decoded.some(row => row.type === "user" && row.text.includes("作为一个完整阶段")))
     return phasePlan(context, decoded, decoded.some(row => row.type === "user" && row.text.includes("当天作物照料")));
   return plan(decoded);

@@ -40,3 +40,27 @@ test("phase preflight rejects cycles, unbound products and arbitrary recovery co
   const unauthorized = plan(); unauthorized.constraints.preserve_saplings = false;
   assert.throws(() => bind(unauthorized), /工具定义/);
 });
+
+test("backpack and care phases work without a chest while storage and shipping keep their own prerequisites", () => {
+  const collected = plan(); collected.completion.metric = "trees-collected";
+  delete collected.constraints.destination_ref;
+  collected.steps.pop(); collected.branches = [];
+  const noChest = { ...observation, destinations: {} };
+  assert.equal(bind(collected, noChest).metric, "trees-collected");
+  const care = { ...collected, completion: { metric: "daily-care-completed", quantity: 1 },
+    steps: [{ id: "care", operation: "tend-crops", after: [], inputs: [] }] };
+  assert.equal(bind(care, noChest).steps.length, 1);
+  const missingHarvest = { ...noChest, facts: { farmWork: { matureCrops: [{ x: 1, y: 1 }] } } };
+  assert.throws(() => bind(care, missingHarvest), /成熟作物/);
+  const shipping = { ...care, completion: { metric: "daily-care-shipped", quantity: 1 }, steps: [...care.steps,
+    { id: "ship", operation: "ship-products", after: ["care"], inputs: ["care"] }] };
+  assert.throws(() => bind(shipping, noChest), /授权出售/);
+  shipping.constraints = { ...care.constraints, ship_item_ids: ["(O)24"] };
+  assert.equal(bind(shipping, noChest).shipItems.has("(O)24"), true);
+  const unsafe = structuredClone(collected); unsafe.steps[0].target_quantity = 2;
+  care.steps.push(unsafe.steps[0], unsafe.steps[1]);
+  assert.equal(bind(care, noChest).steps[1].targetQuantity, 2);
+  delete care.steps[1].target_quantity;
+  assert.throws(() => bind(care, noChest), /树木数量/);
+  assert.throws(() => bind(plan(), noChest), /设施/);
+});

@@ -3512,6 +3512,10 @@ public sealed class TestDriverMod : Mod
             ?? throw new InvalidOperationException("Production ModEntry unavailable for harness fixture.");
         AssertHarnessFixtureBoundary(modEntry);
         string mode = request.GetProperty("mode").GetString() ?? "";
+        string requestedMode = mode;
+        bool noChestPhase = mode is "phase-backpack" or "phase-shipping";
+        if (mode == "phase-backpack") mode = "mature-trees";
+        if (mode == "phase-shipping") mode = "phase-daily";
         bool mixedDaily = mode == "phase-daily";
         if (mixedDaily) mode = "harvest-store";
         bool remoteForestry = mode == "phase-remote";
@@ -3733,8 +3737,13 @@ public sealed class TestDriverMod : Mod
                 dirt.state.Value = 0;
             }
         }
+        if (noChestPhase) {
+            foreach (var pair in farm.objects.Pairs.ToArray())
+                if (pair.Value is StardewValley.Objects.Chest) farm.objects.Remove(pair.Key);
+            _acceptanceChest = null;
+        }
         var fixture = new {
-            runId = _runId, label, mode = ongoingGrowth ? "farm-growth" : mixedDaily ? "phase-daily" : remoteForestry ? "phase-remote" : mode, timestampUtc = DateTime.UtcNow.ToString("o"),
+            runId = _runId, label, mode = noChestPhase ? requestedMode : ongoingGrowth ? "farm-growth" : mixedDaily ? "phase-daily" : remoteForestry ? "phase-remote" : mode, timestampUtc = DateTime.UtcNow.ToString("o"),
             saveName = Constants.SaveFolderName, isolatedSavesPath = StardewValley.Program.GetSavesFolder(),
             year = Game1.year, season = Game1.currentSeason, day = Game1.dayOfMonth, timeOfDay = Game1.timeOfDay,
             locationId = "Farm", targetCount = _harnessFixtureTiles.Count, nativeReachability = reachable,
@@ -8655,6 +8664,7 @@ public sealed class TestDriverMod : Mod
                 payload["harnessFixtureMode"] = _harnessFixtureMode;
                 payload["harnessFixtureTargetCount"] = _harnessFixtureTiles.Count;
                 payload["acceptanceShippedItems"] = companionFarmer == null ? null : DescribeItems(farm.getShippingBin(companionFarmer));
+                payload["acceptanceFarmChestCount"] = farm.objects.Values.Count(obj => obj is StardewValley.Objects.Chest);
                 payload["acceptanceGroundDropRemaining"] = _acceptanceDrop != null && farm.debris.Contains(_acceptanceDrop);
                 payload["acceptanceMatureTreesRemaining"] = _acceptanceMatureTrees.Count(tile => farm.terrainFeatures.TryGetValue(tile, out var tree) && tree is Tree);
                 payload["acceptanceSaplingStage"] = _acceptanceSapling is Vector2 sapling && farm.terrainFeatures.TryGetValue(sapling, out var young)

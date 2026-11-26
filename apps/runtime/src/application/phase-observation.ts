@@ -91,6 +91,8 @@ export class PhaseObserver {
       facts: { locationId: binding.locationId, map, trees, world: snapshot.world ?? {}, companion: snapshot.companion ?? {},
         inventory: snapshot.inventory ?? {}, farmWork: snapshot.farmWork ?? {}, chests: destinations,
         summary: { matureTrees: trees.length, waterSources: map.waterTiles.length, destinationRefs: Object.keys(destinations),
+          executionOptions: { backpack: true, shipping: binding.locationId === "Farm", chest: Object.keys(destinations).length > 0,
+            note: "No chest is required for care, harvest or forestry. Use collected/completed metrics to retain products, ship-products only for authorized item IDs. Mature tree candidates are already filtered; executor verifies protection, stamina and reachability. Shipping success is not overnight money settlement." },
           existingGround: [...existingGround.values()], existingGroundStatus: groundObserved ? "complete" : "unknown",
           originalBackpack: (Array.isArray(object(snapshot.inventory).slots) ? object(snapshot.inventory).slots as JsonObject[] : [])
             .filter(slot => slot.isTool !== true).map(slot => ({ itemId: slot.itemId ?? null, count: slot.stack ?? 0,

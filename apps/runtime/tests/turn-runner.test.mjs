@@ -396,7 +396,7 @@ function fixture(game, model) {
   return { runner, events };
 }
 
-test("resting indoors removes the Farm phase reference and returning prepares a fresh observation", async () => {
+test("ordinary native work refreshes phase facts, resting indoors removes the Farm reference and returning rebuilds it", async () => {
   const game = new FakeGame();
   game.supportsPhaseMap = true;
   const store = new CompanionStore(":memory:");
@@ -411,28 +411,30 @@ test("resting indoors removes the Farm phase reference and returning prepares a 
   };
   const runner = new TurnRunner(game, { async *generate({ context }) {
     seen.push(structuredClone(context));
-    yield seen.length === 1 ? done([{ id: "rest", name: "submit_work", arguments: {
-      action: { rest: { target_stamina: 200 } } } }]) : seen.length === 2 ? done([action]) : done();
+    yield seen.length === 1 ? done([action]) : seen.length === 2 ? done([{ id: "rest", name: "submit_work", arguments: {
+      action: { rest: { target_stamina: 200 } } } }]) : seen.length === 3 ? done([action]) : done();
   } }, () => {}, "", store);
   try {
     await runner.submit(binding, "rest-and-return", "先休息，然后回农场", "send");
     await waitFor(() => !runner.status().modelBusy);
-    assert.equal(seen.length, 3);
+    assert.equal(seen.length, 4);
     assert.ok(seen[0].phaseObservation?.ref);
-    assert.equal(seen[1].observations.companion.locationId, "FarmHouse");
-    assert.equal(seen[1].phaseObservation, undefined);
-    assert.equal(seen[2].observations.companion.locationId, "Farm");
-    assert.ok(seen[2].phaseObservation?.ref);
-    assert.notEqual(seen[2].phaseObservation.ref, seen[0].phaseObservation.ref);
+    assert.equal(seen[1].observations.companion.locationId, "Farm");
+    assert.notEqual(seen[1].phaseObservation.ref, seen[0].phaseObservation.ref);
+    assert.equal(seen[2].observations.companion.locationId, "FarmHouse");
+    assert.equal(seen[2].phaseObservation, undefined);
+    assert.equal(seen[3].observations.companion.locationId, "Farm");
+    assert.ok(seen[3].phaseObservation?.ref);
+    assert.notEqual(seen[3].phaseObservation.ref, seen[1].phaseObservation.ref);
   } finally { await runner.stop(); store.close(); }
 });
 
-test("a verified phase and finite goal confirmation finish in two model requests without an extra summary request", async () => {
+test("a no-chest care phase and finite goal confirmation finish in two model requests without an extra summary request", async () => {
   const game = new FakeGame();
   game.supportsPhaseMap = true;
   game.snapshot = { capturedRevision: 1, companion: { locationId: "Farm", stamina: 270, waterCanLevel: 40, hasWateringCan: true },
     farmWork: { locationId: "Farm", observationStatus: "observed", cropUnwateredTiles: [{ x: 0, y: 0 }], cropUnwateredTruncated: false },
-    inventory: { slots: [], freeSlots: 12 }, chests: { items: [{ tile: { x: 0, y: 0 }, contentsObserved: true, contents: [] }] } };
+    inventory: { slots: [], freeSlots: 12 }, chests: { items: [] } };
   const store = new CompanionStore(":memory:");
   let requests = 0;
   const skills = [], events = [];
@@ -452,11 +454,9 @@ test("a verified phase and finite goal confirmation finish in two model requests
     if (++requests === 1) {
       const observed = context.phaseObservation;
       yield done([{ id: "care", name: "submit_work", arguments: { action: { execute_phase: {
-        observation_ref: observed.ref, scope_ref: observed.scopeRef, objective: "照料当天作物", completion: { metric: "daily-care-stored", quantity: 1 },
-        constraints: { stamina_floor: 80, destination_ref: "chest-1", keep: [], include_existing: [] },
-        steps: [{ id: "care", operation: "tend-crops", after: [], inputs: [] },
-          { id: "collect", operation: "collect-products", after: ["care"], inputs: ["care"] },
-          { id: "store", operation: "store-products", after: ["collect"], inputs: ["collect"] }], branches: [] } } } }]);
+        observation_ref: observed.ref, scope_ref: observed.scopeRef, objective: "照料当天作物", completion: { metric: "daily-care-completed", quantity: 1 },
+        constraints: { stamina_floor: 80, keep: [], include_existing: [] },
+        steps: [{ id: "care", operation: "tend-crops", after: [], inputs: [] }], branches: [] } } } }]);
     } else if (requests === 2) yield done([{ id: "complete", name: "manage_arrangements", arguments: {
       change: { manage_goal: { action: "complete" } } } }], "");
     else yield done([], "不应额外请求这条总结。");

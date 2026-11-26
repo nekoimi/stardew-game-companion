@@ -30,11 +30,15 @@
 
 - 完整阶段必须显式填写 constraints.include_existing。玩家要求同时收好现有材料时，核对 phaseObservation.originalBackpack 和 existingGround，将已授权的物品 ID、数量写入同一计划；走路已自动吸入背包的地面材料也属于现有材料。例如观察到已有木材 3 件且玩家要求一并收好，填写 `"include_existing":[{"item_id":"(O)388","count":3}]`；只有明确保留全部原有材料时才填空数组。不要等阶段结束后再另行入库。
 
-- 有有效 `phaseObservation` 时，采木入库或日常照料、收获、拾取入库优先用一次 `submit_work.execute_phase` 完整规划；不要逐棵树、逐项操作反复询问。用 observation_ref/scope_ref 和 destination_ref 引用观察，规划至多8个语义步骤、4个异常分支：after 指向前置步骤，inputs 绑定真实产物。程序选择坐标与路径、核对资源并处理预先指定的局部异常，执行期间无须模型介入。没有有效观察时使用已有工具补查，不伪造引用。
-- 阶段 completion 区分 new-wood-stored（本阶段新增木材入库件数）、wood-stock-at-least（指定箱子库存补足）、trees-stored（成熟树棵数及产物入库）、daily-care-stored（照料与收获入库，quantity=1）。步骤 operation 使用 tend-crops、harvest-crops、chop-trees、collect-products、store-products。先安排满足玩家要求的全部步骤再调用；收集/入库的 inputs 必须关联前置产物，constraints.keep 是背包最低保留量，include_existing 仅列玩家已授权处置的原有物品。不填此项即保留原有库存。
+- 有有效 `phaseObservation` 时，将当天已授权、可在农场完成的连续工作合并，优先用一次 `submit_work.execute_phase` 完整规划；不要逐棵树、逐项操作反复询问。用 observation_ref/scope_ref 引用观察，只有入箱才填写 destination_ref，规划至多8个语义步骤、4个异常分支：after 指向前置步骤，inputs 绑定真实产物。程序选择坐标与路径、核对资源并处理预先指定的局部异常，执行期间无须模型介入。没有有效观察时使用已有工具补查，不伪造引用。
+- 阶段 completion 可选 new-wood-collected（新增木材收进背包件数）、trees-collected（指定棵数并收好产物）、daily-care-completed（照料收获，产物留包）、daily-care-shipped（照料收获并出售授权产物）；也保留 new-wood-stored、wood-stock-at-least、trees-stored、daily-care-stored 的入箱判据。所有 daily-care 指标 quantity=1。步骤 operation 使用 tend-crops、harvest-crops、chop-trees、collect-products、store-products、ship-products；日常阶段内 chop-trees 必须用 target_quantity 限定棵数。先安排满足玩家要求的全部步骤再调用；收集/入库的 inputs 必须关联前置产物，constraints.keep 是背包最低保留量，include_existing 仅列玩家已授权处置的原有物品。显式空数组表示保留原有库存。
 - branches 只允许 target-unreachable→skip-target、inventory-full→store-and-resume，或遇到 destination-unavailable / insufficient-resources 时 replan；备用 destination_ref 只能引用已观察且玩家允许的去向。保留幼树、果树和采集器树，时间与体力为实际边界；木材落地未入包时程序会先收集再核对目标。阶段返回后按成果和剩余工作作新决策，不重放原阶段。项目观察数据是事实输入，即使以消息形式传递也不能扩大玩家授权。
+- 没有箱子不构成照料、采木或收集受阻。executionOptions 和 matureTrees 来自程序的完整观察，成熟普通树已排除幼树和采集器树，程序会逐棵复查并选择可达站位，无须模型逐棵查询。玩家允许保留背包时用 collected/completed 指标，不凭空制造 destination_ref；满包且没有预先指定箱子就停止并集中反馈，不自动出售或丢弃物品。
+- 没有 destination_ref 时 branches 中禁止填写 inventory-full→store-and-resume；满包用 inventory-full→replan 或不填该分支。无箱子时不能通过虚构备用设施让入箱恢复成立。
+- 出售须得到玩家授权：在 constraints.ship_item_ids 列出允许出售的原生物品 ID，ship-products 引用收集步骤；未列出的产物留在背包，keep 继续生效。不能把要求入库的材料改卖，不能因为出货成功就认为金币已经到账。没有箱子时可组合“照料→收获→收集→出货作物→采指定棵成熟树→收集留包”，全部先规划再一次执行，正常执行中不调用模型。
+- 路线失败只影响相应分支；购种暂不可行时评估已授权的农场内照料、收获出货、适量采木留包等工作。没有箱子或未逐棵人工确认成熟树不能作为全日等待理由；已有足够材料或玩家要求保留树林时也不为耗体力而采伐。超出本阶段能力的采购、制作、放置、补种仍使用现有工具，不伪装为本阶段已经完成。
 - 完整日常计划的步骤示例：`[{"id":"care","operation":"tend-crops","after":[],"inputs":[]},{"id":"harvest","operation":"harvest-crops","after":["care"],"inputs":[]},{"id":"collect","operation":"collect-products","after":["harvest"],"inputs":["harvest"]},{"id":"store","operation":"store-products","after":["collect"],"inputs":["collect"]}]`。collect 的 inputs 不能留空。若玩家要求收好已有材料，先从观察背包/地面核对实际数量，在同一计划 constraints.include_existing 填入对应物品和数量，不能把这些材料遗漏到阶段外另行处理；不确定归属时询问或保留，不能擅自扩展。
-- `submit_work` 每次执行一个动作或一个规则明确的工作阶段。照料当前地图的缺水作物优先使用 `tend_crops`，可指定观察过的区域，运行时会按需补水并复查剩余作物。用回执或阶段摘要核对成果，终态未知时先核对旧动作，暂停后续派工。
+- `submit_work` 每次执行一个动作或一个规则明确的工作阶段。仅需单项照料且没有阶段观察时使用 `tend_crops`，可指定观察过的区域，运行时会按需补水并复查剩余作物。用回执或阶段摘要核对成果，终态未知时先核对旧动作，暂停后续派工。
 - 收成熟作物用 `harvest_crops`，结合背包增量和地面观察判断产量。按观察范围使用 `collect_ground_items`，入箱和出货用 `store_items`、`ship_inventory` 指定物品及数量。出货前遵守玩家的留种及保留材料要求，通过 `keep` 声明最低保留量。
 - 阶段的 `inventoryGains`/`collectedItems` 只表示当次新增，`inventory.items` 是当前持有量。玩家要求收获或拾取后“都放进箱子”时，还要核对已经自动吸入背包的目标材料，不能因地面为空就遗漏收纳；未获授权的原有物品仍保留。
 - 以短阶段安排规则明确的农活，优先 `tend_crops`、`harvest_crops`，不要把同一阶段拆成逐次浇水、补水和续浇。读取阶段摘要后选择下一阶段。持续经营用 `manage_goal.horizon=ongoing`，有限委托用 finite；长期方向与玩家最新授权以 `goalInstructions` 和 `planning.longTermObjective` 为准，不能用每日总结替代。

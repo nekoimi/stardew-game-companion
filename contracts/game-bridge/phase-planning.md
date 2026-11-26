@@ -20,15 +20,19 @@ TypeScript 正本为 `apps/runtime/src/application/phase-plan.ts` 的 `phasePlan
 | --- | --- |
 | `observation_ref`、`scope_ref` | 当前有效观察与范围引用 |
 | `objective` | 可展示的本阶段成果说明，不能授予额外权限 |
-| `completion.metric` | `new-wood-stored` 新增木材入库；`wood-stock-at-least` 已确认库存补足；`trees-stored` 指定棵数采伐且所得入库；`daily-care-stored` 当天照料、收获及产物入库 |
+| `completion.metric` | 入箱：`new-wood-stored`、`wood-stock-at-least`、`trees-stored`、`daily-care-stored`；留包：`new-wood-collected`、`trees-collected`、`daily-care-completed`；授权作物出货：`daily-care-shipped` |
 | `completion.quantity` | 正整数；木材为件数、树木为棵数；日常指标使用 1。随机产量不得按树数换算固定收益 |
-| `constraints` | `stamina_floor`、已观察 `destination_ref`、物品 `keep` 保留量；不能关闭幼树等既有保护 |
-| `steps` | 1～8 个语义步骤；`id` 唯一；`operation` 为照料、收获、采木、收集产物、产物入库之一；`after` 为已声明前置步骤；`inputs` 为可追溯前置产物 |
+| `constraints` | `stamina_floor`、`keep`、`include_existing`；只有入箱及满包入箱分支才要求已观察的 `destination_ref`，出货要求显式 `ship_item_ids` 白名单；不能关闭既有保护 |
+| `steps` | 1～8 个语义步骤；`id` 唯一；`operation` 为照料、收获、采木、收集产物、产物入库或 `ship-products`；`after` 为前置步骤，`inputs` 为前置产物；日常阶段内采木须填 `target_quantity` 棵数 |
 | `branches` | 0～4 个异常分支；条件唯一。不可达可跳过目标，满包可入库后续作；其他情况返回重规划。备用去向必须是当前观察内已授权设施 |
 
 步骤按拓扑顺序给出，禁止重复 ID、循环、引用未来或外部结果。收集和入库必须引用前置结果；全部产物步骤必须能追溯到最终入库步骤。schema 中的枚举由本地校验器实际验证，不只提供给模型。
 
-`constraints.include_existing` 必填数组，包含 `item_id` 和 `count`，仅用于玩家已授权处置的原有背包物品或现存地面材料；显式空数组表示保留全部原有库存。选入材料未完成入库时，阶段不能标为完成。正常新产物按本阶段真实获得量转移，入库过程中自动吸入的材料也重新核对，累计入库不重置成果量。`phaseProgress.storedItems` 提供原生显示名和确认数量，桌面不直接显示内部物品 ID。
+2026-11-26 补充：上述“全部产物入库”仅适用于入箱成果指标；留包指标只要求关联收集，纯照料无需收集或箱子。日常出货引用收集结果，且只转移 `ship_item_ids` 列出的已授权物品，其他产物留包；入箱指标禁止同时出货。日常可串联照料→收获→收集→出货→限量采木→收集；没有箱子不算受阻，满包没有允许的入箱分支时停止，不擅自丢弃或出售。局部树木不可达按 skip-target 处理时继续后续已规划的独立工作，目标不足仍返回部分完成。
+
+结果新增 `shippedItems`、`backpackItems`，与 `storedItems` 分别计量，不能把出货当作立即增加金币。普通原生动作改变世界后，下一模型请求重建阶段资源观察、复用已核验的地图缓存；观察新鲜度和八个工具入口保持原边界。地图导航算法本轮未调整。
+
+`constraints.include_existing` 必填数组，包含 `item_id` 和 `count`，仅用于玩家已授权处置的原有背包物品或现存地面材料；显式空数组表示保留全部原有库存。选入材料须满足对应成果：入箱指标要求入箱，留包指标要求背包可确认，出货只处理出售清单内材料。正常新产物按真实获得量转移，自动吸入及倒树延迟掉落继续核对，累计转移不重置成果量。桌面使用原生显示名和确认数量，不直接显示内部物品 ID。
 
 地面观察的可选 `sourceId` 是原生物品/掉落物实例的短期身份，移动跨格不改变，读档或重启不沿用，也不授予拾取权限。阶段按动作前后来源差异及生产位置关联新产物；原有掉落物移动不算新产物，同格含未授权物品时停止整格拾取，避免扩大收集范围。
 

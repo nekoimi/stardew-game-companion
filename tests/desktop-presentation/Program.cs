@@ -86,12 +86,16 @@ internal static class Program
                 });
                 plannedGoal["planningIssue"] = "missing-next-action";
                 plannedGoal["phaseProgress"] = JsonSerializer.SerializeToNode(new { objective = "储备木材并收好", status = "completed",
-                    storedItems = new[] { new { itemId = "(O)388", displayName = "木材", count = 31 } } });
+                    storedItems = new[] { new { itemId = "(O)388", displayName = "木材", count = 31 } },
+                    backpackItems = new[] { new { itemId = "(O)92", displayName = "树液", count = 4 } },
+                    shippedItems = new[] { new { itemId = "(O)24", displayName = "防风草", count = 3 } } });
                 Invoke(window, "ApplyWork", JsonSerializer.SerializeToElement(planned));
                 string goalText = Control<TextBlock>(window, "WorkGoalText").Text;
                 Check(goalText.Contains("补充仓储") && goalText.Contains("制作箱子") && goalText.Contains("购种")
                     && goalText.Contains("规划未给出"), "Daily continuation, branch blocker or planning issue is missing from the selected goal.");
                 Check(goalText.Contains("储备木材并收好") && goalText.Contains("木材 × 31") && !goalText.Contains("(O)388"), "Phase result leaked item identifiers or lost actual products.");
+                Check(goalText.Contains("留在背包：树液 × 4") && goalText.Contains("已出货（次日到账）：防风草 × 3")
+                    && goalText.Contains("历史判断"), "Phase destinations or historical blocker wording is misleading.");
                 Check(Control<Expander>(window, "OtherWorkExpander").Visibility == Visibility.Visible, "Unlinked historical work was silently discarded.");
                 Check(!Control<Expander>(window, "WorkProcessExpander").IsExpanded, "Detailed process should start collapsed.");
                 var phaseStatus = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.SerializeToElement(status))!;

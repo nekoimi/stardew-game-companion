@@ -23,7 +23,7 @@ const withLocation = (properties: Record<string, Schema>, required = Object.keys
   fields({ ...location, ...properties }, required);
 
 export const workflows: Record<string, Schema> = {
-  execute_phase: { ...phasePlanSchema, description: "Execute one complete multi-step phase planned from phaseObservation, including resource constraints, collection and storage. Normal internal work requires no model calls." },
+  execute_phase: { ...phasePlanSchema, description: "Execute a complete multi-step Farm phase from phaseObservation: care/refill, harvest, collect, authorized shipping, bounded forestry and optional chest storage. A chest is not required: collected/completed metrics retain products in the backpack. Native target selection, protection checks and normal recovery need no model calls. Combine authorized work in one plan instead of calling one action per request." },
   tend_crops: { ...fields({ ...location, region }, ["location_id"]),
     description: "Care for observed dry crops in the location or an observed region. Refill as needed and verify the remaining work." },
   harvest_crops: { ...withLocation({ region, limit: integer(1, 4096) }, ["location_id"]),

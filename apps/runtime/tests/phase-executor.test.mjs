@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PhaseExecutor } from "../dist/application/phase-executor.js";
 
-function fixture({ updateAt = "", unknown = false, autoPickup = false, latePickup = false, smallPack = false, externalPickup = false, pickupBeforeSnapshot = false, splitPickup = false } = {}) {
+function fixture({ updateAt = "", unknown = false, autoPickup = false, latePickup = false, smallPack = false, externalPickup = false, pickupBeforeSnapshot = false, splitPickup = false, fixedFreeSlots } = {}) {
   const binding = { saveId: "farm", gameSessionId: "game", actorMode: "companion", goalId: "goal", requestId: "original",
     instructionVersion: "original", gameDate: "1:spring:5", locationId: "Farm" };
   const trees = [2, 5, 8].map(x => ({ tile: { x, y: 2 }, kind: "tree", growthStage: 5, tapped: false }));
@@ -17,13 +17,13 @@ function fixture({ updateAt = "", unknown = false, autoPickup = false, latePicku
       { id: "store", operation: "store-products", after: ["collect"], inputs: ["collect"] }],
     branches: [{ on: "target-unreachable", action: "skip-target" }, { on: "inventory-full", action: "store-and-resume" }] };
   const snapshot = () => ({ capturedRevision: count + 1, companion: { locationId: "Farm", tileX: 0, tileY: 0, stamina: 270 - count * 30 },
-    inventory: { freeSlots: smallPack && wood >= 34 ? 1 : 8, slots: [{ itemId: "(O)388", stack: wood }] } });
+    inventory: { freeSlots: fixedFreeSlots ?? (smallPack && wood >= 34 ? 1 : 8), slots: [{ itemId: "(O)388", stack: wood }] } });
   const env = { observation, current: () => binding, block: () => blocked, observe: async () => snapshot(), progress() {},
     async workflow(op, args) {
-      assert.equal(op, "store_items");
+      assert.ok(["store_items", "ship_inventory"].includes(op));
       const quantity = args.items.reduce((sum, item) => sum + item.count, 0);
       assert.ok(quantity <= wood - 10, "Original materials were selected without authorization");
-      wood -= quantity; stored += quantity; actions.push("deposit-chest");
+      wood -= quantity; stored += quantity; actions.push(op === "store_items" ? "deposit-chest" : "ship-items");
       if (latePickup) { wood += 4; latePickup = false; }
       return { status: "completed", receiptIds: ["store"], transferredItems: [{ itemId: "(O)388", count: quantity }] };
     },
@@ -59,6 +59,159 @@ function fixture({ updateAt = "", unknown = false, autoPickup = false, latePicku
     } };
   return { env, input, actions, stored: () => stored, wood: () => wood };
 }
+
+function backpack(f) {
+  f.env.observation.destinations = {};
+  f.input.completion.metric = "new-wood-collected";
+  delete f.input.constraints.destination_ref;
+  f.input.steps.pop();
+  f.input.branches = [{ on: "target-unreachable", action: "skip-target" }];
+  return f;
+}
+
+test("a no-chest phase selects multiple trees and keeps confirmed products in the backpack", async () => {
+  const f = backpack(fixture());
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.deepEqual(f.actions, ["chop-tree", "pickup-items", "chop-tree", "pickup-items"]);
+  assert.equal(f.wood(), 34);
+  assert.deepEqual(result.storedItems, []);
+  assert.deepEqual(result.shippedItems, []);
+  assert.equal(result.backpackItems[0].count, 24);
+});
+
+test("a full backpack without a preplanned chest stops without selling or dropping inventory", async () => {
+  const f = backpack(fixture({ fixedFreeSlots: 1 }));
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.stopReason, "inventory-full");
+  assert.deepEqual(f.actions, []);
+  assert.equal(f.wood(), 10);
+});
+
+test("authorized shipping is part of a no-chest phase and is accounted separately from storage", async () => {
+  const f = backpack(fixture());
+  f.input.constraints.ship_item_ids = ["(O)388"];
+  f.input.steps.push({ id: "ship", operation: "ship-products", after: ["collect"], inputs: ["collect"] });
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.wood(), 10);
+  assert.deepEqual(result.storedItems, []);
+  assert.equal(result.shippedItems[0].count, 24);
+  assert.deepEqual(result.backpackItems, []);
+  assert.equal(f.actions.at(-1), "ship-items");
+});
+
+test("shipping cannot select an unlisted product or the original wood inventory", async () => {
+  const f = backpack(fixture());
+  f.input.constraints.ship_item_ids = ["(O)24"];
+  f.input.steps.push({ id: "ship", operation: "ship-products", after: ["collect"], inputs: ["collect"] });
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.wood(), 34);
+  assert.deepEqual(result.shippedItems, []);
+  assert.ok(!f.actions.includes("ship-items"));
+});
+
+test("a combined daily phase has a finite tree step and does not consume all map candidates", async () => {
+  const f = backpack(fixture());
+  f.input.completion = { metric: "daily-care-completed", quantity: 1 };
+  f.input.steps[0].target_quantity = 1;
+  f.input.steps.unshift({ id: "care", operation: "tend-crops", after: [], inputs: [] });
+  f.input.steps[1].after = ["care"];
+  const workflow = f.env.workflow;
+  f.env.workflow = async (op, args) => op === "tend_crops" ? { status: "completed" } : workflow(op, args);
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(f.actions.filter(skill => skill === "chop-tree").length, 1);
+  assert.equal(result.backpackItems[0].count, 12);
+});
+
+test("one phase cares, harvests and ships only crops before gathering a bounded amount of wood into its backpack", async () => {
+  const f = backpack(fixture());
+  let crops = 0;
+  const observe = f.env.observe;
+  f.env.observe = async () => {
+    const snapshot = await observe();
+    snapshot.inventory.slots.push({ itemId: "(O)24", stack: crops, displayName: "防风草" });
+    snapshot.farmWork = { locationId: "Farm", matureCrops: crops ? [] : [{ x: 1, y: 1 }] };
+    return snapshot;
+  };
+  f.input.completion = { metric: "daily-care-shipped", quantity: 1 };
+  f.input.constraints.ship_item_ids = ["(O)24"];
+  f.input.steps = [
+    { id: "care", operation: "tend-crops", after: [], inputs: [] },
+    { id: "harvest", operation: "harvest-crops", after: ["care"], inputs: [] },
+    { id: "crops", operation: "collect-products", after: ["harvest"], inputs: ["harvest"] },
+    { id: "ship", operation: "ship-products", after: ["crops"], inputs: ["crops"] },
+    { id: "wood", operation: "chop-trees", after: ["ship"], inputs: [], target_quantity: 1 },
+    { id: "wood-products", operation: "collect-products", after: ["wood"], inputs: ["wood"] }];
+  f.env.workflow = async (op, args) => {
+    if (op === "tend_crops") return { status: "completed" };
+    if (op === "harvest_crops") { crops = 3; return { status: "completed", inventoryGains: [{ itemId: "(O)24", count: 3 }] }; }
+    assert.equal(op, "ship_inventory");
+    assert.deepEqual(args.items, [{ item_id: "(O)24", count: 3 }]);
+    crops = 0;
+    return { status: "completed", transferredItems: [{ itemId: "(O)24", count: 3 }] };
+  };
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(result.steps.length, 6);
+  assert.deepEqual(result.shippedItems.map(item => [item.itemId, item.count]), [["(O)24", 3]]);
+  assert.deepEqual(result.backpackItems.map(item => [item.itemId, item.count]), [["(O)388", 12]]);
+  assert.equal(f.wood(), 22);
+});
+
+test("unreachable optional forestry does not prevent later preplanned care or become a completed phase", async () => {
+  const f = backpack(fixture());
+  f.input.completion = { metric: "daily-care-completed", quantity: 1 };
+  f.input.steps[0].target_quantity = 1;
+  f.input.steps.push({ id: "care", operation: "tend-crops", after: ["collect"], inputs: [] });
+  const native = f.env.native;
+  f.env.native = (skill, args, read) => skill === "inspect-route"
+    ? { terminalState: "succeeded", details: { route: { reachable: false } } } : native(skill, args, read);
+  let care = 0;
+  f.env.workflow = async op => { assert.equal(op, "tend_crops"); care++; return { status: "completed" }; };
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(care, 1);
+  assert.equal(result.stopReason, "phase-objective-unmet");
+  assert.equal(result.steps[0].status, "partial");
+  assert.equal(result.steps.at(-1).status, "completed");
+});
+
+test("late falling-tree debris beyond the immediate trunk area is collected inside the same phase", async () => {
+  const f = backpack(fixture());
+  f.input.completion = { metric: "trees-collected", quantity: 1 };
+  const native = f.env.native;
+  let queriesAfterCut = 0, cut = false, late = false;
+  f.env.native = async (skill, args, read) => {
+    const result = await native(skill, args, read);
+    if (skill === "chop-tree") cut = true;
+    if (skill === "inspect-production" && cut && ++queriesAfterCut >= 3 && !late) {
+      late = true;
+      // The source is first observed after the immediate post-chop query.
+      result.details.production.groundItems.push({ sourceId: "late-tree-product", tile: { x: 8, y: 2 },
+        itemId: "(O)92", stack: 1, isDropped: true });
+    }
+    return result;
+  };
+  // Preserve evidence that the late target was dispatched; then simulate its
+  // absorption in the authoritative snapshot rather than inventing a receipt.
+  let sap = 0;
+  const observe = f.env.observe;
+  f.env.observe = async () => {
+    const result = await observe(); result.inventory.slots.push({ itemId: "(O)92", stack: sap }); return result;
+  };
+  const withLate = f.env.native;
+  f.env.native = async (skill, args, read) => {
+    const result = await withLate(skill, args, read);
+    if (skill === "pickup-items" && args.tiles[0].x === 8) sap = 1;
+    return result;
+  };
+  const result = await new PhaseExecutor().execute(f.input, f.env);
+  assert.equal(result.status, "completed");
+  assert.equal(result.backpackItems.find(item => item.itemId === "(O)92").count, 1);
+  assert.equal(f.actions.filter(skill => skill === "chop-tree").length, 1);
+});
 
 test("one phase collects actual scattered yields before selecting more trees and keeps original materials", async () => {
   const f = fixture();

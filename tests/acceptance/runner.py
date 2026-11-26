@@ -98,7 +98,7 @@ def evaluate(case, before, after, samples):
         checks.pop("targets_preserved")
         checks["ground_drop_matches_capacity"] = after.get("acceptanceGroundDropRemaining") is (case == "walk-pickup-full")
         checks["wood_in_backpack"] = count(after.get("companionItems"), "(O)388") == (0 if case == "walk-pickup-full" else 3)
-    elif case in {"mature-trees", "phase-forestry", "phase-remote"}:
+    elif case in {"mature-trees", "phase-forestry", "phase-remote", "phase-backpack"}:
         checks.pop("targets_preserved")
         checks["two_mature_trees_cut"] = before.get("acceptanceMatureTreesRemaining") == 2 and after.get("acceptanceMatureTreesRemaining") == 0
         checks["sapling_preserved"] = before.get("acceptanceSaplingStage") == after.get("acceptanceSaplingStage") == 2
@@ -106,6 +106,17 @@ def evaluate(case, before, after, samples):
         wood_after = after.get("acceptanceFarmChestWood")
         checks["wood_stored"] = (isinstance(wood_before, int) and isinstance(wood_after, int) and wood_after > wood_before
                                  and after.get("companionItems") is not None and count(after["companionItems"], "(O)388") == 0)
+        if case == "phase-backpack":
+            checks.pop("wood_stored")
+            checks["new_wood_in_backpack"] = count(after.get("companionItems"), "(O)388") > count(before.get("companionItems"), "(O)388")
+            checks["no_chest_available"] = before.get("acceptanceFarmChestCount") == after.get("acceptanceFarmChestCount") == 0
+    elif case == "phase-shipping":
+        checks["daily_care_and_harvest"] = after.get("harnessFixtureDryCropCount") == 0 and after.get("harnessFixtureCropCount") == 2
+        checks["only_crops_shipped"] = (count(after.get("acceptanceShippedItems"), "(O)24") - count(before.get("acceptanceShippedItems"), "(O)24") == target_count - 2
+            and count(after.get("acceptanceShippedItems"), "(O)388") == count(before.get("acceptanceShippedItems"), "(O)388"))
+        checks["wood_retained"] = count(after.get("companionItems"), "(O)388") == 3
+        checks["no_chest_available"] = before.get("acceptanceFarmChestCount") == after.get("acceptanceFarmChestCount") == 0
+        checks["native_water_refilled"] = any((s.get("companionWater") or 0) > (before.get("companionWater") or 0) for s in samples)
     elif case in {"water-refill", "rest-water"}:
         checks["all_target_crops_watered"] = bool(target_count) and (
             after.get("harnessFixtureDryCropCount") == 0
@@ -406,13 +417,16 @@ class Runner:
                 checks["three_empty_stages_confirmed"] = len(actions) == 3 and all(
                     c["result"].get("stopReason") == "no-observed-targets"
                     and c["result"].get("completedCount") == 0 for c in actions)
-            if self.case in {"phase-forestry", "phase-daily", "phase-remote"}:
+            if self.case in {"phase-forestry", "phase-daily", "phase-remote", "phase-backpack", "phase-shipping"}:
                 phases = [c for c in summary["toolCalls"] if c["name"] == "submit_work"
                           and "execute_phase" in ((c.get("input") or {}).get("action") or {})]
                 checks["one_complete_phase"] = len(phases) == 1 and phases[0]["result"].get("status") == "completed"
                 phase_stages = [stage for stage in summary["workStages"] if stage.get("operation") == "execute_phase"]
                 checks["zero_model_requests_inside_phase"] = (len(phases) == 1 and phases[0]["result"].get("executionModelRequests") == 0
                     and len(phase_stages) == 1 and phase_stages[0].get("modelRequestsDuringStage") == 0)
+                if self.case in {"phase-backpack", "phase-shipping"}:
+                    checks["no_chest_fallback_actions"] = not any(row.get("type") == "result"
+                        and row["payload"].get("skillId") == "deposit-chest" for row in trace)
                 if self.case in {"phase-forestry", "phase-remote"}:
                     checks["all_tree_products_stored"] = not [i for i in after.get("companionItems", []) if i.get("id") in {"(O)388", "(O)92", "(O)309", "(O)310", "(O)311"}]
                 if self.case == "phase-remote":

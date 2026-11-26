@@ -212,7 +212,7 @@ public partial class MainWindow
             if (goal.TryGetProperty("phaseProgress", out var stage) && stage.ValueKind == JsonValueKind.Object) {
                 string step = Text(stage, "step") switch {
                     "tend-crops" => "照料作物", "harvest-crops" => "收获作物", "chop-trees" => "采集木材",
-                    "collect-products" => "收集产物", "store-products" => "收纳入库", _ => "核对成果"
+                    "collect-products" => "收集产物", "store-products" => "收纳入库", "ship-products" => "出货结算", _ => "核对成果"
                 };
                 WorkGoalText.Text += "\n\n本阶段：" + ActionPresentation.DisplayText(Text(stage, "objective"))
                     + "\n" + (Text(stage, "status") == "executing" ? "当前步骤：" + step
@@ -230,6 +230,12 @@ public partial class MainWindow
                     ActionPresentation.DisplayText(Text(row, "displayName") is { Length: > 0 } label ? label : "材料") + " × "
                     + (row.TryGetProperty("count", out var count) ? count.ToString() : "待核对")).ToArray();
                 if (products.Length > 0) WorkGoalText.Text += "\n已入库：" + string.Join("；", products);
+                foreach (var (field, label) in new[] { ("shippedItems", "已出货（次日到账）"), ("backpackItems", "留在背包") }) {
+                    var items = Rows(stage, field).Select(row =>
+                        ActionPresentation.DisplayText(Text(row, "displayName") is { Length: > 0 } name ? name : "材料") + " × "
+                        + (row.TryGetProperty("count", out var count) ? count.ToString() : "待核对")).ToArray();
+                    if (items.Length > 0) WorkGoalText.Text += "\n" + label + "：" + string.Join("；", items);
+                }
             }
             if (goal.TryGetProperty("dayPlan", out var plan) && plan.ValueKind == JsonValueKind.Object) {
                 string next = Text(plan, "nextStep");
@@ -237,7 +243,7 @@ public partial class MainWindow
                     + "\n下一步：" + ActionPresentation.DisplayText(next);
                 var blockers = Rows(plan, "blockedBranches").Select(row =>
                     ActionPresentation.DisplayText(Text(row, "branch") + "：" + Text(row, "reason"))).ToArray();
-                if (blockers.Length > 0) WorkGoalText.Text += "\n受阻事项：" + string.Join("；", blockers);
+                if (blockers.Length > 0) WorkGoalText.Text += "\n规划中的限制（历史判断，需按当前状态复查）：" + string.Join("；", blockers);
             }
             if (Text(goal, "planningIssue") == "missing-next-action")
                 WorkGoalText.Text += "\n\n当前规划未给出可执行下一步，请调整要求或模型后继续。";

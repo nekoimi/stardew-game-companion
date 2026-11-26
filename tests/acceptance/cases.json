@@ -1,4 +1,18 @@
 {
+  "phase-backpack": {
+    "title": "无箱子采木留背包",
+    "fixture": "phase-backpack",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "农场还没箱子，先砍两棵成熟的普通树，把这次材料捡齐留在背包里，别卖也别丢，保留幼树和80点体力，完成就结束。"
+  },
+  "phase-shipping": {
+    "title": "无箱子日常照料收获出货",
+    "fixture": "phase-shipping",
+    "stamina": 270,
+    "water": 1,
+    "instruction": "农场还没箱子，把今天的作物照料好，水不够就补水，收获成熟作物，防风草可以直接出货；地上的木材捡好留在背包，别卖木材，保留至少80点体力，完成就结束。"
+  },
   "phase-cache": {
     "title": "阶段地图缓存冷热与箱子移动失效",
     "fixture": "mature-trees",

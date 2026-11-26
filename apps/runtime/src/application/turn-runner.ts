@@ -917,6 +917,10 @@ export class TurnRunner {
             if (call.name === "request_player_decision") waiting = true;
           }
           catch (error) { failed = true; result = { error: error instanceof Error ? error.message : "工具执行失败。" }; }
+          // A normal action can change crops, inventory or facilities too. Reuse
+          // cached map facts, but prepare fresh phase resources before the next
+          // model request instead of leaving a pre-harvest plan in its context.
+          if (turn.nativeActions !== initialActions) turn.phaseObservation = undefined;
           if (operation === "execute_phase" && failed) { turn.phaseObservation = undefined; turn.lastPhaseStatus = "rejected"; }
           if (stage) {
             turn.stages++;
@@ -968,8 +972,14 @@ export class TurnRunner {
               && !messages.slice(-output.calls.length).some(message => message.role === "tool" && message.failed)) {
             const stored = Array.isArray(phase.storedItems) ? phase.storedItems.map(object)
               .map(item => `${String(item.displayName ?? "材料")} ${Number(item.count ?? 0)} 件`).join("、") : "";
+            const shipped = Array.isArray(phase.shippedItems) ? phase.shippedItems.map(object)
+              .map(item => `${String(item.displayName ?? "材料")} ${Number(item.count ?? 0)} 件`).join("、") : "";
+            const backpack = Array.isArray(phase.backpackItems) ? phase.backpackItems.map(object)
+              .map(item => `${String(item.displayName ?? "材料")} ${Number(item.count ?? 0)} 件`).join("、") : "";
+            const destinations = [stored && `已入库：${stored}`, shipped && `已出货，次日结算：${shipped}`,
+              backpack && `留在背包：${backpack}`].filter(Boolean).join("；");
             answer = publicMessages > publicBeforeTools ? "" : output.text.trim()
-              || (stored ? `这一阶段已完成，已入库：${stored}。` : "这一阶段已完成，成果已核对。");
+              || (destinations ? `这一阶段已完成，${destinations}。` : "这一阶段已完成，成果已核对。");
             model.settleTools?.(messages);
             break;
           }
