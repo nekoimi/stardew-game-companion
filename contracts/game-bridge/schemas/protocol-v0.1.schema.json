@@ -1979,6 +1979,10 @@
                       "type": "string",
                       "minLength": 1
                     },
+                    "navigationTarget": {
+                      "type": "string",
+                      "enum": ["exact", "interact", "shop"]
+                    },
                     "budget_limit": {
                       "type": "integer",
                       "minimum": 1

@@ -12,7 +12,9 @@ public sealed record NavigationRequest(
     int MaxGameMinutes = 0,
     float MaxStamina = 50f,
     int MaxWater = 0,
-    string CancelPolicy = "safe-point"
+    string CancelPolicy = "safe-point",
+    string NavigationTarget = "exact",
+    string? ShopId = null
 );
 
 public sealed record NavigationHopRecord(
@@ -40,7 +42,8 @@ public sealed record NavigationResult(
     Dictionary<string, object>? LockDetails = null,
     bool TargetAdjusted = false,
     TileCoordinate? RequestedTile = null,
-    Dictionary<string, object>? FailureDetails = null
+    Dictionary<string, object>? FailureDetails = null,
+    Dictionary<string, object>? NavigationDetails = null
 )
 {
     public SkillResultPayload ToTransportPayload()
@@ -103,6 +106,7 @@ public sealed record NavigationResult(
             // blocked side, exit/landing coordinates, clearable blocking tiles).
             details["failure"] = FailureDetails;
         }
+        if (NavigationDetails is not null) details["navigation"] = NavigationDetails;
 
         SkillResultResources? resources = new(StaminaUsed, WaterUsed, GameMinutesElapsed);
         SkillResultError? error = ErrorMessage is not null

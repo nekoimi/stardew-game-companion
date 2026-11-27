@@ -4,6 +4,8 @@
 
 默认固定运行三组，起点、请求和判定均版本化保存在 `tests/acceptance/cases.json`。固定的是目标与验收，不规定模型的坐标、工具顺序或推理路径。
 
+导航往返单独运行 `-Cases navigation-shop -PlayerMode`：从隔离农舍出发，到皮埃尔柜台真实购买一包防风草种子，再返回农场，核对地图轨迹、扣款、种子增量、碰撞与动画。该夹具仅在副本设置 10 点、2000 金并标记 Town/SeedShop 引导剧情已看过；原生剧情阻断保留独立失败证据，不通过禁用生产代码的事件检查让路线通过。
+
 批次工作验收可加 `-Cases water-refill,care-guidance,harvest-logistics,rest-forestry,empty-farm`。模拟模型请求阶段工作流，`work-stage` trace 记录每阶段的子动作数、成果与阶段内模型请求数；空农田必须确认三类工作均无目标、原生动作调用为零。阶段效率对比和正式 API 限制见[批次工作验收报告](agent-batched-work-acceptance.md)。
 
 | 场景 | 固定行动 | 主要验收 |

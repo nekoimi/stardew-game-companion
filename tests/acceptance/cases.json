@@ -1,4 +1,12 @@
 {
+  "navigation-shop": {
+    "title": "家中跨图购种并返回农场",
+    "fixture": "navigation-shop",
+    "stamina": 270,
+    "water": 40,
+    "instruction": "从家里出发，去皮埃尔商店柜台买一包防风草种子，然后返回农场。不要播种或做其他农活，完成后告诉我。",
+    "repeatRoute": "再去一次皮埃尔柜台查看商品，然后返回农场。这次不要购买或进行其他工作。"
+  },
   "phase-backpack": {
     "title": "无箱子采木留背包",
     "fixture": "phase-backpack",

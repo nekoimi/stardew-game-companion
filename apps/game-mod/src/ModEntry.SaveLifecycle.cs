@@ -68,6 +68,7 @@ public sealed partial class ModEntry
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
+        _coordinator?.InvalidateNavigationTopology();
         if (PlayerModeEnabled)
         {
             _resourceDay = Game1.Date.TotalDays;

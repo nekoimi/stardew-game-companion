@@ -1,0 +1,8 @@
+[
+  { "name": "exact-standing", "valid": true, "parameters": { "locationId": "Farm", "tile": { "x": 78, "y": 16 } } },
+  { "name": "adjacent-interaction", "valid": true, "parameters": { "locationId": "Farm", "navigationTarget": "interact", "tile": { "x": 14, "y": 9 } } },
+  { "name": "native-shop-counter", "valid": true, "parameters": { "locationId": "SeedShop", "navigationTarget": "shop", "shopId": "SeedShop" } },
+  { "name": "missing-standing-tile", "valid": false, "parameters": { "locationId": "Farm" } },
+  { "name": "missing-shop-identity", "valid": false, "parameters": { "locationId": "SeedShop", "navigationTarget": "shop" } },
+  { "name": "unsupported-target", "valid": false, "parameters": { "locationId": "Farm", "navigationTarget": "teleport", "tile": { "x": 14, "y": 9 } } }
+]

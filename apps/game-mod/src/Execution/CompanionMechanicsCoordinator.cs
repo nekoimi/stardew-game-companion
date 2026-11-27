@@ -122,6 +122,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
     public PurchaseStateMachine? PurchaseMachine => _purchaseMachine;
     public NativeActionStateMachine? NativeActionMachine => _nativeActionMachine;
     public NavigationStateMachine NavigationMachine => _navigationMachine;
+    public void InvalidateNavigationTopology() { _mapGraph.InvalidateCache(); _navigator.InvalidatePaths(); }
     public IWorldMapGraph MapGraph => _mapGraph;
     public WaterZoneResult? LastResult => _lastResult;
     public SkillResultPayload? LastSkillResultPayload => _lastSkillResultPayload;
@@ -1017,7 +1018,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                 return false;
             }
 
-            if (isNavigate && payload.Parameters.Tile is null)
+            if (isNavigate && payload.Parameters.Tile is null && payload.Parameters.NavigationTarget != "shop")
             {
                 rejectResult = BuildRejection(payload, "INVALID_PARAMETERS", "parameters.tile is required for navigate-to.", retryable: false);
                 return false;
@@ -1268,7 +1269,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             }
             else if (isNavigate)
             {
-                var targetTile = payload.Parameters.Tile!;
+                var targetTile = payload.Parameters.Tile ?? new TileCoord(_actor.Tile.X, _actor.Tile.Y);
                 var request = new NavigationRequest(
                     CommandId: payload.CommandId,
                     TaskId: payload.TaskId,
@@ -1277,7 +1278,9 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
                     MaxGameMinutes: payload.Budgets?.MaxGameMinutes ?? 0,
                     MaxStamina: payload.Budgets?.MaxStamina > 0 ? payload.Budgets.MaxStamina : 50f,
                     MaxWater: payload.Budgets?.MaxWater ?? 0,
-                    CancelPolicy: payload.CancelPolicy ?? "safe-point"
+                    CancelPolicy: payload.CancelPolicy ?? "safe-point",
+                    NavigationTarget: payload.Parameters.NavigationTarget ?? "exact",
+                    ShopId: payload.Parameters.ShopId
                 );
 
                 accepted = TryStartNavigation(request, envelope, out var earlyResult, out rejectReason);
@@ -2275,6 +2278,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             return Rest.IsDaytimeRest ? $"休息恢复 {_actor.Stamina:0}/{Rest.RecoveryTarget ?? _actor.MaxStamina:0}" : "回家休息";
         var machine = ActiveMachine;
         if (machine == null) return "";
+        if (machine is NavigationStateMachine navigation) return navigation.ActivityLabel;
         string label = DescribeActivity(machine) switch
         {
             "watering" => "浇水", "harvesting" => "收获", "navigating" => "赶路",
@@ -2299,7 +2303,7 @@ public sealed partial class CompanionMechanicsCoordinator : ITransportHandler
             : activity;
     }
 
-    public string GetExecutionPhase() => ActiveMachine?.CurrentState switch
+    public string GetExecutionPhase() => ActiveMachine is NavigationStateMachine navigation ? navigation.NavigationPhase : ActiveMachine?.CurrentState switch
     {
         ExecutionState.Preparing => "planning-route",
         ExecutionState.Validating => "validating",

@@ -16,6 +16,48 @@ public sealed class SameMapNavigator
     private readonly IWorldObserver _observer;
     private const int MaxSearchDepth = 2500;
     private const int ShortcutLookahead = 8;
+    private readonly Dictionary<(string Location, TileCoordinate Start, TileCoordinate Goal), PathResult> _paths = new();
+    public int CacheHits { get; private set; }
+    public int CacheMisses { get; private set; }
+    public int CacheInvalidations { get; private set; }
+
+    public void InvalidatePaths(string? location = null)
+    {
+        if (location is null) _paths.Clear();
+        else foreach (var key in _paths.Keys.Where(key => key.Location.Equals(location, StringComparison.OrdinalIgnoreCase)).ToArray())
+            _paths.Remove(key);
+    }
+
+    public NavigationSearch<bool> BeginValidatePath(string location, TileCoordinate start, PathResult path,
+        IReadOnlyCollection<TileCoordinate>? avoid = null) => new(search => ValidatePath(search, location, start, path, avoid));
+
+    private IEnumerable<NavigationSearch?> ValidatePath(NavigationSearch<bool> search, string location,
+        TileCoordinate start, PathResult path, IReadOnlyCollection<TileCoordinate>? avoid)
+    {
+        search.Result = false;
+        if (!path.Success || path.Steps.Count == 0) yield break;
+        var from = start;
+        foreach (var step in path.Steps)
+        {
+            yield return null;
+            if (step.Tile == from) continue;
+            if (Math.Abs(step.Tile.X-from.X)>1 || Math.Abs(step.Tile.Y-from.Y)>1
+                || !IsTileNavigable(location, step.Tile, avoid)
+                || (_observer.IsWarpOrDoorTile(location, step.Tile) && step != path.Steps[^1])
+                || !_observer.CanWalkBetween(location, from, step.Tile)) yield break;
+            if (from.X != step.Tile.X && from.Y != step.Tile.Y)
+            {
+                var (horizontal, vertical) = WalkingPath.DiagonalSides(from, step.Tile);
+                if (_observer.IsWarpOrDoorTile(location, from) || _observer.IsWarpOrDoorTile(location, step.Tile)
+                    || !IsTileNavigable(location, horizontal, avoid) || !IsTileNavigable(location, vertical, avoid)
+                    || _observer.IsWarpOrDoorTile(location, horizontal) || _observer.IsWarpOrDoorTile(location, vertical)
+                    || !_observer.CanWalkBetween(location, from, horizontal)
+                    || !_observer.CanWalkBetween(location, from, vertical)) yield break;
+            }
+            from = step.Tile;
+        }
+        search.Result = true;
+    }
 
     public SameMapNavigator(IWorldObserver observer)
     {
@@ -72,15 +114,9 @@ public sealed class SameMapNavigator
             search.Result = PathResult.Failed($"Target tile {target} has no passable adjacent standing positions.");
             yield break;
         }
-        PathResult? best = null;
-        foreach (var candidate in candidates)
-        {
-            var path = BeginPath(location, pose.Tile, candidate.Tile, candidate.Facing, avoid);
-            yield return path;
-            if (path.Result.Success && (best is null || path.Result.WalkingCost < best.WalkingCost))
-                best = path.Result;
-        }
-        search.Result = best ?? PathResult.Failed($"No passable path found from {pose.Tile} to target adjacent positions for {target}.");
+        var path = BeginPathToAny(location, pose.Tile, candidates.ToDictionary(c => c.Tile, c => c.Facing), avoid);
+        yield return path;
+        search.Result = path.Result;
     }
 
     public PathResult FindPath(string locationName, TileCoordinate startTile, TileCoordinate destinationTile,
@@ -94,24 +130,61 @@ public sealed class SameMapNavigator
         FacingDirection? finalFacing = null, IReadOnlyCollection<TileCoordinate>? avoidTiles = null) =>
         new(search => SearchPath(search, locationName, startTile, destinationTile, finalFacing, avoidTiles));
 
+    public NavigationSearch<PathResult> BeginPathToAny(string location, TileCoordinate start,
+        IReadOnlyDictionary<TileCoordinate, FacingDirection> goals, IReadOnlyCollection<TileCoordinate>? avoid = null) =>
+        new(search => SearchPath(search, location, start, goals.Keys.FirstOrDefault(), null, avoid, goals));
+
     private IEnumerable<NavigationSearch?> SearchPath(NavigationSearch<PathResult> search, string location,
-        TileCoordinate start, TileCoordinate goal, FacingDirection? finalFacing, IReadOnlyCollection<TileCoordinate>? avoid)
+        TileCoordinate start, TileCoordinate goal, FacingDirection? finalFacing, IReadOnlyCollection<TileCoordinate>? avoid,
+        IReadOnlyDictionary<TileCoordinate, FacingDirection>? goals = null)
     {
+        if (goals is not null && goals.Count == 0) { search.Result = PathResult.Failed("No observed standing goals."); yield break; }
+        if (goals?.TryGetValue(start, out var startFacing) == true) { goal = start; finalFacing = startFacing; }
         if (start == goal)
         {
             search.Result = PathResult.Completed(new[] { new PathStep(start, finalFacing ?? FacingDirection.Down) });
             yield break;
         }
         search.Result = PathResult.Failed($"No passable path from {start} to {goal} on map '{location}'.");
-        if (!IsTileNavigable(location, goal, avoid)) yield break;
+        if (goals is null && !IsTileNavigable(location, goal, avoid)) yield break;
+        var cacheKey = (Location: location.ToUpperInvariant(), Start: start, Goal: goal);
+        var cachedKeys = goals is null ? new[] { cacheKey } : goals.Keys
+            .Select(tile => (Location: location.ToUpperInvariant(), Start: start, Goal: tile))
+            .Where(key => _paths.ContainsKey(key)).OrderBy(key => _paths[key].WalkingCost).ToArray();
+        foreach (var candidateKey in cachedKeys)
+        {
+            if (!_paths.TryGetValue(candidateKey, out var cached)) continue;
+            var validation = BeginValidatePath(location, start, cached, avoid);
+            yield return validation;
+            if (validation.Result)
+            {
+                CacheHits++;
+                var cachedSteps = cached.Steps.ToArray();
+                FacingDirection? facing = goals is not null ? goals[candidateKey.Goal] : finalFacing;
+                if (facing.HasValue) cachedSteps[^1] = cachedSteps[^1] with { Facing = facing.Value };
+                search.Result = PathResult.Completed(cachedSteps, cached.WalkingCost);
+                yield break;
+            }
+            _paths.Remove(candidateKey); CacheInvalidations++;
+        }
+        CacheMisses++;
         // A* keeps native collision checks close to the requested route. Favor
         // deeper nodes at equal f to avoid flooding an open map's entire rectangle.
-        var queue = new PriorityQueue<(TileCoordinate Tile, int Cost), (int Estimate, int Tie)>();
+        var queue = new PriorityQueue<(TileCoordinate Tile, int Cost), (int Estimate, int Turns, int Tie)>();
         var parents = new Dictionary<TileCoordinate, TileCoordinate>();
         var costs = new Dictionary<TileCoordinate, int> { [start] = 0 };
+        var turnCounts = new Dictionary<TileCoordinate, int> { [start] = 0 };
         // Only memoize within this search. Physical walking still checks the live world.
-        var passable = new Dictionary<TileCoordinate, bool> { [goal] = true };
+        var passable = new Dictionary<TileCoordinate, bool>();
+        if (goals is null) passable[goal] = true;
         var triggers = new Dictionary<TileCoordinate, bool>();
+        var segments = new Dictionary<(TileCoordinate From, TileCoordinate To), bool>();
+        bool CanWalk(TileCoordinate from, TileCoordinate to)
+        {
+            if (!segments.TryGetValue((from, to), out bool open))
+                segments[(from, to)] = open = _observer.CanWalkBetween(location, from, to);
+            return open;
+        }
         Func<TileCoordinate, bool> isTrigger = tile =>
         {
             if (!triggers.TryGetValue(tile, out bool trigger))
@@ -132,30 +205,37 @@ public sealed class SameMapNavigator
             {
                 var (horizontal, vertical) = WalkingPath.DiagonalSides(from, to);
                 if (isTrigger(from) || isTrigger(to) || !IsOpen(horizontal) || !IsOpen(vertical)
-                    || !_observer.CanWalkBetween(location, from, horizontal)
-                    || !_observer.CanWalkBetween(location, from, vertical))
+                    || !CanWalk(from, horizontal)
+                    || !CanWalk(from, vertical))
                     return false;
             }
-            return _observer.CanWalkBetween(location, from, to);
+            return CanWalk(from, to);
         }
-        queue.Enqueue((start, 0), (WalkingPath.Distance(start, goal), 0));
+        int Heuristic(TileCoordinate tile) => goals is null ? WalkingPath.Distance(tile, goal)
+            : goals.Keys.Min(target => WalkingPath.Distance(tile, target));
+        queue.Enqueue((start, 0), (Heuristic(start), 0, 0));
         int explored = 0;
         bool found = false;
         while (queue.Count > 0 && explored++ < MaxSearchDepth * 10)
         {
             var (current, cost) = queue.Dequeue();
             if (costs[current] != cost) { yield return null; continue; }
-            if (current == goal) { found = true; break; }
+            if (goals is null ? current == goal : goals.ContainsKey(current))
+            { found = true; goal = current; if (goals is not null) finalFacing = goals[current]; break; }
             foreach (var neighbor in WalkingNeighbors(current))
             {
                 // A diagonal expansion may perform three native collision sweeps.
                 yield return null;
                 int nextCost = cost + WalkingPath.Distance(current, neighbor);
-                if (costs.TryGetValue(neighbor, out int previousCost) && previousCost <= nextCost) continue;
+                int nextTurns = turnCounts[current] + (parents.TryGetValue(current, out var previous)
+                    && Direction(previous, current) != Direction(current, neighbor) ? 1 : 0);
+                if (costs.TryGetValue(neighbor, out int previousCost)
+                    && (previousCost < nextCost || (previousCost == nextCost && turnCounts[neighbor] <= nextTurns))) continue;
                 if (!CanStep(current, neighbor)) continue;
                 costs[neighbor] = nextCost;
                 parents[neighbor] = current;
-                queue.Enqueue((neighbor, nextCost), (nextCost + WalkingPath.Distance(neighbor, goal), -nextCost));
+                turnCounts[neighbor] = nextTurns;
+                queue.Enqueue((neighbor, nextCost), (nextCost + Heuristic(neighbor), nextTurns, -nextCost));
             }
         }
         if (!found) yield break;
@@ -231,6 +311,8 @@ public sealed class SameMapNavigator
         }
         if (finalFacing.HasValue) steps[^1] = steps[^1] with { Facing = finalFacing.Value };
         search.Result = PathResult.Completed(steps, costs[goal]);
+        if (_paths.Count >= 128) _paths.Remove(_paths.Keys.First());
+        _paths[(location.ToUpperInvariant(), start, goal)] = search.Result;
     }
 
     private static TileCoordinate Direction(TileCoordinate from, TileCoordinate to) =>

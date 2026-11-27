@@ -21,6 +21,9 @@ const items = list(fields({ item_id: text(), count: integer(1, 999999) }), 36);
 const region = fields({ x: integer(0, 4096), y: integer(0, 4096), width: integer(1, 512), height: integer(1, 512) });
 const withLocation = (properties: Record<string, Schema>, required = Object.keys(properties)) =>
   fields({ ...location, ...properties }, required);
+const navigation = { ...withLocation({ tile, shop_id: text(), navigation_target: {
+  type: "string", enum: ["exact", "interact", "shop"],
+} }, ["location_id"]), description: "Navigate across maps in one action; native code chooses exits and walking paths. Default exact requires tile. interact requires an observed target tile and selects a reachable adjacent standing pose. shop requires shop_id and selects an observed counter without opening or buying. For water or home use existing refill/rest/sleep actions, which own their interaction standing poses. Do not navigate through intermediate maps one request at a time." };
 
 export const workflows: Record<string, Schema> = {
   execute_phase: { ...phasePlanSchema, description: "Execute a complete multi-step Farm phase from phaseObservation: care/refill, harvest, collect, authorized shipping, bounded forestry and optional chest storage. A chest is not required: collected/completed metrics retain products in the backpack. Native target selection, protection checks and normal recovery need no model calls. Combine authorized work in one plan instead of calling one action per request." },
@@ -37,7 +40,7 @@ export const workflows: Record<string, Schema> = {
 };
 
 export const actions: Record<string, [string, Schema]> = {
-  navigate_to: ["navigate-to", withLocation({ tile }, ["location_id", "tile"])],
+  navigate_to: ["navigate-to", navigation],
   water_tiles: ["water-zone", fields({ ...tileFields, include_empty_tiles: bool }, ["tiles"])],
   water_auto: ["water-zone", withLocation({ max_tiles: integer(1, 100), target_tiles: tiles }, [])],
   refill_watering_can: ["refill-watering-can", withLocation({ tiles }, [])],
@@ -93,7 +96,7 @@ Object.assign(actions.clear_debris[1], { description: "Clear explicitly requeste
 Object.assign(actions.rest[1], { description: "Use the native bed until the companion reaches the requested stamina, then get up." });
 
 export const queries: Record<string, [string, Schema]> = {
-  query_route: ["inspect-route", withLocation({ tile }, ["location_id", "tile"])],
+  query_route: ["inspect-route", navigation],
   observe_farm_space: ["inspect-location", fields({ ...location, region }, ["location_id"])],
   query_planting_options: ["inspect-planting", fields({ ...location, region }, ["location_id"])],
   observe_production: ["inspect-production", fields(location)],
@@ -107,6 +110,10 @@ export const queries: Record<string, [string, Schema]> = {
 
 export function validate(schema: Schema, value: JsonValue | undefined, path = "参数"): void {
   const invalid = () => { throw new Error(`${path}不符合工具定义。`); };
+  if (schema === navigation) {
+    const input = object(value);
+    if (input.navigation_target === "shop" ? !input.shop_id : !input.tile) return invalid();
+  }
   if (Array.isArray(schema.enum) && !schema.enum.includes(value ?? null)) return invalid();
   if (schema.type === "object") {
     if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();

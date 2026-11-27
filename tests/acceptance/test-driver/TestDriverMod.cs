@@ -3512,6 +3512,31 @@ public sealed class TestDriverMod : Mod
             ?? throw new InvalidOperationException("Production ModEntry unavailable for harness fixture.");
         AssertHarnessFixtureBoundary(modEntry);
         string mode = request.GetProperty("mode").GetString() ?? "";
+        if (mode == "navigation-shop")
+        {
+            ResolveCompanionActor(out var navigationActor, out var navigationFarmer, out _, out _);
+            if (navigationActor is null || navigationFarmer is null) throw new InvalidOperationException("Navigation actor unavailable.");
+            Game1.timeOfDay = 1000;
+            Game1.player.Money = 2000;
+            // Focused route regression starts after introductions in this clone.
+            // Earlier runs retain proof that unskippable native events stop work.
+            foreach (string eventMap in new[] { "Town", "SeedShop" })
+                foreach (string eventKey in Game1.content.Load<Dictionary<string, string>>("Data/Events/" + eventMap).Keys)
+                    Game1.player.eventsSeen.Add(eventKey.Split('/')[0]);
+            _harnessFixtureMode = mode; _harnessFixtureTiles.Clear();
+            _companionAnimationFrames.Clear(); _acceptanceMovementSamples = 0; _acceptanceSolidOverlaps.Clear();
+            var navigationTileType = navigationActor.GetType().Assembly.GetType("StardewAI.Companion.Mod.Domain.TileCoordinate")!;
+            navigationActor.GetType().GetMethod("SetLocation")!.Invoke(navigationActor,
+                new object[] { "FarmHouse", Activator.CreateInstance(navigationTileType, 3, 6)! });
+            var navigationFixture = new { runId = _runId, label, mode, year = Game1.year, season = Game1.currentSeason,
+                day = Game1.dayOfMonth, timeOfDay = Game1.timeOfDay, locationId = "FarmHouse", targetCount = 0,
+                saveName = Constants.SaveFolderName, isolatedSavesPath = StardewValley.Program.GetSavesFolder(),
+                provenance = "Isolated setup only: house start, 10AM, 2000g, Town/SeedShop introductions already seen; no production navigation or purchase executed by fixture." };
+            Directory.CreateDirectory(outDir);
+            File.WriteAllText(Path.Combine(outDir, $"harness-fixture-{label}.json"), JsonSerializer.Serialize(navigationFixture));
+            _evidence["harnessFixture"] = navigationFixture;
+            return;
+        }
         string requestedMode = mode;
         bool noChestPhase = mode is "phase-backpack" or "phase-shipping";
         if (mode == "phase-backpack") mode = "mature-trees";

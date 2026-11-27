@@ -101,10 +101,10 @@ public sealed partial class ModEntry : StardewModdingAPI.Mod
         helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
         if (!_desktopMode) helper.Events.GameLoop.UpdateTicking += (_, _) => TickNativeChatInput();
         helper.Events.GameLoop.TimeChanged += OnTimeChanged;
-        helper.Events.World.ObjectListChanged += (_, _) => _observer?.InvalidatePhaseMap();
-        helper.Events.World.TerrainFeatureListChanged += (_, _) => _observer?.InvalidatePhaseMap();
-        helper.Events.World.BuildingListChanged += (_, _) => _observer?.InvalidatePhaseMap();
-        helper.Events.Content.AssetsInvalidated += (_, _) => _observer?.InvalidatePhaseMap();
+        helper.Events.World.ObjectListChanged += (_, e) => { _observer?.InvalidatePhaseMap(); _navigator?.InvalidatePaths(e.Location.NameOrUniqueName); };
+        helper.Events.World.TerrainFeatureListChanged += (_, e) => { _observer?.InvalidatePhaseMap(); _navigator?.InvalidatePaths(e.Location.NameOrUniqueName); };
+        helper.Events.World.BuildingListChanged += (_, _) => { _observer?.InvalidatePhaseMap(); _coordinator?.InvalidateNavigationTopology(); };
+        helper.Events.Content.AssetsInvalidated += (_, _) => { _observer?.InvalidatePhaseMap(); _coordinator?.InvalidateNavigationTopology(); };
         CompanionWorldDraw.Install(() => PlayerModeEnabled ? null : _avatar);
         if (!_desktopMode) helper.Events.Display.RenderedHud += OnRenderedHud;
         helper.Events.Display.MenuChanged += (_, e) => {

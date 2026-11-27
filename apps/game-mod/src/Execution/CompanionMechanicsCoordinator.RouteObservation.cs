@@ -27,9 +27,11 @@ public sealed partial class CompanionMechanicsCoordinator
             rejection = BuildRejection(request, "OBSERVATION_BUSY", "A route observation is already running; await its result.", true);
             return false;
         }
-        var tile = request.Parameters.Tile ?? throw new ArgumentException("Route destination tile is required.");
+        var tile = request.Parameters.Tile;
+        if (tile is null && request.Parameters.NavigationTarget != "shop") throw new ArgumentException("Route destination tile is required.");
         _routeObservation = new(request, envelope,
-            _navigationMachine.BeginPreviewRoute(request.Parameters.LocationId, new TileCoordinate(tile.X, tile.Y)), Stopwatch.GetTimestamp());
+            _navigationMachine.BeginPreviewRoute(request.Parameters.LocationId, tile is null ? _actor.Tile : new TileCoordinate(tile.X, tile.Y),
+                request.Parameters.NavigationTarget ?? "exact", request.Parameters.ShopId), Stopwatch.GetTimestamp());
         return true;
     }
 

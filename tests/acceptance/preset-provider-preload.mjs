@@ -2,7 +2,7 @@ import { createMockDeepSeek } from "../../apps/runtime/tests/mock-deepseek.mjs";
 import { createMockOpenAI } from "../../apps/runtime/tests/mock-openai.mjs";
 import { readFileSync } from "node:fs";
 const scenarios = JSON.parse(readFileSync(new URL("./cases.json", import.meta.url), "utf8"));
-const requests = new Set(Object.values(scenarios).flatMap(row => [row.instruction, row.then, row.cacheSecond, row.cacheThird].filter(Boolean)));
+const requests = new Set(Object.values(scenarios).flatMap(row => [row.instruction, row.then, row.cacheSecond, row.cacheThird, row.repeatRoute].filter(Boolean)));
 requests.add(scenarios["phase-update"].duringAction);
 function currentTask(messages) {
   const start = messages.findLastIndex(row => row.type === "user" && requests.has(row.text));
@@ -29,6 +29,24 @@ function plan(messages) {
   const firstTool = messages.findIndex(row => row.type === "result");
   const before = firstTool < 0 ? messages : messages.slice(0, firstTool);
   const request = before.findLast(row => row.type === "user")?.text ?? "";
+  if (request.includes("从家里出发，去皮埃尔商店柜台") || request.includes("再去一次皮埃尔柜台")) {
+    const calls = messages.filter(row => row.type === "call");
+    const last = messages.findLast(row => row.type === "result")?.result;
+    if (["NATIVE_UI_ACTIVE", "DESTINATION_UNREACHABLE_NOW"].includes(last?.error?.code)
+        && /event|cutscene|menu/i.test(last.error.message) && calls.length < 16)
+      return work("native_advance", { allow_skip: true });
+    if (last?.error || ["failed", "rejected", "cancelled", "partially-succeeded"].includes(last?.terminalState)) return {};
+    const steps = [work("navigate_to", { location_id: "SeedShop", navigation_target: "shop", shop_id: "SeedShop" }),
+      work("open_shop", { location_id: "SeedShop", shop_id: "SeedShop" }),
+      work("purchase_items", { location_id: "SeedShop", shop_id: "SeedShop", items: [{ item_id: "(O)472", count: 1 }], budget_limit: 20 }),
+      work("navigate_to", { location_id: "Farm", tile: { x: 78, y: 16 } })];
+    if (request.includes("再去一次皮埃尔柜台")) steps.splice(2, 1);
+    let stage = 0;
+    for (let index = 0; index < messages.length - 1; index++)
+      if (messages[index].type === "call" && operation(messages[index]) === Object.keys(steps[stage]?.args.action ?? {})[0]
+          && messages[index+1].type === "result" && messages[index+1].result?.terminalState === "succeeded") stage++;
+    return steps[stage] ?? {};
+  }
   if (request.includes("先停下采伐")) return {};
   if (request.includes("查看") && request.includes("箱子的位置") || request.includes("箱子位置发生变化"))
     return firstTool < 0 ? { name: "query_game", args: { query: { query_chests: {} } } } : {};

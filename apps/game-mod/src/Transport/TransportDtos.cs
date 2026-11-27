@@ -492,6 +492,9 @@ public sealed record WaterZoneParameters(
     [JsonPropertyName("shopId")]
     public string? ShopId { get; init; }
 
+    [JsonPropertyName("navigationTarget")]
+    public string? NavigationTarget { get; init; }
+
     [JsonPropertyName("fertilizerItemId")]
     public string? FertilizerItemId { get; init; }
 

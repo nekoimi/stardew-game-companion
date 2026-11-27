@@ -10,7 +10,11 @@ public sealed record ReachableRoute(
     IReadOnlyList<MapEdge> Edges,
     int WalkingTiles,
     int WalkingCost,
-    TileCoordinate TargetTile);
+    TileCoordinate TargetTile)
+{
+    public IReadOnlyList<PathResult> Paths { get; init; } = Array.Empty<PathResult>();
+    public IReadOnlyList<TileCoordinate> Origins { get; init; } = Array.Empty<TileCoordinate>();
+}
 
 /// <summary>Structured cross-map route failure: a stable reason code, a human-readable
 /// message and machine-readable details (blocked side, exit/landing coordinates,
@@ -30,6 +34,109 @@ public sealed class ReachableRoutePlanner
     private readonly IWorldObserver _observer;
     private readonly SameMapNavigator _navigator;
     private readonly IWorldMapGraph _graph;
+    public string SearchActivity { get; private set; } = "idle";
+    public int ExploredEntrances { get; private set; }
+    public int PathSearches { get; private set; }
+    public List<object> ExitDiagnostics { get; } = new();
+    public NavigationSearch<RouteSearchResult> BeginJourney(string location, TileCoordinate start, string targetLocation,
+        TileCoordinate target, int time, Farmer? farmer, bool exact, NavigationGoal? goal, IReadOnlySet<MapEdge> avoid) =>
+        new(search => SearchJourney(search, location, start, targetLocation, target, time, farmer, exact, goal, avoid));
+
+    private IEnumerable<NavigationSearch?> SearchJourney(NavigationSearch<RouteSearchResult> search, string location,
+        TileCoordinate start, string targetLocation, TileCoordinate target, int time, Farmer? farmer, bool exact,
+        NavigationGoal? goal, IReadOnlySet<MapEdge> avoid)
+    {
+        // Same-map requests retain exact native geometry and leave/re-enter detours.
+        if (string.Equals(location, targetLocation, StringComparison.OrdinalIgnoreCase))
+        {
+            var local = BeginFind(location, start, targetLocation, target, time, farmer, exact, goal, avoid);
+            yield return local; search.Result = local.Result; yield break;
+        }
+        SearchActivity = "topology"; ExploredEntrances = 0; PathSearches = 0; ExitDiagnostics.Clear();
+        var topology = new RouteTopology(targetLocation, target, exact, goal?.StandingTiles.Keys.ToArray());
+        foreach (var step in topology.Capture(_graph, location)) yield return step;
+        if (topology.Outgoing(location).Count == 0)
+        {
+            search.Result = new(null, new("NO_EXIT", $"No usable exit found from '{location}'.")); yield break;
+        }
+        var excluded = new HashSet<MapEdge>(avoid);
+        RouteFailure? failure = null;
+        // Repeated exits in a boundary strip may be unreachable together. Bound
+        // candidate recovery; every search still yields and remains cancellable.
+        for (int attempt = 0; attempt < 12; attempt++)
+        {
+            var origin = Key(location, start);
+            var queue = new PriorityQueue<(Entrance State, string Name, int Cost), int>();
+            var costs = new Dictionary<Entrance, int> { [origin] = 0 };
+            var previous = new Dictionary<Entrance, (Entrance From, MapEdge Edge)>();
+            queue.Enqueue((origin, location, 0), 0);
+            List<MapEdge>? route = null;
+            while (queue.TryDequeue(out var node, out _) && ExploredEntrances < 1024)
+            {
+                yield return null;
+                if (node.Cost != costs[node.State]) continue;
+                ExploredEntrances++;
+                if (string.Equals(node.Name, targetLocation, StringComparison.OrdinalIgnoreCase))
+                {
+                    route = new(); var state = node.State;
+                    while (previous.TryGetValue(state, out var back)) { route.Add(back.Edge); state = back.From; }
+                    route.Reverse(); break;
+                }
+                foreach (var edge in topology.Outgoing(node.Name))
+                {
+                    yield return null;
+                    if (excluded.Contains(edge)) continue;
+                    if (!_graph.CheckEdgeTraversable(edge, time, farmer, out var reason, out var locks))
+                    {
+                        if (edge.TargetLocation.Equals(targetLocation, StringComparison.OrdinalIgnoreCase))
+                            failure = new("TARGET_UNAVAILABLE", reason ?? "Native entrance is locked.", locks);
+                        continue;
+                    }
+                    var next = Key(edge.TargetLocation, edge.TargetTile);
+                    int cost = node.Cost + Math.Max(0, WalkingPath.Distance(node.State.Tile, edge.SourceTile) - WalkingPath.CardinalCost)
+                        + WalkingPath.CardinalCost;
+                    if (costs.TryGetValue(next, out int old) && old <= cost) continue;
+                    int bound = topology.Bound(edge.TargetLocation, edge.TargetTile);
+                    if (bound == int.MaxValue) continue;
+                    costs[next] = cost; previous[next] = (node.State, edge);
+                    queue.Enqueue((next, edge.TargetLocation, cost), cost + bound);
+                }
+            }
+            if (route is not { Count: > 0 }) break;
+            // A short, bounded lookahead can reject a known sealed destination
+            // entrance without exhaustively planning all remote maps up front.
+            var last = route[^1];
+            using (var finalProbe = BeginDestinationPath(targetLocation, last.TargetTile, target, exact, goal))
+            {
+                for (int slice = 0; slice < 16 && !finalProbe.IsComplete; slice++)
+                { finalProbe.Advance(32, 0.5); yield return null; }
+                if (finalProbe.IsComplete && !finalProbe.Result.Success)
+                { excluded.Add(last); failure = new("DESTINATION_PATH_BLOCKED", finalProbe.Result.ErrorMessage ?? "Destination entrance blocked."); continue; }
+            }
+            var first = route[0];
+            SearchActivity = $"exit:{location}:{start}->{first.SourceTile}:{first.TargetLocation}"; PathSearches++;
+            var path = BeginExitPath(location, start, first); yield return path;
+            ExitDiagnostics.Add(new { location, start, exit = first.SourceTile, target = first.TargetLocation,
+                success = path.Result.Success, error = path.Result.ErrorMessage,
+                candidates = first.SourceTile.CardinalNeighbors().Select(tile => new { tile,
+                    passable = _observer.IsTilePassable(location, tile), trigger = IsTrigger(location, tile) }).ToArray() });
+            if (path.Result.Success)
+            {
+                int estimate = path.Result.WalkingCost;
+                var position = first.TargetTile;
+                foreach (var edge in route.Skip(1))
+                { estimate += WalkingPath.Distance(position, edge.SourceTile) + WalkingPath.CardinalCost; position = edge.TargetTile; }
+                estimate += WalkingPath.Distance(position, target);
+                search.Result = new(new ReachableRoute(route, estimate / WalkingPath.CardinalCost, estimate, target)
+                    { Paths = new[] { path.Result }, Origins = new[] { start } }, null);
+                yield break;
+            }
+            excluded.Add(first);
+            failure = new("EXIT_PATH_BLOCKED", path.Result.ErrorMessage ?? "The current exit is unreachable.",
+                new() { ["side"] = "exit-side", ["edge"] = DescribeEdge(first) });
+        }
+        search.Result = new(null, failure ?? new("NO_ROUTE", "No available map entrance route leads to the requested destination."));
+    }
 
     public ReachableRoutePlanner(IWorldObserver observer, SameMapNavigator navigator, IWorldMapGraph graph)
     {
@@ -42,6 +149,7 @@ public sealed class ReachableRoutePlanner
     private static Entrance Key(string location, TileCoordinate tile) => new(location.ToUpperInvariant(), tile);
 
     private sealed record EdgeAttempt(MapEdge Edge, string FromLocation, TileCoordinate FromTile);
+    private sealed record SearchNode(Entrance State, string Name, int Cost, MapEdge? Pending = null);
 
     public ReachableRoute? Find(string location, TileCoordinate start, string targetLocation,
         TileCoordinate target, int time, Farmer? farmer, out RouteFailure? failure, bool requireExactDestination = false)
@@ -53,13 +161,15 @@ public sealed class ReachableRoutePlanner
     }
 
     public NavigationSearch<RouteSearchResult> BeginFind(string location, TileCoordinate start, string targetLocation,
-        TileCoordinate target, int time, Farmer? farmer, bool requireExactDestination = false) =>
-        new(search => Search(search, location, start, targetLocation, target, time, farmer, requireExactDestination));
+        TileCoordinate target, int time, Farmer? farmer, bool requireExactDestination = false, NavigationGoal? goal = null,
+        IReadOnlySet<MapEdge>? avoidEntrances = null) =>
+        new(search => Search(search, location, start, targetLocation, target, time, farmer, requireExactDestination, goal, avoidEntrances));
 
     private IEnumerable<NavigationSearch?> Search(NavigationSearch<RouteSearchResult> search, string location,
-        TileCoordinate start, string targetLocation, TileCoordinate target, int time, Farmer? farmer, bool requireExactDestination)
+        TileCoordinate start, string targetLocation, TileCoordinate target, int time, Farmer? farmer, bool requireExactDestination,
+        NavigationGoal? goal, IReadOnlySet<MapEdge>? avoidEntrances)
     {
-        if (requireExactDestination && (IsTrigger(targetLocation, target) || !_observer.IsTilePassable(targetLocation, target)))
+        if (goal is null && requireExactDestination && (IsTrigger(targetLocation, target) || !_observer.IsTilePassable(targetLocation, target)))
         {
             var failure = new RouteFailure("DESTINATION_UNREACHABLE", "Requested standing tile is blocked or a map transition trigger. Choose an observed walkable standing tile; an adjacent arrival is not exact arrival.",
                 new Dictionary<string, object> { ["blockedSide"] = "destination", ["locationId"] = targetLocation,
@@ -71,11 +181,14 @@ public sealed class ReachableRoutePlanner
             search.Result = new RouteSearchResult(null, failure);
             yield break;
         }
+        SearchActivity = "topology"; ExploredEntrances = 0; PathSearches = 0;
         var origin = Key(location, start);
+        var topology = new RouteTopology(targetLocation, target, requireExactDestination, goal?.StandingTiles.Keys.ToArray());
+        foreach (var step in topology.Capture(_graph, location)) yield return step;
         var distances = new Dictionary<Entrance, (int Cost, int Tiles)> { [origin] = (0, 0) };
-        var previous = new Dictionary<Entrance, (Entrance From, MapEdge Edge)>();
-        var queue = new PriorityQueue<(Entrance State, string Name), int>();
-        queue.Enqueue((origin, location), 0);
+        var previous = new Dictionary<Entrance, (Entrance From, MapEdge Edge, PathResult Path)>();
+        var queue = new PriorityQueue<SearchNode, int>();
+        queue.Enqueue(new(origin, location, 0), 0);
         ReachableRoute? best = null;
         string? unavailable = null;
         int explored = 0;
@@ -84,15 +197,47 @@ public sealed class ReachableRoutePlanner
         var arrivalFailures = new List<EdgeAttempt>();
         var destinationFailures = new List<(string Location, TileCoordinate Entrance)>();
         string? firstLockReason = null;
-        while (queue.TryDequeue(out var node, out int cost) && explored++ < MaxExploredEntrances)
+        while (queue.TryDequeue(out var node, out int estimate) && explored < MaxExploredEntrances)
         {
             yield return null;
+            int cost = node.Cost;
             var reached = distances[node.State];
             if (cost != reached.Cost) continue;
-            if (best is not null && cost >= best.WalkingCost) break;
+            if (best is not null && estimate >= best.WalkingCost) break;
+            if (node.Pending is { } pending)
+            {
+                if (!_graph.CheckEdgeTraversable(pending, time, farmer, out var blocked, out _))
+                {
+                    if (string.Equals(pending.TargetLocation, targetLocation, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var lockedExit = BeginExitPath(node.Name, node.State.Tile, pending);
+                        yield return lockedExit;
+                        if (lockedExit.Result.Success) unavailable ??= blocked;
+                    }
+                    firstLockReason ??= blocked;
+                    continue;
+                }
+                SearchActivity = $"exit:{node.Name}:{node.State.Tile}->{pending.SourceTile}:{pending.TargetLocation}";
+                PathSearches++;
+                var walkSearch = BeginExitPath(node.Name, node.State.Tile, pending);
+                yield return walkSearch;
+                var walk = walkSearch.Result;
+                if (!walk.Success) { exitFailures.Add(new(pending, node.Name, node.State.Tile)); continue; }
+                if (!TryArrival(pending, out var arrival)) { arrivalFailures.Add(new(pending, node.Name, node.State.Tile)); continue; }
+                int nextCost = cost + walk.WalkingCost + WalkingPath.CardinalCost;
+                var next = Key(pending.TargetLocation, arrival);
+                if (distances.TryGetValue(next, out var old) && old.Cost <= nextCost) continue;
+                distances[next] = (nextCost, reached.Tiles + CountWalkingTiles(walk, node.State.Tile) + 1);
+                previous[next] = (node.State, pending, walk);
+                int bound = topology.Bound(pending.TargetLocation, arrival);
+                if (bound != int.MaxValue) queue.Enqueue(new(next, pending.TargetLocation, nextCost), nextCost + bound);
+                continue;
+            }
+            explored++; ExploredEntrances = explored;
             if (string.Equals(node.Name, targetLocation, StringComparison.OrdinalIgnoreCase))
             {
-                var finalSearch = BeginDestinationPath(node.Name, node.State.Tile, target, requireExactDestination);
+                SearchActivity = $"destination:{node.Name}:{node.State.Tile}->{target}"; PathSearches++;
+                var finalSearch = BeginDestinationPath(node.Name, node.State.Tile, target, requireExactDestination, goal);
                 yield return finalSearch;
                 var final = finalSearch.Result;
                 if (final.Success)
@@ -101,15 +246,20 @@ public sealed class ReachableRoutePlanner
                     if (best is null || total < best.WalkingCost)
                     {
                         var edges = new List<MapEdge>();
+                        var paths = new List<PathResult>();
+                        var origins = new List<TileCoordinate>();
                         var state = node.State;
                         while (previous.TryGetValue(state, out var back))
                         {
                             edges.Add(back.Edge);
+                            paths.Add(back.Path);
+                            origins.Add(back.From.Tile);
                             state = back.From;
                         }
                         edges.Reverse();
+                        paths.Reverse(); origins.Reverse(); paths.Add(final); origins.Add(node.State.Tile);
                         best = new ReachableRoute(edges, reached.Tiles + CountWalkingTiles(final, node.State.Tile),
-                            total, final.Steps[^1].Tile);
+                            total, final.Steps[^1].Tile) { Paths = paths, Origins = origins };
                         // A directly reachable same-map destination needs no tour
                         // of unrelated exits. Blocked direct paths still try detours.
                         if (edges.Count == 0)
@@ -121,44 +271,13 @@ public sealed class ReachableRoutePlanner
                 }
                 else destinationFailures.Add((node.Name, node.State.Tile));
             }
-            foreach (var edge in _graph.GetOutgoingEdges(node.Name))
+            foreach (var edge in topology.Outgoing(node.Name))
             {
                 yield return null;
-                // A blocked entrance tile can be approached from a cardinal neighbor.
-                int lowerBound = Math.Max(0, WalkingPath.Distance(node.State.Tile, edge.SourceTile) - WalkingPath.CardinalCost);
-                if (best is not null && cost + lowerBound >= best.WalkingCost) continue;
-                if (!_graph.CheckEdgeTraversable(edge, time, farmer, out var blocked, out _))
-                {
-                    // Only a reachable entrance into the requested destination can
-                    // explain its failure; locked side branches are irrelevant.
-                    if (string.Equals(edge.TargetLocation, targetLocation, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var lockedExit = BeginExitPath(node.Name, node.State.Tile, edge);
-                        yield return lockedExit;
-                        if (lockedExit.Result.Success) unavailable ??= blocked;
-                    }
-                    firstLockReason ??= blocked;
-                    continue;
-                }
-                var walkSearch = BeginExitPath(node.Name, node.State.Tile, edge);
-                yield return walkSearch;
-                var walk = walkSearch.Result;
-                if (!walk.Success)
-                {
-                    exitFailures.Add(new EdgeAttempt(edge, node.Name, node.State.Tile));
-                    continue;
-                }
-                if (!TryArrival(edge, out var arrival))
-                {
-                    arrivalFailures.Add(new EdgeAttempt(edge, node.Name, node.State.Tile));
-                    continue;
-                }
-                int nextCost = cost + walk.WalkingCost + WalkingPath.CardinalCost;
-                var next = Key(edge.TargetLocation, arrival);
-                if (distances.TryGetValue(next, out var old) && old.Cost <= nextCost) continue;
-                distances[next] = (nextCost, reached.Tiles + CountWalkingTiles(walk, node.State.Tile) + 1);
-                previous[next] = (node.State, edge);
-                queue.Enqueue((next, edge.TargetLocation), nextCost);
+                if (avoidEntrances?.Contains(edge) == true) continue;
+                int bound = topology.ViaBound(node.State.Tile, edge);
+                if (bound == int.MaxValue || (best is not null && cost + bound >= best.WalkingCost)) continue;
+                queue.Enqueue(node with { Pending = edge }, cost + bound);
             }
         }
 
@@ -343,6 +462,29 @@ public sealed class ReachableRoutePlanner
     private IEnumerable<NavigationSearch?> SearchExitPath(NavigationSearch<PathResult> search, string location,
         TileCoordinate start, MapEdge edge)
     {
+        if (_observer.IsWarpOrDoorTile(location, edge.SourceTile))
+        {
+            var approaches = new Dictionary<TileCoordinate, FacingDirection>();
+            foreach (var neighbor in edge.SourceTile.CardinalNeighbors())
+            {
+                int dx = neighbor.X - edge.SourceTile.X, dy = neighbor.Y - edge.SourceTile.Y;
+                // Boundary warps are often outside the map while TouchAction
+                // occupies the entire last column. Stop before that trigger band;
+                // entering it belongs to native transition execution, not standing.
+                for (int distance = 1; distance <= 3; distance++)
+                {
+                    yield return null;
+                    var tile = new TileCoordinate(edge.SourceTile.X + dx * distance, edge.SourceTile.Y + dy * distance);
+                    if (_observer.IsWarpOrDoorTile(location, tile)) continue;
+                    if (_observer.IsTilePassable(location, tile) && !_observer.IsPlayerOnTile(location, tile))
+                        approaches[tile] = dx == 1 ? FacingDirection.Left : dx == -1 ? FacingDirection.Right
+                            : dy == 1 ? FacingDirection.Up : FacingDirection.Down;
+                    break;
+                }
+            }
+            var approach = _navigator.BeginPathToAny(location, start, approaches);
+            yield return approach; search.Result = approach.Result; yield break;
+        }
         var path = _observer.IsTilePassable(location, edge.SourceTile)
             ? _navigator.BeginPath(location, start, edge.SourceTile)
             : _navigator.BeginPathToInteract(new AuthoritativePose(location, start, FacingDirection.Down), location, edge.SourceTile);
@@ -372,8 +514,9 @@ public sealed class ReachableRoutePlanner
     }
 
     public NavigationSearch<PathResult> BeginDestinationPath(string location, TileCoordinate start, TileCoordinate target,
-        bool requireExactDestination = false) =>
-        new(search => SearchDestinationPath(search, location, start, target, requireExactDestination));
+        bool requireExactDestination = false, NavigationGoal? goal = null) => goal is not null
+        ? _navigator.BeginPathToAny(location, start, goal.StandingTiles)
+        : new(search => SearchDestinationPath(search, location, start, target, requireExactDestination));
 
     private IEnumerable<NavigationSearch?> SearchDestinationPath(NavigationSearch<PathResult> search, string location,
         TileCoordinate start, TileCoordinate target, bool exact)

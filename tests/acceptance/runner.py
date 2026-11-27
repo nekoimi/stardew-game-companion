@@ -86,7 +86,14 @@ def evaluate(case, before, after, samples):
         "same_game_day": all(after.get(k) == before.get(k) and k in before for k in ("year", "season", "day")),
         "native_action_finished": native_finished(after),
     }
-    if case == "farm-growth":
+    if case == "navigation-shop":
+        checks.pop("targets_preserved")
+        checks["started_in_house"] = before.get("companionLocation") == "FarmHouse"
+        checks["returned_to_farm"] = after.get("companionLocation") == "Farm"
+        checks["purchased_one_seed"] = count(after.get("companionItems"), "(O)472") - count(before.get("companionItems"), "(O)472") == 1
+        checks["native_purchase_cost"] = before.get("playerMoney", -1) - after.get("playerMoney", -1) == 20
+        checks["visited_shop"] = any(s.get("companionLocation") == "SeedShop" for s in samples)
+    elif case == "farm-growth":
         checks["daily_crops_watered"] = bool(target_count) and after.get("harnessFixtureDryCropCount") == 0
         checks["stamina_available_after_daily_care"] = any((s.get("companionStamina") or 0) > 100
             and s.get("harnessFixtureDryCropCount") == 0 for s in samples)
@@ -250,6 +257,11 @@ class Runner:
             # Only normal chat/menu input; no test-side action dispatch.
             await self.request("close")
             before = await self.native()
+            if self.case == "navigation-shop":
+                deadline = time.monotonic() + 20
+                while before.get("companionLocation") != "FarmHouse" and time.monotonic() < deadline:
+                    await asyncio.sleep(0.25)
+                    before = await self.native()
             self.report["before"] = before
             if spec.get("fixture", self.case) in {"harvest-store", "mature-trees", "walk-pickup", "walk-pickup-full"}:
                 player = before.get("playerTile") or {}
@@ -271,7 +283,7 @@ class Runner:
                 await asyncio.sleep(1)
             trace_offset = len(rows(self.trace_file))
             self.report["traceOffset"] = trace_offset
-            if spec.get("takeover"):
+            if spec.get("takeover") or self.case == "navigation-shop":
                 ui = await self.request("snapshot")
                 if ui.get("playerControlApproved") is not True:
                     await self.request("takeover-key")  # Explicit initial handoff in the player-only fixture.
@@ -309,6 +321,24 @@ class Runner:
             after = await self.native()
             self.report["after"] = after
             checks = evaluate(spec.get("fixture", self.case), before, after, self.samples)
+            if self.case == "navigation-shop" and self.simulated and spec.get("repeatRoute"):
+                self.report["intermediate"] = after
+                await self.request("open-conversation")
+                await self.request("text", field="_input", text=spec["repeatRoute"])
+                await self.request("key", key="Enter")
+                await self.request("close")
+                repeat_deadline = time.monotonic() + self.timeout
+                repeat_turn = None
+                while time.monotonic() < repeat_deadline:
+                    await self.native()
+                    repeat_turn = self.terminal(spec["repeatRoute"], trace_offset)
+                    if repeat_turn:
+                        break
+                    await asyncio.sleep(1)
+                after = await self.native()
+                self.report["after"] = after
+                checks["repeat_route_finished"] = bool(repeat_turn and repeat_turn.get("status") == "completed") and native_finished(after)
+                checks["repeat_route_no_extra_purchase"] = after.get("companionLocation") == "Farm" and after.get("playerMoney") == self.report["intermediate"].get("playerMoney")
             if self.case == "phase-cache":
                 if not self.simulated:
                     raise RuntimeError("Controlled cache experiment requires the simulated API")
@@ -354,6 +384,25 @@ class Runner:
             trace = rows(self.trace_file)[trace_offset:]
             summary = summarize_trace(trace)
             self.report["traceSummary"] = summary
+            if self.case == "navigation-shop":
+                navigation = [row["payload"] for row in trace if row.get("type") == "result"
+                              and row["payload"].get("skillId") == "navigate-to"]
+                successful = [row for row in navigation if row.get("terminalState") == "succeeded"]
+                checks["confirmed_outbound_map_hops"] = any(
+                    row.get("details", {}).get("visitedLocations") == ["FarmHouse", "Farm", "BusStop", "Town", "SeedShop"]
+                    for row in successful)
+                checks["confirmed_return_map_hops"] = any(
+                    row.get("details", {}).get("visitedLocations") == ["SeedShop", "Town", "BusStop", "Farm"]
+                    for row in successful)
+                checks["navigation_metrics_recorded"] = bool(successful) and all(
+                    isinstance(row.get("details", {}).get("navigation", {}).get("planningMs"), (int, float)) for row in successful)
+                if self.simulated:
+                    repeated = bool(spec.get("repeatRoute"))
+                    checks["journeys_without_per_map_model_calls"] = len(navigation) == len(successful) == (4 if repeated else 2) and sum(
+                        row.get("type") == "model-metrics" for row in trace) == (9 if repeated else 5)
+                    if repeated:
+                        checks["repeat_route_reuses_validated_paths"] = any(
+                            row.get("details", {}).get("navigation", {}).get("cacheHits", 0) > 0 for row in successful[2:])
             if self.case == "harvest-logistics":
                 self.report["extraClearingCalls"] = sum(
                     "clear_debris" in ((c.get("input") or {}).get("action") or {})

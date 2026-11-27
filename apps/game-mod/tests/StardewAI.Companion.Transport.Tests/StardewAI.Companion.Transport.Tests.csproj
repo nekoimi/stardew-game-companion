@@ -21,6 +21,8 @@
     <Compile Include="..\..\src\Transport\*.cs" Link="Transport\%(Filename)%(Extension)" />
     <None Include="..\..\..\..\contracts\game-bridge\examples\v2\action-lifecycle.json"
           Link="fixtures\action-lifecycle.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\contracts\game-bridge\examples\navigation-goals.json"
+          Link="fixtures\navigation-goals.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

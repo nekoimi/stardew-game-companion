@@ -32,6 +32,7 @@ public sealed class WorldMapGraph : IWorldMapGraph
     private readonly object _cacheLock = new();
     private Dictionary<string, List<MapEdge>>? _cachedAdjacency;
     private int _cachedFingerprint = -1;
+    private readonly Dictionary<string, (GameLocation? Location, int Fingerprint, IReadOnlyList<MapEdge> Edges)> _outgoingCache = new(StringComparer.OrdinalIgnoreCase);
 
     public WorldMapGraph(
         Func<IEnumerable<GameLocation>>? locationsProvider = null,
@@ -49,6 +50,7 @@ public sealed class WorldMapGraph : IWorldMapGraph
         {
             _cachedAdjacency = null;
             _cachedFingerprint = -1;
+            _outgoingCache.Clear();
         }
     }
 
@@ -176,7 +178,13 @@ public sealed class WorldMapGraph : IWorldMapGraph
                 if (loc.warps != null)
                 {
                     hash = hash * 31 + loc.warps.Count;
+                    foreach (var warp in loc.warps)
+                        hash = HashCode.Combine(hash, warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY, warp.npcOnly.Value);
                 }
+                if (loc.doors is not null)
+                    foreach (var door in loc.doors.Pairs) hash = HashCode.Combine(hash, door.Key, door.Value);
+                try { hash = HashCode.Combine(hash, loc.Map is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(loc.Map)); }
+                catch { /* Headless locations can still expose explicit native warps. */ }
             }
             return hash;
         }
@@ -289,6 +297,10 @@ public sealed class WorldMapGraph : IWorldMapGraph
     {
         if (string.IsNullOrWhiteSpace(sourceLocation)) throw new ArgumentException("Source location cannot be null or empty.", nameof(sourceLocation));
 
+        var loc = ResolveLocation(sourceLocation);
+        int fingerprint = ComputeFingerprint(loc is null ? Array.Empty<GameLocation>() : new[] { loc });
+        if (_outgoingCache.TryGetValue(sourceLocation, out var cached) && ReferenceEquals(loc, cached.Location)
+            && fingerprint == cached.Fingerprint) return cached.Edges;
         var edges = new List<MapEdge>();
 
         // 1. Custom registered edges
@@ -304,13 +316,14 @@ public sealed class WorldMapGraph : IWorldMapGraph
         }
 
         // 2. Discover dynamically from resolved GameLocation
-        var loc = ResolveLocation(sourceLocation);
         if (loc != null)
         {
             DiscoverEdgesFromLocation(loc, edges);
         }
 
-        return edges.Distinct().ToList();
+        var result = edges.Distinct().ToArray();
+        _outgoingCache[sourceLocation] = (loc, fingerprint, result);
+        return result;
     }
 
     private void DiscoverEdgesFromLocation(GameLocation loc, List<MapEdge> edges)

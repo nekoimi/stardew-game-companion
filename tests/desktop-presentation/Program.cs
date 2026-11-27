@@ -35,6 +35,9 @@ internal static class Program
         Check(ActionPresentation.Read(raw.Single(row => row.GetProperty("commandId").GetString() == "unknown")).NeedsPlayer, "Unknown outcomes must remain visible.");
         Check(ActionPresentation.Stages(receipts).Any(row => row.Text.Contains("背包增加 9 件")), "Stage quantities did not retain actual inventory evidence.");
         Check(fixture.GetRawText() == original, "Presentation mutated its input.");
+        Check(ActionPresentation.Phase("walking-route").Contains("前往")
+            && ActionPresentation.Phase("crossing-map").Contains("切换地图")
+            && ActionPresentation.Phase("recovering-route").Contains("受阻"), "Navigation phases became generic thinking.");
 
         var app = new Application();
         app.Resources.MergedDictionaries.Add(new ResourceDictionary {

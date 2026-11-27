@@ -1170,6 +1170,16 @@ public sealed class WebSocketTransportServer : ITransportServer
         }
 
         string skillId = payload.SkillId ?? "";
+        if (skillId is "navigate-to" or "inspect-route")
+        {
+            string target = payload.Parameters.NavigationTarget ?? "exact";
+            if (target is not ("exact" or "interact" or "shop")
+                || (target == "shop" ? string.IsNullOrWhiteSpace(payload.Parameters.ShopId) : payload.Parameters.Tile is null))
+            {
+                error = "Navigation requires exact/interact with tile, or shop with shopId.";
+                return false;
+            }
+        }
         bool isWater = string.Equals(skillId, "water-zone", StringComparison.OrdinalIgnoreCase);
         bool isHarvest = string.Equals(skillId, "harvest-zone", StringComparison.OrdinalIgnoreCase);
         bool isDeposit = string.Equals(skillId, "deposit-chest", StringComparison.OrdinalIgnoreCase);
